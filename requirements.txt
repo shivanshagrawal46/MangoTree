@@ -1,0 +1,38 @@
+# --- Core ---
+python-dotenv==1.0.1
+pymongo[srv]==4.8.0
+
+# --- Gmail (read-only) ---
+google-api-python-client==2.137.0
+google-auth==2.32.0
+google-auth-oauthlib==1.2.1
+
+# --- Outlook / Microsoft Graph (read-only, delegated) ---
+# Delegated rather than app-only by admin decision (2026-08-31): application
+# Mail.Read is tenant-wide and cannot be scoped to one mailbox without an
+# Exchange Application Access Policy. Delegated consent covers only the signing
+# user's own mailbox, so there is nothing tenant-wide to fence.
+msal==1.38.0
+
+# --- Email parsing / cleaning ---
+# extract-msg reads Outlook's compound-OLE .msg files, which are not RFC822.
+# They are converted to RFC822 and fed through the ordinary mail pipeline.
+extract-msg==0.55.0
+ftfy==6.2.0
+beautifulsoup4==4.12.3
+lxml==5.2.2
+
+# --- AI ---
+anthropic==0.34.2
+voyageai==0.2.3
+
+# --- Documents (Sprint 2) ---
+pypdf==4.3.1
+python-docx==1.1.2
+openpyxl==3.1.5
+xlrd==2.0.1
+pillow==10.4.0
+
+# --- CLI / utils ---
+rich==13.7.1
+tenacity==8.5.0

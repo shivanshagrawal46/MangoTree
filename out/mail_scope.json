@@ -1,0 +1,434 @@
+{
+  "window_start": "2023-10-01T00:00:00+00:00",
+  "generated_at": "2026-09-01T20:05:06.395777+00:00",
+  "gmail": {
+    "messages": {
+      "D_no_signal": 28684,
+      "A_known_contact": 673,
+      "C_internal": 3654,
+      "B_property_subject": 51
+    },
+    "attachments": {
+      "A_known_contact": 249,
+      "D_no_signal": 7192,
+      "C_internal": 983,
+      "B_property_subject": 26
+    },
+    "qualifying": 724,
+    "qualifying_attachments": 275,
+    "properties": {
+      "tahona": 6,
+      "varnum": 52,
+      "tower_road": 40,
+      "briardale": 28,
+      "bayshore_910": 42,
+      "euclid_st": 20,
+      "9th_st_nw": 15,
+      "bayshore_904": 53,
+      "decatur_st": 11,
+      "narrow_guage": 5,
+      "chita_ct": 34,
+      "allison_st": 46,
+      "50th_pl": 5,
+      "lane_pl": 21,
+      "ridge_road": 9
+    },
+    "property_attachments": {
+      "tahona": 3,
+      "tower_road": 7,
+      "briardale": 16,
+      "bayshore_910": 21,
+      "euclid_st": 6,
+      "9th_st_nw": 3,
+      "varnum": 10,
+      "chita_ct": 4,
+      "bayshore_904": 30,
+      "allison_st": 37,
+      "lane_pl": 3
+    },
+    "unique_message_ids": 705
+  },
+  "outlook": {
+    "messages": {
+      "D_no_signal": 9057,
+      "A_known_contact": 2690,
+      "C_internal": 2249,
+      "B_property_subject": 41
+    },
+    "attachments": {
+      "A_known_contact": 810,
+      "D_no_signal": 1063,
+      "C_internal": 373,
+      "B_property_subject": 3
+    },
+    "qualifying": 2731,
+    "qualifying_attachments": 813,
+    "properties": {
+      "varnum": 187,
+      "decatur_st": 91,
+      "chita_ct": 89,
+      "9th_st_nw": 68,
+      "euclid_st": 44,
+      "bayshore_910": 23,
+      "bayshore_904": 47,
+      "allison_st": 31,
+      "briardale": 31,
+      "50th_pl": 19,
+      "tower_road": 75,
+      "lane_pl": 54,
+      "narrow_guage": 25,
+      "ridge_road": 97,
+      "tahona": 29
+    },
+    "property_attachments": {
+      "varnum": 42,
+      "decatur_st": 31,
+      "chita_ct": 21,
+      "9th_st_nw": 28,
+      "euclid_st": 13,
+      "bayshore_910": 12,
+      "bayshore_904": 20,
+      "allison_st": 7,
+      "briardale": 13,
+      "50th_pl": 13,
+      "tower_road": 21,
+      "lane_pl": 31,
+      "narrow_guage": 11,
+      "ridge_road": 22,
+      "tahona": 9
+    },
+    "unique_message_ids": 2729
+  },
+  "combined": {
+    "messages": {
+      "D_no_signal": 37741,
+      "A_known_contact": 3363,
+      "C_internal": 5903,
+      "B_property_subject": 92
+    },
+    "attachments": {
+      "A_known_contact": 1059,
+      "D_no_signal": 8255,
+      "C_internal": 1356,
+      "B_property_subject": 29
+    },
+    "qualifying": 3455,
+    "qualifying_attachments": 1088,
+    "properties": {
+      "tahona": 35,
+      "varnum": 239,
+      "tower_road": 115,
+      "briardale": 59,
+      "bayshore_910": 65,
+      "euclid_st": 64,
+      "9th_st_nw": 83,
+      "bayshore_904": 100,
+      "decatur_st": 102,
+      "narrow_guage": 30,
+      "chita_ct": 123,
+      "allison_st": 77,
+      "50th_pl": 24,
+      "lane_pl": 75,
+      "ridge_road": 106
+    },
+    "property_attachments": {
+      "tahona": 12,
+      "tower_road": 28,
+      "briardale": 29,
+      "bayshore_910": 33,
+      "euclid_st": 19,
+      "9th_st_nw": 31,
+      "varnum": 52,
+      "chita_ct": 25,
+      "bayshore_904": 50,
+      "allison_st": 44,
+      "lane_pl": 34,
+      "decatur_st": 31,
+      "50th_pl": 13,
+      "narrow_guage": 11,
+      "ridge_road": 22
+    },
+    "unique_message_ids": 3417
+  },
+  "unique_qualifying": 3417,
+  "unique_qualifying_with_attachments": 1083,
+  "cross_provider_overlap": 17,
+  "per_folder": {
+    "gmail/INBOX": {
+      "messages": {
+        "D_no_signal": 17546,
+        "A_known_contact": 216,
+        "C_internal": 568,
+        "B_property_subject": 23
+      },
+      "attachments": {
+        "A_known_contact": 138,
+        "D_no_signal": 4457,
+        "C_internal": 275,
+        "B_property_subject": 15
+      },
+      "qualifying": 239,
+      "qualifying_attachments": 153,
+      "properties": {
+        "tahona": 1,
+        "varnum": 5,
+        "tower_road": 12,
+        "briardale": 9,
+        "bayshore_910": 11,
+        "euclid_st": 1,
+        "9th_st_nw": 2,
+        "bayshore_904": 26,
+        "decatur_st": 1,
+        "narrow_guage": 1,
+        "chita_ct": 2,
+        "allison_st": 23
+      },
+      "property_attachments": {
+        "tahona": 1,
+        "tower_road": 5,
+        "briardale": 9,
+        "bayshore_910": 11,
+        "euclid_st": 1,
+        "9th_st_nw": 1,
+        "varnum": 2,
+        "chita_ct": 2,
+        "bayshore_904": 18,
+        "allison_st": 22
+      },
+      "unique_message_ids": 239
+    },
+    "gmail/SENT": {
+      "messages": {
+        "D_no_signal": 11138,
+        "A_known_contact": 457,
+        "C_internal": 3086,
+        "B_property_subject": 28
+      },
+      "attachments": {
+        "C_internal": 708,
+        "D_no_signal": 2735,
+        "A_known_contact": 111,
+        "B_property_subject": 11
+      },
+      "qualifying": 485,
+      "qualifying_attachments": 122,
+      "properties": {
+        "varnum": 47,
+        "allison_st": 23,
+        "decatur_st": 10,
+        "bayshore_910": 31,
+        "tower_road": 28,
+        "50th_pl": 5,
+        "euclid_st": 19,
+        "chita_ct": 32,
+        "tahona": 5,
+        "briardale": 19,
+        "bayshore_904": 27,
+        "narrow_guage": 4,
+        "lane_pl": 21,
+        "ridge_road": 9,
+        "9th_st_nw": 13
+      },
+      "property_attachments": {
+        "tahona": 2,
+        "varnum": 8,
+        "briardale": 7,
+        "bayshore_910": 10,
+        "euclid_st": 5,
+        "9th_st_nw": 2,
+        "lane_pl": 3,
+        "tower_road": 2,
+        "bayshore_904": 12,
+        "chita_ct": 2,
+        "allison_st": 15
+      },
+      "unique_message_ids": 485
+    },
+    "outlook/Inbox": {
+      "messages": {
+        "D_no_signal": 4604,
+        "A_known_contact": 1613,
+        "C_internal": 294,
+        "B_property_subject": 32
+      },
+      "attachments": {
+        "A_known_contact": 582,
+        "D_no_signal": 422,
+        "C_internal": 66,
+        "B_property_subject": 2
+      },
+      "qualifying": 1645,
+      "qualifying_attachments": 584,
+      "properties": {
+        "varnum": 92,
+        "decatur_st": 36,
+        "chita_ct": 57,
+        "9th_st_nw": 42,
+        "euclid_st": 35,
+        "bayshore_910": 15,
+        "bayshore_904": 40,
+        "allison_st": 26,
+        "briardale": 13,
+        "50th_pl": 17,
+        "tower_road": 56,
+        "lane_pl": 47,
+        "narrow_guage": 22,
+        "ridge_road": 73,
+        "tahona": 19
+      },
+      "property_attachments": {
+        "varnum": 23,
+        "decatur_st": 14,
+        "chita_ct": 18,
+        "9th_st_nw": 20,
+        "euclid_st": 13,
+        "bayshore_910": 8,
+        "bayshore_904": 19,
+        "allison_st": 7,
+        "briardale": 10,
+        "50th_pl": 13,
+        "tower_road": 21,
+        "lane_pl": 31,
+        "narrow_guage": 11,
+        "ridge_road": 19,
+        "tahona": 9
+      },
+      "unique_message_ids": 1644
+    },
+    "outlook/Sent Items": {
+      "messages": {
+        "D_no_signal": 2968,
+        "C_internal": 1821,
+        "A_known_contact": 630,
+        "B_property_subject": 8
+      },
+      "attachments": {
+        "D_no_signal": 335,
+        "C_internal": 279,
+        "A_known_contact": 65,
+        "B_property_subject": 1
+      },
+      "qualifying": 638,
+      "qualifying_attachments": 66,
+      "properties": {
+        "varnum": 88,
+        "9th_st_nw": 10,
+        "decatur_st": 14,
+        "bayshore_910": 3,
+        "euclid_st": 9,
+        "chita_ct": 32,
+        "bayshore_904": 7,
+        "allison_st": 5,
+        "tower_road": 19,
+        "narrow_guage": 3,
+        "ridge_road": 24,
+        "briardale": 6,
+        "lane_pl": 7,
+        "50th_pl": 2,
+        "tahona": 10
+      },
+      "property_attachments": {
+        "varnum": 16,
+        "9th_st_nw": 2,
+        "bayshore_910": 2,
+        "bayshore_904": 1,
+        "ridge_road": 3,
+        "chita_ct": 3,
+        "decatur_st": 1
+      },
+      "unique_message_ids": 638
+    },
+    "outlook/Briardale Tampa": {
+      "messages": {
+        "A_known_contact": 12,
+        "C_internal": 8
+      },
+      "attachments": {
+        "A_known_contact": 3,
+        "C_internal": 1
+      },
+      "qualifying": 12,
+      "qualifying_attachments": 3,
+      "properties": {
+        "briardale": 12
+      },
+      "property_attachments": {
+        "briardale": 3
+      },
+      "unique_message_ids": 12
+    },
+    "outlook/Sent Items/Forwarded to JP Sir": {
+      "messages": {
+        "D_no_signal": 554,
+        "C_internal": 85,
+        "A_known_contact": 238,
+        "B_property_subject": 1
+      },
+      "attachments": {
+        "D_no_signal": 129,
+        "A_known_contact": 103,
+        "C_internal": 5
+      },
+      "qualifying": 239,
+      "qualifying_attachments": 103,
+      "properties": {
+        "varnum": 4,
+        "9th_st_nw": 10,
+        "decatur_st": 21,
+        "bayshore_910": 4
+      },
+      "property_attachments": {
+        "varnum": 3,
+        "9th_st_nw": 5,
+        "decatur_st": 11,
+        "bayshore_910": 2
+      },
+      "unique_message_ids": 239
+    },
+    "outlook/Sent Items/Forwarded to Neha": {
+      "messages": {
+        "D_no_signal": 460,
+        "A_known_contact": 175,
+        "C_internal": 35
+      },
+      "attachments": {
+        "D_no_signal": 113,
+        "A_known_contact": 50,
+        "C_internal": 20
+      },
+      "qualifying": 175,
+      "qualifying_attachments": 50,
+      "properties": {
+        "varnum": 1,
+        "9th_st_nw": 6,
+        "decatur_st": 19,
+        "bayshore_910": 1
+      },
+      "property_attachments": {
+        "9th_st_nw": 1,
+        "decatur_st": 5
+      },
+      "unique_message_ids": 175
+    },
+    "outlook/Sent Items/RB Sir to guide": {
+      "messages": {
+        "D_no_signal": 471,
+        "A_known_contact": 22,
+        "C_internal": 6
+      },
+      "attachments": {
+        "D_no_signal": 64,
+        "A_known_contact": 7,
+        "C_internal": 2
+      },
+      "qualifying": 22,
+      "qualifying_attachments": 7,
+      "properties": {
+        "varnum": 2,
+        "decatur_st": 1
+      },
+      "property_attachments": {},
+      "unique_message_ids": 22
+    }
+  }
+}

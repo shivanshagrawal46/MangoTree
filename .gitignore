@@ -1,0 +1,29 @@
+# Secrets — NEVER commit
+.env
+client_secret.json
+gmail_token.json
+*token*.json
+outlook_token*.json
+# Delegated Graph refresh token: a live bearer credential for a real mailbox.
+# The whole directory is ignored, not just the filename, so no future file
+# dropped in here is ever a commit away from exposure.
+.secrets/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+
+# Local artifacts
+raw_store/
+logs/
+*.log
+checkpoints/
+exports/
+
+# OS
+Thumbs.db
+.DS_Store
