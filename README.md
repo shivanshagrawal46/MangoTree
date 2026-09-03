@@ -33,6 +33,16 @@ The system's job: ingest *everything* (email, photos, videos, documents, calls, 
 3. **Never delete** a work item — mark it `[x]` done, `~~struck~~ (descoped, date, reason)`, or moved.
 4. **Gates are hard**: a sprint is not done until every gate criterion is ticked and evidenced.
 
+## Run the app
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\dev.ps1     # API :8000 + web :3000, opens the browser
+```
+
+Or by hand: `python -m uvicorn mangotree.api.app:app --port 8000` and `cd web && npm run dev`.
+Users (rakesh / jp / manjunath) are seeded on first API start; passwords print in the API log once, or set
+`MT_USERS` in `.env` as `id:Name:role:password,…`. Ask the agent from the CLI with `python scripts/ask.py "…" --property chita_ct`.
+
 ## The One-Paragraph System
 
 Emails (Outlook + Gmail), field photos (WhatsApp/Dropbox), call recordings (Granola/Zoom), and company guidelines flow into a single ingestion pipeline: cleaned, deduplicated, OCR'd, classified into 17 document classes, resolved to properties, chunked with 3-tier context, and indexed six ways. A deal ledger holds every dollar source-linked; a knowledge graph holds every entity; a versioned policy rulebook holds every company standard as a checkable rule. A scheduler drives the auto-analysis pipeline — every new artifact triggers extraction, detection, timeline updates, task creation, and change cards for its properties, automatically, in arrival order. Users get per-property workspaces (full timeline, scoped chat, docs, photos, money), a pending-vs-handled dashboard, 6 a.m. briefs, and an agent that answers with verbatim-quoted, verified, coverage-stated evidence. Detectors and the policy-deviation engine watch every deal continuously; photo forensics audits every draw before a human opens it; forecasting prices every active deal nightly.

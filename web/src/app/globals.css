@@ -1,0 +1,138 @@
+@import "tailwindcss";
+
+/* ------------------------------------------------------------------------
+   MangoTree design tokens.
+   Calm, dense, warm-neutral base. Colour is reserved for meaning:
+   health, urgency, money. Nothing decorative is coloured.
+   ------------------------------------------------------------------------ */
+:root {
+  --bg: #f7f6f3;
+  --bg-elev: #ffffff;
+  --bg-sunken: #efede8;
+  --fg: #16161a;
+  --fg-muted: #6b6b76;
+  --fg-faint: #9a9aa6;
+  --line: #e6e3dc;
+  --line-strong: #d3cfc5;
+  --accent: #1f6f5f;          /* mango leaf — the one brand colour */
+  --accent-soft: #e3f1ec;
+  --critical: #c2410c;
+  --critical-soft: #fff1ea;
+  --high: #b45309;
+  --high-soft: #fff7e6;
+  --normal: #1f2937;
+  --normal-soft: #eef0f3;
+  --info: #475569;
+  --info-soft: #f1f4f8;
+  --good: #15803d;
+  --good-soft: #e9f7ee;
+  --watch: #b45309;
+  --money-in: #1d4ed8;
+  --money-back: #15803d;
+  --radius: 14px;
+  --shadow-sm: 0 1px 2px rgba(20, 20, 30, 0.05);
+  --shadow: 0 8px 30px rgba(20, 20, 30, 0.08);
+}
+
+.dark {
+  --bg: #0f1013;
+  --bg-elev: #17181c;
+  --bg-sunken: #0b0c0e;
+  --fg: #ecebe7;
+  --fg-muted: #a1a1ab;
+  --fg-faint: #6e6e78;
+  --line: #24262c;
+  --line-strong: #33363e;
+  --accent: #5fc2a9;
+  --accent-soft: #14312a;
+  --critical: #fb923c;
+  --critical-soft: #3a1c0e;
+  --high: #f59e0b;
+  --high-soft: #3a2a0c;
+  --normal: #e5e7eb;
+  --normal-soft: #1f2126;
+  --info: #94a3b8;
+  --info-soft: #1a1f28;
+  --good: #4ade80;
+  --good-soft: #0f2a1a;
+  --money-in: #60a5fa;
+  --money-back: #4ade80;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow: 0 8px 30px rgba(0, 0, 0, 0.45);
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-elev: var(--bg-elev);
+  --color-sunken: var(--bg-sunken);
+  --color-fg: var(--fg);
+  --color-muted: var(--fg-muted);
+  --color-faint: var(--fg-faint);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-critical: var(--critical);
+  --color-critical-soft: var(--critical-soft);
+  --color-high: var(--high);
+  --color-high-soft: var(--high-soft);
+  --color-normal: var(--normal);
+  --color-normal-soft: var(--normal-soft);
+  --color-info: var(--info);
+  --color-info-soft: var(--info-soft);
+  --color-good: var(--good);
+  --color-good-soft: var(--good-soft);
+  --color-money-in: var(--money-in);
+  --color-money-back: var(--money-back);
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+  --font-serif: var(--font-serif), Georgia, "Times New Roman", serif;
+  --radius-card: var(--radius);
+}
+
+/* Editorial type for the morning brief */
+.paper { background: color-mix(in srgb, var(--bg-elev) 92%, #f3e9d6 8%); }
+.dark .paper { background: var(--bg-elev); }
+.serif { font-family: var(--font-serif); font-feature-settings: "kern", "liga", "onum"; }
+.smallcaps { font-variant-caps: all-small-caps; letter-spacing: 0.06em; }
+.hairline { border-top: 1px solid var(--line); }
+.brief-item + .brief-item { border-top: 1px dotted color-mix(in srgb, var(--line-strong) 70%, transparent); }
+
+html, body { height: 100%; }
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  font-feature-settings: "ss01", "cv11", "tnum";
+  -webkit-font-smoothing: antialiased;
+}
+
+/* number columns align */
+.tnum { font-variant-numeric: tabular-nums; }
+
+/* subtle "new" pulse for live items */
+@keyframes pulse-new {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 45%, transparent); }
+  100% { box-shadow: 0 0 0 10px transparent; }
+}
+.pulse-new { animation: pulse-new 1.2s ease-out 1; }
+
+/* thin scrollbars */
+* { scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+
+/* prose for answers */
+.prose-mt p { margin: 0.4rem 0; line-height: 1.55; }
+.prose-mt ul { margin: 0.4rem 0 0.4rem 1.1rem; list-style: disc; }
+.prose-mt li { margin: 0.15rem 0; }
+.prose-mt strong { font-weight: 600; }
+.prose-mt code { font-family: var(--font-mono); font-size: 0.85em; background: var(--bg-sunken); padding: 0 0.3em; border-radius: 4px; }
+
+.cite {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 1.5rem; height: 1.15rem; padding: 0 0.35rem; margin: 0 0.1rem;
+  border-radius: 999px; font-size: 0.68rem; font-weight: 600; font-family: var(--font-mono);
+  background: var(--accent-soft); color: var(--accent); cursor: pointer; vertical-align: 0.15em;
+  border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
+  transition: transform 120ms ease, background 120ms ease;
+}
+.cite:hover { transform: translateY(-1px); background: color-mix(in srgb, var(--accent) 18%, var(--bg-elev)); }
