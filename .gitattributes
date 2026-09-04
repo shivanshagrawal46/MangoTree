@@ -1,2 +1,4 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+# Shell scripts run on the droplet; CRLF would break the shebang and heredocs.
+*.sh text eol=lf

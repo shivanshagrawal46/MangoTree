@@ -56,12 +56,8 @@ export function AnswerCard({ answer, onSave, onAcceptTasks, compact, pdfHref }: 
         })}
       </ul>
 
-      {answer.disagreements?.length > 0 && (
-        <div className="mx-5 mb-3 rounded-xl border border-high/30 bg-high-soft px-3 py-2 text-xs text-high">
-          <div className="font-semibold mb-1 flex items-center gap-1"><AlertOctagon size={12} /> Records disagree / second reader differs</div>
-          <ul className="list-disc ml-4 space-y-0.5">{answer.disagreements.map((d, i) => <li key={i}><Cited text={d} sources={answer.sources} /></li>)}</ul>
-        </div>
-      )}
+      {/* Reconciliation notes ("I dropped my line that…") are review detail, not the
+          answer; they live under the Second opinion tab. */}
 
       {answer.risks?.length > 0 && (
         <div className="mx-5 mb-3 rounded-xl border border-line bg-sunken/60 px-3 py-2 text-xs">
@@ -107,6 +103,7 @@ export function AnswerCard({ answer, onSave, onAcceptTasks, compact, pdfHref }: 
                     <div key={k}><div className="text-[11px] uppercase tracking-wide text-faint mb-1">{k === "missed" ? "Points Opus missed" : k === "wrong" ? "Sentences GPT challenged" : "Disagreements"}</div>
                       <ul className="list-disc ml-4 space-y-0.5">{sr[k]!.map((s, i) => <li key={i}><Cited text={s} sources={answer.sources} /></li>)}</ul></div>
                   ) : null)}
+                  {answer.disagreements?.length > 0 && <div className="text-xs"><div className="text-[11px] uppercase tracking-wide text-faint mb-1">What Opus changed after the second read</div><ul className="list-disc ml-4 space-y-0.5">{answer.disagreements.map((d, i) => <li key={i}><Cited text={d} sources={answer.sources} /></li>)}</ul></div>}
                   {sr.answer && <details className="text-xs"><summary className="cursor-pointer text-muted">GPT-5.6's independent answer</summary><div className="prose-mt mt-2"><Cited text={sr.answer} sources={answer.sources} /></div></details>}
                   {answer.verdict?.notes?.length > 0 && <div className="text-xs"><div className="text-[11px] uppercase tracking-wide text-faint mb-1">Panel notes</div><ul className="list-disc ml-4">{answer.verdict.notes.map((n, i) => <li key={i}>{n}</li>)}</ul></div>}
                   {answer.verdict?.dissent?.length > 0 && <div className="text-xs text-high"><div className="text-[11px] uppercase tracking-wide mb-1">Dissent</div><ul className="list-disc ml-4">{answer.verdict.dissent.map((n, i) => <li key={i}>{n}</li>)}</ul></div>}
@@ -150,24 +147,90 @@ export function Trace({ steps }: { steps: any[] }) {
   );
 }
 
-/** Live view while a job runs. */
+/* What each tool means, in the reader's words. Shown live so a 15-minute run
+   reads as a person working through the file, not as a spinner. */
+const TOOL_LABEL: Record<string, (s: any) => string> = {
+  seed_search: () => "Ran the opening search across every channel",
+  search: (s) => `Searched: ${quoteArg(s)}`,
+  search_timeframe: (s) => `Searched a date range: ${s.summary?.replace(/^search_timeframe\s*/, "") || ""}`,
+  decompose_search: () => "Split the question into sub-questions and searched each",
+  fetch_full_document: (s) => `Read a document in full: ${after(s.summary, ":")}`,
+  fetch_documents: (s) => `Listed the matching documents: ${after(s.summary, ":")}`,
+  enumerate_set: (s) => `Counted a document type across the file: ${after(s.summary, ":")}`,
+  timeline: (s) => `Checked the timeline: ${after(s.summary, ":")}`,
+  flow_of_funds: (s) => `Traced the money: ${after(s.summary, ":")}`,
+  thread_context: (s) => `Read the whole email conversation: ${after(s.summary, ":")}`,
+  find_quote: (s) => `Looked for an exact phrase: ${after(s.summary, ":")}`,
+  verify_claim: (s) => `Verified a claim against the source — ${after(s.summary, ":")}`,
+  check_policy: () => "Checked the firm's rulebook",
+  graph_neighbors: (s) => `Followed the people and organisations involved: ${after(s.summary, ":")}`,
+  show_passage: () => "Re-read a passage",
+  submit_final_answer: () => "Wrote the answer",
+};
+function after(s: string | undefined, sep: string) { const i = (s || "").indexOf(sep); return i >= 0 ? (s || "").slice(i + 1).trim() : (s || ""); }
+function quoteArg(s: any) { const m = /'([^']+)'/.exec(s.summary || ""); return m ? `“${m[1]}”` : after(s.summary, ":"); }
+function describeStep(s: any): string {
+  if (s.type === "seed") return TOOL_LABEL.seed_search(s) + ` — ${after(s.summary, ":") || s.summary}`;
+  if (s.type === "sufficiency_gate") return "Completeness check: first draft held back, checklist of gaps returned";
+  if (s.type === "final") return "Final answer accepted";
+  if (s.type === "reasoning") return `Thinking: ${s.summary}`;
+  const f = TOOL_LABEL[s.tool_name];
+  return f ? f(s) : `${s.tool_name}: ${s.summary}`;
+}
+
+const PHASES = [["investigate", "Investigate"], ["second_reader", "Second read"], ["reconcile", "Write"], ["panel", "Panel check"]] as const;
+
+/** Live view while a job runs: the phase pipeline, a ticking clock, and every
+    step as it happens in plain words, newest at the bottom. */
 export function LiveTrace({ events }: { events: SSEEvent[] }) {
-  const phase = [...events].reverse().find((e) => e.kind === "phase")?.data?.label || "Starting…";
+  const [now, setNow] = React.useState(Date.now());
+  const started = React.useRef(Date.now());
+  React.useEffect(() => { const id = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(id); }, []);
+  const listRef = React.useRef<HTMLDivElement>(null);
+  React.useEffect(() => { listRef.current?.scrollTo({ top: listRef.current.scrollHeight }); }, [events.length]);
+
+  const phaseKey = [...events].reverse().find((e) => e.kind === "phase")?.data?.phase || "investigate";
+  const phaseIdx = Math.max(0, PHASES.findIndex(([k]) => k === phaseKey));
   const steps = events.filter((e) => e.kind === "agent_step").map((e) => e.data);
-  const gate = events.some((e) => e.kind === "agent_sufficiency_gate");
   const sr = events.find((e) => e.kind === "second_reader")?.data;
-  const last = steps[steps.length - 1];
+  const lastT = events.length ? events[events.length - 1].t : 0;
+  const elapsed = events.length ? Math.max(lastT, (now - started.current) / 1000) : (now - started.current) / 1000;
+  const sinceLast = elapsed - lastT;
+  const passages = steps.reduce((n, s) => n + (s.new_indices?.length || 0), 0);
+  const mm = Math.floor(elapsed / 60), ss = Math.floor(elapsed % 60);
+
+  const doing = phaseKey !== "investigate"
+    ? PHASES[phaseIdx][1] + (phaseKey === "second_reader" ? ": GPT-5.6 is reading the same evidence independently" : phaseKey === "reconcile" ? ": Opus 5 is writing the short final answer" : ": verifying every figure, skeptic review, verdict")
+    : steps.length === 0 ? "Opening search across every channel — first results in about a minute"
+    : sinceLast > 15 ? "Deciding the next step from what it has read so far…" : "Reading results…";
+
   return (
     <div className="rounded-2xl border border-line bg-elev p-4 shadow-[var(--shadow-sm)]">
-      <div className="flex items-center gap-2 text-sm">
-        <span className="relative flex h-2.5 w-2.5"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent opacity-60" /><span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-accent" /></span>
-        <span className="font-medium">{phase}</span>
-        <span className="text-faint text-xs ml-auto tnum">{steps.length} steps{events.length ? ` · ${Math.round(events[events.length - 1].t)}s` : ""}</span>
+      <div className="flex items-center gap-3 text-xs">
+        {PHASES.map(([k, label], i) => (
+          <div key={k} className="flex items-center gap-1.5">
+            <span className={cn("h-2 w-2 rounded-full", i < phaseIdx ? "bg-good" : i === phaseIdx ? "bg-accent animate-pulse" : "bg-line-strong")} />
+            <span className={cn(i === phaseIdx ? "text-fg font-medium" : i < phaseIdx ? "text-muted" : "text-faint")}>{label}</span>
+            {i < PHASES.length - 1 && <span className="text-faint mx-1">›</span>}
+          </div>
+        ))}
+        <span className="ml-auto tnum text-faint">{mm}:{String(ss).padStart(2, "0")} · {steps.length} steps · {passages} passages read</span>
       </div>
-      {last && <div className="mt-2 text-xs text-muted font-mono truncate">{last.tool_name || last.type}: {last.summary}</div>}
-      {gate && <div className="mt-2 text-xs text-high flex items-center gap-1"><Eye size={12} /> Completeness check: first answer held, checklist returned</div>}
-      {sr && <div className="mt-1 text-xs text-info flex items-center gap-1"><Sparkles size={12} /> GPT-5.6 read the same evidence: {sr.error ? "unavailable" : `${sr.missed} missed · ${sr.wrong} challenged · ${sr.disagree} disagree`}</div>}
-      <details className="mt-2 text-xs"><summary className="cursor-pointer text-faint">Show every step</summary><div className="mt-2 max-h-56 overflow-y-auto"><Trace steps={steps} /></div></details>
+      <div className="mt-2 flex items-center gap-2 text-sm">
+        <span className="relative flex h-2.5 w-2.5"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent opacity-60" /><span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-accent" /></span>
+        <span className="font-medium">{doing}</span>
+      </div>
+      {steps.length > 0 && (
+        <div ref={listRef} className="mt-3 max-h-48 overflow-y-auto rounded-xl bg-sunken/60 px-3 py-2 space-y-1">
+          {steps.map((s, i) => (
+            <div key={i} className={cn("flex gap-2 text-xs", i === steps.length - 1 ? "text-fg" : "text-muted")}>
+              <span className="tnum text-faint w-5 shrink-0 text-right">{s.step_num}</span>
+              <span className={cn("flex-1 min-w-0 break-words", s.type === "sufficiency_gate" && "text-high", s.type === "final" && "text-good", s.error && "text-critical")}>{describeStep(s)}{s.new_indices?.length ? <span className="text-accent"> +{s.new_indices.length}</span> : null}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      {sr && <div className="mt-2 text-xs text-info flex items-center gap-1"><Sparkles size={12} /> GPT-5.6 read the same evidence: {sr.error ? "unavailable" : `${sr.missed} points missed · ${sr.wrong} challenged · ${sr.disagree} disagree`}</div>}
     </div>
   );
 }

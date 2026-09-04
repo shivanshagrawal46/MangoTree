@@ -23,6 +23,7 @@ export const api = {
   get: <T,>(path: string) => request<T>(path),
   post: <T,>(path: string, body?: unknown) => request<T>(path, { method: "POST", body: body === undefined ? undefined : JSON.stringify(body) }),
   patch: <T,>(path: string, body?: unknown) => request<T>(path, { method: "PATCH", body: JSON.stringify(body) }),
+  del: <T,>(path: string) => request<T>(path, { method: "DELETE" }),
   /** Multipart upload. No Content-Type header: the browser sets the boundary. */
   upload: async <T,>(path: string, form: FormData): Promise<T> => {
     const res = await fetch(`/api${path}`, { method: "POST", credentials: "include", body: form });
@@ -47,6 +48,14 @@ export function subscribeJob(jobId: string, onEvent: (e: SSEEvent) => void, onEn
                  "phase", "second_reader", "status", "result", "error", "done", "end"];
   kinds.forEach((k) => es.addEventListener(k, handler as EventListener));
   es.addEventListener("end", () => { es.close(); onEnd?.(); });
-  es.onerror = () => { /* browser retries; job replay makes reconnect safe */ };
+  es.onerror = () => {
+    // A network blip: the browser reconnects and the job replays its events.
+    // A closed stream (HTTP 410/404 — the job died with a server restart) never
+    // reconnects; end the subscription so the UI stops waiting on nothing.
+    if (es.readyState === EventSource.CLOSED) {
+      onEvent({ seq: -1, t: 0, kind: "error", data: { error: "The server restarted before this answer finished. Please ask again." } });
+      onEnd?.();
+    }
+  };
   return () => es.close();
 }

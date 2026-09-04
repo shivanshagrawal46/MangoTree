@@ -25,6 +25,8 @@ lxml==5.2.2
 # --- AI ---
 anthropic==0.34.2
 voyageai==0.2.3
+openai==2.38.0            # GPT-5.6 second reader / critic
+tiktoken==0.13.0
 
 # --- Documents (Sprint 2) ---
 pypdf==4.3.1
@@ -32,6 +34,20 @@ python-docx==1.1.2
 openpyxl==3.1.5
 xlrd==2.0.1
 pillow==10.4.0
+PyMuPDF==1.26.5           # PDF page rendering for vision OCR (no system binary needed)
+pillow-heif==1.1.1        # iPhone HEIC site photos
+olefile==0.47
+
+# --- Web API (Sprint 6) ---
+fastapi==0.128.8
+uvicorn[standard]==0.39.0
+python-multipart==0.0.20  # document upload
+pydantic==2.13.4
+requests==2.32.5
+reportlab==4.5.1          # PDF exports (answers, briefing)
+
+# --- Object store ---
+boto3==1.42.97            # DigitalOcean Spaces (S3-compatible); unused when OBJECT_STORE=local
 
 # --- CLI / utils ---
 rich==13.7.1

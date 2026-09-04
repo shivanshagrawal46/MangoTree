@@ -51,7 +51,7 @@ def main() -> int:
                   f"{payload['budget']['max_total_tokens']:,} tokens / {int(payload['budget']['max_wall_clock_s'] // 60)} min")
 
     agent = Agent(get_mongo(), anthropic_api_key=SETTINGS.anthropic_api_key,
-                  voyage_api_key=SETTINGS.voyage_api_key, openai_api_key=SETTINGS.openai_api_key)
+                  voyage_api_key=SETTINGS.voyage_api_key, openai_api_key=SETTINGS.openai_api_key_critic or "")
     res = agent.run(args.question, scope, on_event=on_event,
                     critique=not args.no_critique, skeptic=not args.no_skeptic)
 

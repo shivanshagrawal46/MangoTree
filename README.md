@@ -43,6 +43,27 @@ Or by hand: `python -m uvicorn mangotree.api.app:app --port 8000` and `cd web &&
 Users (rakesh / jp / manjunath) are seeded on first API start; passwords print in the API log once, or set
 `MT_USERS` in `.env` as `id:Name:role:password,…`. Ask the agent from the CLI with `python scripts/ask.py "…" --property chita_ct`.
 
+## Deploy on the DigitalOcean droplet
+
+One command from the Windows machine does everything — pushes the code, clones/pulls on the
+droplet, sends the secrets and the originals (only what is missing), and runs the deploy:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\ship.ps1 -Server root@<droplet-ip> -Dest /opt/apps/mangotree `
+    -Domain mangotree.yourdomain.com -Email you@yourdomain.com     # domain/email needed only the first time
+```
+
+Or, on the droplet itself (after the secrets and originals are there):
+
+```bash
+cd /opt/apps/mangotree && git pull origin main && bash deploy.sh
+```
+
+`deploy.sh` installs missing prerequisites, keeps a `.venv` inside the folder, picks two free
+localhost ports and remembers them, builds the frontend, installs the `mangotree-api` /
+`mangotree-web` services, health-checks them, and — given a domain — adds one nginx site
+and issues HTTPS. Other apps on the droplet are not touched.
+
 ## The One-Paragraph System
 
 Emails (Outlook + Gmail), field photos (WhatsApp/Dropbox), call recordings (Granola/Zoom), and company guidelines flow into a single ingestion pipeline: cleaned, deduplicated, OCR'd, classified into 17 document classes, resolved to properties, chunked with 3-tier context, and indexed six ways. A deal ledger holds every dollar source-linked; a knowledge graph holds every entity; a versioned policy rulebook holds every company standard as a checkable rule. A scheduler drives the auto-analysis pipeline — every new artifact triggers extraction, detection, timeline updates, task creation, and change cards for its properties, automatically, in arrival order. Users get per-property workspaces (full timeline, scoped chat, docs, photos, money), a pending-vs-handled dashboard, 6 a.m. briefs, and an agent that answers with verbatim-quoted, verified, coverage-stated evidence. Detectors and the policy-deviation engine watch every deal continuously; photo forensics audits every draw before a human opens it; forecasting prices every active deal nightly.
