@@ -81,11 +81,21 @@ minor="$("$PY" -c 'import sys; print(sys.version_info.minor)')"
 [[ "$minor" -ge 9 ]] || die "python3.9+ required, found $($PY --version)"
 c_ok "python: $($PY --version 2>&1)"
 
+# An nvm-managed Node (common on a box that already runs Node apps) is only on
+# PATH in interactive shells; load it so we reuse it rather than install another.
+if ! command -v node >/dev/null 2>&1 && [[ -s "$HOME/.nvm/nvm.sh" ]]; then
+  # shellcheck disable=SC1091
+  set +u; source "$HOME/.nvm/nvm.sh" >/dev/null 2>&1; nvm use --lts >/dev/null 2>&1 || nvm use default >/dev/null 2>&1 || true; set -u
+fi
 need_node=1
 if command -v node >/dev/null 2>&1 && [[ "$(node -p 'process.versions.node.split(".")[0]')" -ge 18 ]]; then need_node=0; fi
 if [[ $need_node -eq 1 ]]; then
-  c_warn "node >= 18 not found — installing Node 20 from NodeSource (system-wide; existing node projects keep their own via nvm if they use it)"
-  curl -fsSL https://deb.nodesource.com/setup_20.x | $SUDO -E bash - >/dev/null
+  c_warn "node >= 18 not found — installing Node 20 from NodeSource (system-wide; nvm-managed projects are unaffected)"
+  if [[ -n "$SUDO" ]]; then
+    curl -fsSL https://deb.nodesource.com/setup_20.x | $SUDO -E bash - >/dev/null
+  else
+    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - >/dev/null
+  fi
   apt_install nodejs
 fi
 c_ok "node: $(node --version), npm: $(npm --version)"
