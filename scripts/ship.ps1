@@ -88,6 +88,7 @@ Write-Host "`n== 4/4 Deploy on the droplet ==" -ForegroundColor Cyan
 $envPrefix = ""
 if ($Domain) { $envPrefix += "MT_DOMAIN='$Domain' " }
 if ($Email)  { $envPrefix += "MT_EMAIL='$Email' " }
+if ($ExposeIp) { $envPrefix += "MT_EXPOSE=ip " }
 ssh -t $Server "cd '$Dest' && ${envPrefix}bash deploy.sh"
 if ($LASTEXITCODE -ne 0) { throw "deploy.sh reported an error (see above)" }
 Write-Host "`nShipped." -ForegroundColor Green
