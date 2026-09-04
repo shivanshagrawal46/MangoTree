@@ -31,6 +31,12 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 Set-Location $root
 foreach ($tool in @("git", "ssh", "scp")) { if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) { throw "$tool not found on this PC" } }
+# A stalled connection must fail, not hang: keep-alives every 15s, give up after
+# 4 missed (about a minute), then the shard is retried. One shard sat for over
+# an hour on a silent scp before this existed.
+$SSHOPTS = @("-o", "ConnectTimeout=20", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=4")
+function Invoke-Scp { param([string[]]$Args) & scp -q @SSHOPTS @Args; return $LASTEXITCODE }
+function Invoke-Ssh { param([string[]]$Args) & ssh @SSHOPTS @Args; return $LASTEXITCODE }
 
 Write-Host "`n== 1/4 Push code to GitHub ==" -ForegroundColor Cyan
 $remote = (git remote get-url origin).Trim()
@@ -77,8 +83,13 @@ if (-not $SkipOriginals -and (Test-Path $Source)) {
       if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force }
       foreach ($f in $g.Group) { $rel = $f.FullName.Substring($Source.Length + 1); $dst = Join-Path $tmp $rel; New-Item -ItemType Directory -Force -Path (Split-Path $dst) | Out-Null; Copy-Item $f.FullName $dst }
       Write-Host ("  [{0}/{1}] shard {2}: {3} files" -f $i, @($shards).Count, $shard, $g.Count)
-      ssh $Server "mkdir -p '$Dest/raw_store/$shard'"
-      scp -q -r "$tmp\$shard\*" "${Server}:$Dest/raw_store/$shard/"
+      $null = Invoke-Ssh @($Server, "mkdir -p '$Dest/raw_store/$shard'")
+      $ok = $false
+      for ($try = 1; $try -le 3 -and -not $ok; $try++) {
+        $rc = Invoke-Scp @("-r", "$tmp\$shard\*", "${Server}:$Dest/raw_store/$shard/")
+        if ($rc -eq 0) { $ok = $true } else { Write-Host ("      transfer of shard {0} failed (attempt {1}/3), retrying..." -f $shard, $try) -ForegroundColor Yellow; Start-Sleep 5 }
+      }
+      if (-not $ok) { throw "shard $shard could not be sent after 3 attempts; check the connection and re-run (already-sent files are skipped)" }
       Remove-Item $tmp -Recurse -Force
     }
   }
