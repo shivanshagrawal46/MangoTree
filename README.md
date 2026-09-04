@@ -40,8 +40,8 @@ powershell -ExecutionPolicy Bypass -File scripts\dev.ps1     # API :8000 + web :
 ```
 
 Or by hand: `python -m uvicorn mangotree.api.app:app --port 8000` and `cd web && npm run dev`.
-Users (rakesh / jp / manjunath) are seeded on first API start; passwords print in the API log once, or set
-`MT_USERS` in `.env` as `id:Name:role:password,…`. Ask the agent from the CLI with `python scripts/ask.py "…" --property chita_ct`.
+Logins are `rakeshsir`, `jpsir`, `manjunathsir` (set with `python scripts/set_logins.py`; users live in Atlas, so
+one run covers laptop and server). Ask the agent from the CLI with `python scripts/ask.py "…" --property chita_ct`.
 
 ## Deploy on the DigitalOcean droplet
 

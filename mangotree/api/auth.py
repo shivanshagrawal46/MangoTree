@@ -27,9 +27,12 @@ COOKIE = "mt_session"
 SESSION_DAYS = 14
 
 DEFAULT_USERS = [
-    {"user_id": "rakesh", "name": "Rakesh Sir", "role": "ceo", "full_name": "Rakesh Bhargava"},
-    {"user_id": "jp", "name": "JP Sir", "role": "accountant", "full_name": "Jaspreet Pahwa"},
-    {"user_id": "manjunath", "name": "Manjunath Sir", "role": "operations", "full_name": "Manjunath"},
+    # ``user_id`` is the internal key (task owners, briefings, audit rows all use
+    # it and must not change); ``login`` is what the person types on the login
+    # page. Admin directive 2026-09-05: rakeshsir / jpsir / manjunathsir.
+    {"user_id": "rakesh", "login": "rakeshsir", "name": "Rakesh Sir", "role": "ceo", "full_name": "Rakesh Bhargava"},
+    {"user_id": "jp", "login": "jpsir", "name": "JP Sir", "role": "accountant", "full_name": "Jaspreet Pahwa"},
+    {"user_id": "manjunath", "login": "manjunathsir", "name": "Manjunath Sir", "role": "operations", "full_name": "Manjunath"},
 ]
 ROLE_HOME = {"ceo": "decisions", "accountant": "review", "operations": "verification"}
 
@@ -62,7 +65,11 @@ def verify_password(password: str, stored: str) -> bool:
 def ensure_users(mongo: Mongo) -> None:
     users = mongo.db["users"]
     users.create_index("user_id", unique=True, name="ux_user_id")
+    users.create_index("login", unique=True, sparse=True, name="ux_user_login")
     if users.count_documents({}) > 0:
+        # Existing installs: make sure every default user carries its login name.
+        for d in DEFAULT_USERS:
+            users.update_one({"user_id": d["user_id"], "login": {"$exists": False}}, {"$set": {"login": d["login"]}})
         return
     spec = os.environ.get("MT_USERS", "").strip()
     seeded: List[Dict[str, Any]] = []
@@ -104,12 +111,15 @@ def read_token(token: str) -> Optional[str]:
 
 
 def public_user(doc: Dict[str, Any]) -> Dict[str, Any]:
-    return {"user_id": doc["user_id"], "name": doc.get("name"), "full_name": doc.get("full_name"),
+    return {"user_id": doc["user_id"], "login": doc.get("login") or doc["user_id"], "name": doc.get("name"), "full_name": doc.get("full_name"),
             "role": doc.get("role"), "home": ROLE_HOME.get(doc.get("role"), "decisions")}
 
 
 def login(mongo: Mongo, user_id: str, password: str, response: Response) -> Dict[str, Any]:
-    doc = mongo.db["users"].find_one({"user_id": user_id.strip().lower(), "active": {"$ne": False}})
+    typed = user_id.strip().lower()
+    # The login name is what people type; the internal id is accepted too so
+    # nothing already scripted against it breaks.
+    doc = mongo.db["users"].find_one({"$or": [{"login": typed}, {"user_id": typed}], "active": {"$ne": False}})
     if not doc or not verify_password(password, doc.get("password_hash", "")):
         raise HTTPException(401, "wrong user id or password")
     token = issue_token(doc["user_id"])
