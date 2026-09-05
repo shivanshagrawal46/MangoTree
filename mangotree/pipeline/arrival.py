@@ -149,6 +149,12 @@ class ArrivalChain:
         with ThreadPoolExecutor(max_workers=3) as pool:
             list(pool.map(lambda p: dossier.block(p, force=True), property_ids))
         trace["dossier"] = f"rebuilt for {len(property_ids)}"
+        # Close before creating: read the new documents against every open issue,
+        # card and task, so what they settled is marked resolved and nothing
+        # already done is raised again below.
+        from mangotree.briefing.resolution import ResolutionPass
+        rp = ResolutionPass(self.mongo, anthropic_api_key=SETTINGS.anthropic_api_key)
+        trace["resolution"] = {p: rp.run_for(p) for p in property_ids}
         te = TaskExtractor(self.mongo, anthropic_api_key=SETTINGS.anthropic_api_key).run(list(property_ids), concurrency=3)
         trace["tasks"] = te.per_property
         cd = CardDetector(self.mongo, anthropic_api_key=SETTINGS.anthropic_api_key).run(list(property_ids), concurrency=3)

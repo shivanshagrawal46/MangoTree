@@ -194,7 +194,7 @@ OPUS_HIGH_KWARGS = {"output_config": {"effort": "high"}, "thinking": {"type": "a
 #: in a glance; anything beyond five points belongs in "details".
 ANSWER_MAX_POINTS = 5
 ANSWER_URGENCIES = ("critical", "high", "normal", "info", "good")
-CRITIC_MODEL = "gpt-5.6"
+CRITIC_MODEL = "gpt-6-astra"
 
 # =============================================================================
 # Query understanding

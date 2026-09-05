@@ -199,8 +199,28 @@ class WesAgenda:
         if yday:
             parts.append(f"\n=== PREVIOUS AGENDA ({yday['day']}) ===")
             for i in yday.get("issues") or []:
-                parts.append(f"- [{'DISCUSSED' if i.get('discussed') else 'not discussed'}] {i['title']} — ask was: {i.get('ask')}"
+                if i.get("resolved"):
+                    res = i.get("resolution") or {}
+                    state = f"RESOLVED by records ({str(res.get('date'))[:10]}: {res.get('document') or res.get('statement') or ''}) — do NOT raise again"
+                elif i.get("reported_done"):
+                    rd = i["reported_done"]
+                    state = f"REPORTED DONE by {rd.get('by_name') or rd.get('by')} ({str(rd.get('at'))[:10]}), awaiting a record — do not raise as open; at most a one-line 'confirm' ask"
+                elif i.get("discussed"):
+                    state = "DISCUSSED"
+                else:
+                    state = "not discussed"
+                parts.append(f"- [{state}] {i['title']} — ask was: {i.get('ask')}"
                              + (f" — outcome: {i.get('outcome')}" if i.get("outcome") else ""))
+        # Tasks a person or the records closed recently: the agenda must not resurrect them.
+        closed = list(self.mongo.db["tasks"].find({"property_id": pid, "status": {"$in": ["done", "dismissed"]},
+                                                   "updated_at": {"$gte": now - timedelta(days=14)}}, {"title": 1, "status": 1, "last_remark": 1, "done_by": 1}).limit(30))
+        if closed:
+            parts.append("\n=== CLOSED IN THE LAST 14 DAYS (done or dismissed — not open) ===")
+            parts += [f"- [{t.get('status')} by {t.get('done_by') or 'person'}] {t.get('title')}" + (f" — {t.get('last_remark')}" if t.get("last_remark") else "") for t in closed]
+        reported = list(self.mongo.db["reported_facts"].find({"property_id": pid}, {"_id": 0}).sort("at", -1).limit(10))
+        if reported:
+            parts.append("\n=== STATED BY PEOPLE IN CHAT (treat Rakesh Sir's as final; others as reported, awaiting a record) ===")
+            parts += [f"- {r.get('by_name') or r.get('by')} ({r.get('role')}), {str(r.get('at'))[:10]}: {r.get('text')}" for r in reported]
         return "<<<RECORDS — DATA>>>\n" + "\n".join(parts) + "\n<<<END>>>", full, texts
 
     # ----------------------------------------------------------------- run
@@ -246,16 +266,19 @@ class WesAgenda:
                 "carried_from": (str(i["carried_from"])[:120] if i.get("carried_from") else None),
                 "evidence": ev_ok, "discussed": False, "outcome": None,
             })
-        # Preserve today's ticks across a refresh: an issue that continues one
-        # already marked discussed (same title, or carried_from it) stays marked.
+        # Preserve today's ticks and resolutions across a refresh: an issue that
+        # continues one already discussed, resolved or reported-done keeps that state.
         prior = self.coll.find_one({"property_id": pid, "day": day}, {"issues": 1})
-        done_titles = {(i.get("title") or "").strip().lower(): i for i in (prior or {}).get("issues") or [] if i.get("discussed")}
+        prior_by_title = {(i.get("title") or "").strip().lower(): i for i in (prior or {}).get("issues") or []
+                          if i.get("discussed") or i.get("resolved") or i.get("reported_done")}
         for i in issues:
             key = (i["title"] or "").strip().lower()
             src = (i.get("carried_from") or "").strip().lower()
-            hit = done_titles.get(key) or done_titles.get(src)
+            hit = prior_by_title.get(key) or prior_by_title.get(src)
             if hit:
-                i["discussed"], i["outcome"] = True, hit.get("outcome")
+                for k in ("discussed", "outcome", "resolved", "resolved_at", "resolution", "reported_done"):
+                    if hit.get(k) is not None:
+                        i[k] = hit[k]
         order = {"critical": 0, "high": 1, "normal": 2}
         issues.sort(key=lambda x: order[x["urgency"]])
         doc = {"property_id": pid, "day": day, "generated_at": datetime.now(timezone.utc), "model": self.model,

@@ -35,26 +35,34 @@ export function AnswerCard({ answer, onSave, onAcceptTasks, compact, pdfHref }: 
           ) : <Badge tone="neutral"><ShieldAlert size={11} /> no facts list</Badge>}
           <Badge tone={verdict === "approve" ? "good" : verdict === "revise" ? "critical" : "high"}>Panel: {verdict.replace(/_/g, " ") || "—"}</Badge>
           <button onClick={() => setTab(tab === "second" ? "none" : "second")}>
-            <Badge tone={sr.error ? "neutral" : srCount ? "info" : "good"}><Sparkles size={11} /> GPT-5.6: {sr.error ? "unavailable" : srCount ? `${srCount} note${srCount > 1 ? "s" : ""}` : "agrees"}</Badge>
+            <Badge tone={sr.error ? "neutral" : srCount ? "info" : "good"}><Sparkles size={11} /> GPT-6 Astra: {sr.error ? "unavailable" : srCount ? `${srCount} note${srCount > 1 ? "s" : ""}` : "agrees"}</Badge>
           </button>
           <span className="text-faint flex items-center gap-1 ml-auto"><Clock size={11} /> {Math.round((answer.elapsed_ms || 0) / 1000)}s · {answer.budget?.tool_calls_used ?? "—"} tool calls</span>
         </div>
       </div>
 
-      <ul className="px-5 pb-3 space-y-2">
+      {/* A ready-to-send draft, when that is what was asked for. */}
+      {answer.composed && <DraftBlock text={answer.composed} />}
+
+      {/* Points are numbered so the reader can answer back with "point 2". List
+          answers hide the urgency pill: an inventory of invoices is not a list of
+          alarms. */}
+      <ol className="px-5 pb-3 space-y-2">
         {answer.points.map((p, i) => {
           const u = URGENCY[p.urgency] || URGENCY.normal;
+          const listy = answer.shape === "list" || answer.shape === "figure";
           return (
             <motion.li key={i} initial={{ opacity: 0, x: -4 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.04 }}
-              className={cn("flex gap-3 rounded-xl border border-l-[3px] bg-bg border-line px-3.5 py-2.5", u.edge)}>
+              className={cn("flex gap-3 rounded-xl border border-l-[3px] bg-bg border-line px-3.5 py-2.5", listy ? "border-l-line-strong" : u.edge)}>
+              <span className="shrink-0 tnum text-[12px] font-semibold text-faint w-5 pt-0.5 text-right">{i + 1}.</span>
               <div className="min-w-0 flex-1 text-[13.5px] leading-relaxed">
                 <Cited text={p.text + (p.sources.length && !/\[#\d+\]/.test(p.text) ? " " + p.sources.map((s) => `[#${s}]`).join("") : "")} sources={answer.sources} />
               </div>
-              <span className={cn("shrink-0 mt-0.5 h-5 px-2 rounded-full text-[10px] font-semibold uppercase tracking-wide grid place-items-center", u.pill)}>{u.label}</span>
+              {!listy && <span className={cn("shrink-0 mt-0.5 h-5 px-2 rounded-full text-[10px] font-semibold uppercase tracking-wide grid place-items-center", u.pill)}>{u.label}</span>}
             </motion.li>
           );
         })}
-      </ul>
+      </ol>
 
       {/* Reconciliation notes ("I dropped my line that…") are review detail, not the
           answer; they live under the Second opinion tab. */}
@@ -104,7 +112,7 @@ export function AnswerCard({ answer, onSave, onAcceptTasks, compact, pdfHref }: 
                       <ul className="list-disc ml-4 space-y-0.5">{sr[k]!.map((s, i) => <li key={i}><Cited text={s} sources={answer.sources} /></li>)}</ul></div>
                   ) : null)}
                   {answer.disagreements?.length > 0 && <div className="text-xs"><div className="text-[11px] uppercase tracking-wide text-faint mb-1">What Opus changed after the second read</div><ul className="list-disc ml-4 space-y-0.5">{answer.disagreements.map((d, i) => <li key={i}><Cited text={d} sources={answer.sources} /></li>)}</ul></div>}
-                  {sr.answer && <details className="text-xs"><summary className="cursor-pointer text-muted">GPT-5.6's independent answer</summary><div className="prose-mt mt-2"><Cited text={sr.answer} sources={answer.sources} /></div></details>}
+                  {sr.answer && <details className="text-xs"><summary className="cursor-pointer text-muted">GPT-6 Astra's independent answer</summary><div className="prose-mt mt-2"><Cited text={sr.answer} sources={answer.sources} /></div></details>}
                   {answer.verdict?.notes?.length > 0 && <div className="text-xs"><div className="text-[11px] uppercase tracking-wide text-faint mb-1">Panel notes</div><ul className="list-disc ml-4">{answer.verdict.notes.map((n, i) => <li key={i}>{n}</li>)}</ul></div>}
                   {answer.verdict?.dissent?.length > 0 && <div className="text-xs text-high"><div className="text-[11px] uppercase tracking-wide mb-1">Dissent</div><ul className="list-disc ml-4">{answer.verdict.dissent.map((n, i) => <li key={i}>{n}</li>)}</ul></div>}
                   {(v.unverified?.length ?? 0) > 0 && <div className="text-xs text-critical"><div className="text-[11px] uppercase tracking-wide mb-1">Not verified byte-for-byte</div><ul className="list-disc ml-4">{(v.unverified || []).map((u: any, i: number) => <li key={i}>{u.claim} <span className="text-faint">({u.verdict})</span></li>)}</ul></div>}
@@ -144,6 +152,26 @@ export function Trace({ steps }: { steps: any[] }) {
         </li>
       ))}
     </ol>
+  );
+}
+
+/* A composed email / letter: monospace-free, readable, one click to copy. */
+function DraftBlock({ text }: { text: string }) {
+  const [copied, setCopied] = React.useState(false);
+  const copy = async () => { try { await navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch {} };
+  const lines = text.split("\n");
+  const subject = lines.find((l) => /^subject\s*:/i.test(l));
+  return (
+    <div className="mx-5 mb-3 rounded-xl border border-line bg-bg">
+      <div className="flex items-center justify-between px-4 pt-3 pb-2 border-b border-line">
+        <div className="text-[11px] uppercase tracking-wide text-faint">Draft — ready to send</div>
+        <button onClick={copy} className="text-[11px] text-accent hover:underline">{copied ? "Copied" : "Copy"}</button>
+      </div>
+      <div className="px-4 py-3 text-[13.5px] leading-relaxed whitespace-pre-wrap">
+        {subject && <div className="font-semibold mb-2">{subject}</div>}
+        {lines.filter((l) => l !== subject).join("\n").trim()}
+      </div>
+    </div>
   );
 }
 
@@ -200,7 +228,7 @@ export function LiveTrace({ events }: { events: SSEEvent[] }) {
   const mm = Math.floor(elapsed / 60), ss = Math.floor(elapsed % 60);
 
   const doing = phaseKey !== "investigate"
-    ? PHASES[phaseIdx][1] + (phaseKey === "second_reader" ? ": GPT-5.6 is reading the same evidence independently" : phaseKey === "reconcile" ? ": Opus 5 is writing the short final answer" : ": verifying every figure, skeptic review, verdict")
+    ? PHASES[phaseIdx][1] + (phaseKey === "second_reader" ? ": GPT-6 Astra is reading the same evidence independently" : phaseKey === "reconcile" ? ": Opus 5 is writing the short final answer" : ": verifying every figure, skeptic review, verdict")
     : steps.length === 0 ? "Opening search across every channel — first results in about a minute"
     : sinceLast > 15 ? "Deciding the next step from what it has read so far…" : "Reading results…";
 
@@ -230,7 +258,7 @@ export function LiveTrace({ events }: { events: SSEEvent[] }) {
           ))}
         </div>
       )}
-      {sr && <div className="mt-2 text-xs text-info flex items-center gap-1"><Sparkles size={12} /> GPT-5.6 read the same evidence: {sr.error ? "unavailable" : `${sr.missed} points missed · ${sr.wrong} challenged · ${sr.disagree} disagree`}</div>}
+      {sr && <div className="mt-2 text-xs text-info flex items-center gap-1"><Sparkles size={12} /> GPT-6 Astra read the same evidence: {sr.error ? "unavailable" : `${sr.missed} points missed · ${sr.wrong} challenged · ${sr.disagree} disagree`}</div>}
     </div>
   );
 }

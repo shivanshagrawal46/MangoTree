@@ -244,6 +244,13 @@ class Scheduler:
         with ThreadPoolExecutor(max_workers=3) as pool:
             built = list(pool.map(lambda p: bool(dossier.block(p.property_id, force=True)), PROPERTIES))
         out["dossiers"] = f"{sum(built)}/{len(built)} rebuilt"
+        # Resolution before generation: yesterday's items are checked against
+        # overnight records, so today's agenda cannot re-raise what is done.
+        from mangotree.briefing.resolution import ResolutionPass
+        rp = ResolutionPass(self.mongo, anthropic_api_key=self.key)
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            res = list(pool.map(lambda p: rp.run_for(p.property_id), PROPERTIES))
+        out["resolution"] = {k: sum(r.get(k, 0) for r in res if isinstance(r, dict)) for k in ("items", "resolved", "superseded", "reported")}
         out["ledger"] = LedgerBuilder(self.mongo, anthropic_api_key=self.key).run(concurrency=4).as_dict()
         out["wes"] = self.wes.run(force=True, concurrency=4)
         return out

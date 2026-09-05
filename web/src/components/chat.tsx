@@ -168,7 +168,7 @@ export function ChatPanel({ propertyId, initialQuestion, className }: { property
         <div className="rounded-2xl border border-line bg-elev shadow-[var(--shadow-sm)] focus-within:ring-2 focus-within:ring-accent/30 transition">
           <Textarea rows={2} value={text} onChange={(e) => setText(e.target.value)} placeholder={propertyId ? "Ask about this property…" : "Ask across every property…"} className="border-0 focus:ring-0 bg-transparent"
             onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(); } }} />
-          <div className="flex items-center justify-between px-3 pb-2"><span className="text-[11px] text-faint">{live ? "Answering — you can open another property and ask there; this one keeps going and will be here when you return." : "Opus 5 investigates · GPT-5.6 second-reads · Opus 5 writes the final. Narrow question ~5 min, broad one up to 20. Enter to send."}</span>
+          <div className="flex items-center justify-between px-3 pb-2"><span className="text-[11px] text-faint">{live ? "Answering — you can open another property and ask there; this one keeps going and will be here when you return." : "Opus 5 investigates · GPT-6 Astra second-reads · Opus 5 writes the final. Narrow question ~5 min, broad one up to 20. Enter to send."}</span>
             <Button size="sm" variant="primary" onClick={ask} disabled={!text.trim() || !!live}><Send size={13} /> {live ? "Working…" : "Ask"}</Button></div>
         </div>
       </div>

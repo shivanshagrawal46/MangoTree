@@ -188,7 +188,8 @@ export function WesAgendaStrip({ pid }: { pid: string }) {
   };
   if (!d || d.issues.length === 0) return null;
   const dot = (u: string) => (u === "critical" ? "bg-critical" : u === "high" ? "bg-high" : "bg-line-strong");
-  const openCount = d.issues.filter((i) => !i.discussed).length;
+  const closed = (i: WesIssue) => !!(i.discussed || i.resolved || i.reported_done);
+  const openCount = d.issues.filter((i) => !closed(i)).length;
   const it = sel != null ? d.issues[sel] : null;
   return (
     <>
@@ -200,11 +201,12 @@ export function WesAgendaStrip({ pid }: { pid: string }) {
         </span>
         {d.issues.map((i, idx) => (
           <button key={idx} onClick={() => setSel(idx)}
+            title={i.resolved ? `Resolved by records${i.resolution?.date ? ` on ${fmtDate(i.resolution.date)}` : ""}${i.resolution?.document ? ` — ${i.resolution.document}` : ""}` : i.reported_done ? `Reported done by ${i.reported_done.by_name || i.reported_done.by} — awaiting a record` : undefined}
             className={cn("group flex items-center gap-2 rounded-full border border-line bg-elev pl-2 pr-3 h-7 text-xs whitespace-nowrap hover:border-accent hover:bg-accent-soft/40 transition shrink-0",
-              i.discussed && "opacity-50")}>
-            <span className={cn("h-2 w-2 rounded-full shrink-0", dot(i.urgency), i.urgency === "critical" && !i.discussed && "pulse-new")} />
-            <span className={cn("font-medium", i.discussed && "line-through")}>{i.title}</span>
-            {i.discussed && <CheckCircle2 size={12} className="text-good" />}
+              closed(i) && "opacity-50")}>
+            <span className={cn("h-2 w-2 rounded-full shrink-0", closed(i) ? "bg-good" : dot(i.urgency), i.urgency === "critical" && !closed(i) && "pulse-new")} />
+            <span className={cn("font-medium", closed(i) && "line-through")}>{i.title}</span>
+            {i.resolved ? <span className="text-[10px] text-good font-semibold">resolved</span> : i.reported_done ? <span className="text-[10px] text-high font-semibold">reported done</span> : i.discussed ? <CheckCircle2 size={12} className="text-good" /> : null}
           </button>
         ))}
         <span className="text-[11px] text-faint shrink-0 ml-1">{d.day ? fmtDate(d.day, "d MMM") : ""}</span>
@@ -214,6 +216,21 @@ export function WesAgendaStrip({ pid }: { pid: string }) {
           <DialogContent title={<span className="flex items-center gap-2"><span className={cn("h-2.5 w-2.5 rounded-full", dot(it.urgency))} />{it.title}</span>}
             description={<span className="capitalize">{it.urgency}{it.carried_from ? " · carried forward from an earlier day" : ""}</span>}>
             <div className="mt-4 space-y-4 text-sm">
+              {it.resolved && it.resolution && (
+                <div className="rounded-xl bg-good/10 border border-good/30 px-4 py-3">
+                  <div className="text-[11px] uppercase tracking-wide text-good mb-1">Resolved{it.resolution.date ? ` · ${fmtDate(it.resolution.date)}` : ""}{it.resolution.verdict === "superseded" ? " · superseded" : ""}</div>
+                  {it.resolution.document && <div className="text-xs">{it.resolution.document}</div>}
+                  {it.resolution.statement && <div className="text-xs">Stated by {it.resolution.by_name || it.resolution.by}: “{it.resolution.statement}”</div>}
+                  {it.resolution.quote && it.resolution.source_sha && <button onClick={() => { setSel(null); open({ sha: it.resolution!.source_sha!, highlight: it.resolution!.quote!.slice(0, 60) }); }} className="text-xs text-muted italic text-left hover:text-accent mt-1">“{it.resolution.quote.slice(0, 200)}” <span className="not-italic text-accent">open →</span></button>}
+                  {it.resolution.note && <div className="text-xs text-muted mt-1">{it.resolution.note}</div>}
+                </div>
+              )}
+              {!it.resolved && it.reported_done && (
+                <div className="rounded-xl bg-high-soft border border-high/30 px-4 py-3 text-xs">
+                  <div className="text-[11px] uppercase tracking-wide text-high mb-1">Reported done · awaiting a record</div>
+                  {it.reported_done.by_name || it.reported_done.by} said on {fmtDate(it.reported_done.at)}: “{it.reported_done.statement}”. It will be marked resolved when an email or document confirms it.
+                </div>
+              )}
               <div><div className="text-[11px] uppercase tracking-wide text-faint mb-1">Why now</div><p className="leading-relaxed">{it.why_now}</p></div>
               <div className="rounded-xl bg-accent-soft/50 border border-accent/20 px-4 py-3"><div className="text-[11px] uppercase tracking-wide text-accent mb-1">Ask Wes</div><p className="font-medium leading-relaxed">{it.ask}</p></div>
               {it.evidence.length > 0 && (
@@ -271,16 +288,19 @@ export function WesAgendaCard({ pid, compact, showHeader = true }: { pid: string
           {d.issues.map((it: WesIssue, i: number) => {
             const u = URG[it.urgency] || URG.normal;
             return (
-              <li key={i} className={cn("rounded-xl border border-line border-l-4 bg-elev px-4 py-3 transition", u.edge, it.discussed && "opacity-60")}>
+              <li key={i} className={cn("rounded-xl border border-line border-l-4 bg-elev px-4 py-3 transition", it.resolved ? "border-l-good" : u.edge, (it.discussed || it.resolved || it.reported_done) && "opacity-60")}>
                 <div className="flex items-start gap-3">
-                  <Checkbox checked={it.discussed} onCheckedChange={(v) => mark(i, !!v)} className="mt-0.5" />
+                  <Checkbox checked={it.discussed || !!it.resolved} onCheckedChange={(v) => mark(i, !!v)} className="mt-0.5" />
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="text-[11px] tnum text-faint">{i + 1}.</span>
-                      <span className={cn("text-sm font-semibold", it.discussed && "line-through")}>{it.title}</span>
-                      <Badge tone={u.pill}>{it.urgency}</Badge>
-                      {it.carried_from && <Badge tone="info">carried forward</Badge>}
+                      <span className={cn("text-sm font-semibold", (it.discussed || it.resolved) && "line-through")}>{it.title}</span>
+                      {it.resolved ? <Badge tone="good">resolved{it.resolution?.date ? ` · ${fmtDate(it.resolution.date, "MMM d")}` : ""}</Badge>
+                        : it.reported_done ? <Badge tone="high">reported done · awaiting record</Badge>
+                        : <Badge tone={u.pill}>{it.urgency}</Badge>}
+                      {it.carried_from && !it.resolved && <Badge tone="info">carried forward</Badge>}
                     </div>
+                    {it.resolved && it.resolution && <p className="text-xs text-good mt-1">Resolved by {it.resolution.document ? `“${it.resolution.document}”` : it.resolution.statement ? `${it.resolution.by_name || it.resolution.by}'s statement` : "the records"}{it.resolution.note ? ` — ${it.resolution.note}` : ""}</p>}
                     {!compact && <p className="text-xs text-muted mt-1 leading-relaxed">{it.why_now}</p>}
                     <p className="text-xs mt-1.5"><span className="text-faint uppercase tracking-wide text-[10px] mr-1.5">Ask Wes</span><span className="font-medium">{it.ask}</span></p>
                     {!compact && it.evidence.length > 0 && (

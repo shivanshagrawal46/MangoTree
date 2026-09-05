@@ -44,6 +44,18 @@ from mangotree.storage.mongo import Mongo
 MAX_AGE_HOURS = float(os.environ.get("MT_DOSSIER_MAX_AGE_H", "12"))
 
 
+def cached_block(mongo: Mongo, pid: str, *, max_chars: int = 6000) -> str:
+    """The stored dossier block, whatever its age — and nothing if none exists.
+
+    For passes that must stay fast (the resolution pass runs before every
+    regeneration): they read what the last investigation wrote and never
+    trigger a new 14-minute one themselves."""
+    doc = mongo.db["dossiers"].find_one({"property_id": pid}, {"block": 1, "built_at": 1})
+    if not doc or not doc.get("block"):
+        return ""
+    return f"(investigation as of {doc['built_at']:%Y-%m-%d %H:%M} UTC)\n" + doc["block"][:max_chars]
+
+
 def context_for(mongo: Mongo, pid: str, *, force: bool = False) -> str:
     """Convenience for consumers: the dossier block, keys taken from settings."""
     from mangotree.config.settings import SETTINGS

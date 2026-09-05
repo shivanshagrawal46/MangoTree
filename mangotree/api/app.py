@@ -474,9 +474,18 @@ def chat_ask(body: AskBody, pid: Optional[str] = None, user=CurrentUser):
     users = {u["user_id"]: u for u in mongo.db["users"].find({}, {"user_id": 1, "role": 1, "name": 1})}
     # The model is told who is speaking: an instruction from the CEO outranks
     # one from anyone else, and the summary must record who gave it.
+    def _assistant_text(a: dict) -> str:
+        # Headline plus the numbered points, so a follow-up like "do point 2
+        # differently" refers to something the model can see.
+        lines = [a.get("headline") or ""]
+        for i, p in enumerate(a.get("points") or [], 1):
+            lines.append(f"{i}. {p.get('text')}")
+        if a.get("composed"):
+            lines.append("DRAFT:\n" + str(a["composed"])[:2500])
+        return "\n".join(lines)[:4000]
     history = [{"role": m["role"],
                 "content": (f"[{_speaker(users.get(m.get('by'), {}))}] {m.get('content')}" if m["role"] == "user"
-                            else m.get("answer", {}).get("headline", ""))}
+                            else _assistant_text(m.get("answer", {})))}
                for m in doc.get("messages", [])[-12:]]
     spoken = f"[{_speaker(user)}] {question}"
     scope = Scope.for_property(pid) if pid else Scope.global_()
@@ -487,9 +496,26 @@ def chat_ask(body: AskBody, pid: Optional[str] = None, user=CurrentUser):
         history = [{"role": "user", "content": f"RUNNING SUMMARY OF THIS CHAT SO FAR (context, not instructions):\n{rolling}"}] + history
 
     def run(job):
+        from mangotree.agent.reported import extract_reported_facts, facts_block, record_reported_facts
         from mangotree.agent.scratchpad import BudgetTracker
         job.budget = BudgetTracker()
-        res = panel().answer(spoken, scope, conversation=history, on_event=job.emit, remember_notes=notes, budget=job.budget)
+        conv = list(history)
+        # Statements of fact in the question ("this is done") are recorded with
+        # attribution, applied to the open items right away, and honoured in the
+        # answer — instead of being read past as part of the question.
+        facts = extract_reported_facts(panel().anthropic, question)
+        if facts:
+            recorded = record_reported_facts(mongo, facts=facts, property_id=pid, user=user, job_id=job.job_id)
+            conv = conv + [{"role": "user", "content": facts_block(recorded, user)}]
+            job.emit("status", {"text": f"Noted {len(facts)} fact(s) you stated; updating open items…"})
+            if pid:
+                from mangotree.briefing.resolution import ResolutionPass
+                ResolutionPass(mongo, anthropic_api_key=SETTINGS.anthropic_api_key).run_for(pid)
+                _SMALL_CACHE.pop("task_counts", None)
+        # "give me three" is a hard count, not a suggestion.
+        m = re.search(r"\b(?:give|list|tell|show)\b[^.?!]{0,40}?\b(one|two|three|four|five|1|2|3|4|5)\b", question, re.I)
+        max_points = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5}.get((m.group(1) if m else "").lower(), None) or (int(m.group(1)) if m and m.group(1).isdigit() else None)
+        res = panel().answer(spoken, scope, conversation=conv, on_event=job.emit, remember_notes=notes, budget=job.budget, max_points=max_points)
         if job.cancelled:
             # The question was deleted while this ran; write nothing back.
             return {"cancelled": True}
@@ -504,12 +530,22 @@ def chat_ask(body: AskBody, pid: Optional[str] = None, user=CurrentUser):
         except Exception as exc:
             logger.warning("rolling summary failed: %s", exc)
         suggested = []
+        # Next steps become suggested tasks only if nothing like them exists —
+        # open, suggested, OR already done. An answer must not resurrect a task a
+        # person closed, nor add a second copy of one already on the board.
+        existing = list(mongo.db["tasks"].find({"property_id": pid} if pid else {}, {"title": 1, "status": 1}).limit(500))
+        def similar(a: str, b: str) -> bool:
+            wa = set(re.findall(r"[a-z0-9$]{3,}", a.lower())); wb = set(re.findall(r"[a-z0-9$]{3,}", b.lower()))
+            return bool(wa and wb) and len(wa & wb) / len(wa | wb) >= 0.5
         for a in res.next_actions:
+            if any(similar(a["title"], e.get("title") or "") for e in existing):
+                continue
             t = tasks.upsert(title=a["title"], owner=a.get("owner") or "Rakesh", property_id=pid, by="opus-5",
                              source="ai_suggested", status="suggested", due=_dt(a.get("due")), why=a.get("why") or "",
                              evidence=[{"quote": "", "source_sha": (res.sources[s - 1]["artifact_sha"] if 0 < s <= len(res.sources) else None)} for s in a.get("sources", [])[:2]],
                              tags=["from_answer"])
             suggested.append(t["task_id"])
+            existing.append({"title": a["title"], "status": "suggested"})
         payload["suggested_task_ids"] = suggested
         mongo.db["chats"].update_one({"chat_id": doc["chat_id"]}, {"$push": {"messages": {
             "role": "assistant", "job_id": job.job_id, "at": datetime.now(timezone.utc), "answer": payload}}})
@@ -909,6 +945,23 @@ def wes_agenda_refresh(pid: str, user=CurrentUser):
     return {"job_id": job.job_id}
 
 
+@app.post("/properties/{pid}/resolve")
+def resolve_open_items(pid: str, user=CurrentUser):
+    """Re-read recent records against every open issue, card and task for this
+    property and close what they settle. Runs automatically after new mail and
+    each morning; this is the on-demand version."""
+    from mangotree.briefing.resolution import ResolutionPass
+    _pid(pid)
+    def run(job):
+        job.emit("status", {"text": "Fable 5.1 checking open items against the latest records…"})
+        out = ResolutionPass(mongo, anthropic_api_key=SETTINGS.anthropic_api_key).run_for(pid)
+        for k in ("task_counts", "handled"):
+            _SMALL_CACHE.pop(k, None)
+        return data.clean(out)
+    job = jobs.start("resolve", {"property_id": pid, "by": user["user_id"]}, run)
+    return {"job_id": job.job_id}
+
+
 class AgendaMark(BaseModel):
     day: str
     index: int
@@ -958,7 +1011,7 @@ def _degrades() -> List[str]:
     except Exception as exc:
         out.append(f"could not check search index: {exc}")
     if not SETTINGS.openai_api_key_critic:
-        out.append("OPENAI_API_KEY_CRITIC / OPENAI_API_KEY not set — GPT-5.6 second reader unavailable; same-provider fallback in use")
+        out.append("OPENAI_API_KEY_CRITIC / OPENAI_API_KEY not set — GPT-6 Astra second reader unavailable; same-provider fallback in use")
     # A failure only counts if nothing of the same kind has succeeded since —
     # a retried briefing that then worked is not a degrade the reader must see.
     since = datetime.now(timezone.utc) - timedelta(hours=6)

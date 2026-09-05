@@ -31,7 +31,7 @@ MODELS = {
     Seat.MANAGER: "claude-fable-5",
     Seat.FINANCE: "claude-fable-5-1",   # verified on this key 2026-09-03
     Seat.ANALYST: "claude-opus-5",
-    Seat.CRITIC: "gpt-5.6",              # provider diversity; not yet wired
+    Seat.CRITIC: "gpt-6-astra",          # cross-provider second reader (admin directive 2026-09-05)
     Seat.OCR: "claude-sonnet-4-6",
     Seat.WORKHORSE: "claude-sonnet-5",
     Seat.OCR_ESCALATION: "claude-opus-5",

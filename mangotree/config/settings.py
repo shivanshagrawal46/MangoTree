@@ -36,7 +36,7 @@ class Settings:
     #: Optional. Enables the cross-provider OCR tier for pages Anthropic's
     #: content policy refuses. Without it the cascade falls back to offline OCR.
     openai_api_key: str = ""
-    #: Separate OpenAI key for the GPT-5.6 second reader (admin directive
+    #: Separate OpenAI key for the GPT-6 Astra second reader (admin directive
     #: 2026-09-04), so its spend shows on its own line in the OpenAI console,
     #: apart from the OCR fallback. Falls back to ``openai_api_key`` if unset.
     openai_api_key_critic: str = ""

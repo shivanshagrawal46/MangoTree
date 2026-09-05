@@ -407,6 +407,11 @@ def handled_overnight(mongo: Mongo, *, hours: int = 36) -> List[Dict[str, Any]]:
         ("Tasks extracted by Opus 5", "tasks", lambda: mongo.db["tasks"].count_documents({"source": "ai_extracted", "created_at": {"$gte": since}})),
         ("Deals outside the registry catalogued", "registry", lambda: mongo.review_queue.count_documents({"kind": "registry_candidate"})),
         ("Answers produced", "answers", lambda: mongo.db["jobs"].count_documents({"kind": "answer", "status": "done", "created_at": {"$gte": since}})),
+        ("Open items closed by the records (tasks, cards, Wes issues)", "resolved",
+         lambda: mongo.db["tasks"].count_documents({"resolution.by": "evidence", "done_at": {"$gte": since}})
+                 + mongo.db["cards"].count_documents({"status": "resolved", "resolved_at": {"$gte": since}})
+                 + sum(1 for a in mongo.db["wes_agenda"].find({"issues.resolved_at": {"$gte": since}}, {"issues.resolved_at": 1})
+                       for i in a.get("issues", []) if i.get("resolved_at") and i["resolved_at"] >= since)),
     ]
     with ThreadPoolExecutor(max_workers=len(specs)) as pool:
         counts = list(pool.map(lambda s: s[2](), specs))

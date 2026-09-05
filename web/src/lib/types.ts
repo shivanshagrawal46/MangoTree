@@ -34,6 +34,7 @@ export type Source = { index: number; chunk_id: string; artifact_sha: string; ci
 
 export type Answer = {
   question: string; scope: string; headline: string; points: AnswerPoint[]; details: string;
+  shape?: "brief" | "actions" | "draft" | "list" | "figure" | "explain" | "followup"; composed?: string | null;
   disagreements: string[]; next_actions: NextAction[]; second_opinion: string;
   second_reader: { provider?: string; model?: string; answer?: string; missed?: string[]; wrong?: string[]; disagree?: string[]; error?: string };
   risks: string[]; verification: { facts?: number; verified?: number; rate?: number; unverified?: any[] };
@@ -108,6 +109,10 @@ export type WesIssue = {
   title: string; why_now: string; ask: string; urgency: "critical" | "high" | "normal";
   carried_from?: string | null; evidence: { source_sha: string; quote: string }[];
   discussed: boolean; outcome?: string | null;
+  resolved?: boolean; resolved_at?: string;
+  resolution?: { verdict: string; document?: string; date?: string; quote?: string; source_sha?: string; statement?: string; by?: string; by_name?: string; note?: string };
+  reported_done?: { by?: string; by_name?: string; at?: string; statement?: string };
+  checked_at?: string;
 };
 export type WesAgendaDoc = { property_id: string; day: string | null; generated_at?: string; issues: WesIssue[]; quiet?: boolean; note?: string };
 
