@@ -173,6 +173,17 @@ def answer_pdf(answer: Dict[str, Any], *, question: str, scope: str, saved_by: s
         color = _URG_COLOR.get(pt.get("urgency"), "#1f2937")
         story.append(P(f"<font color='{color}'>■</font> {_cite_to_sup(pt.get('text', ''))} "
                        + "".join(f"<super><font color='#1f6f5f'>{s}</font></super>" for s in pt.get("sources", []) if f"[#{s}]" not in pt.get("text", "")), st["p"]))
+    # Draft answers carry the email/message text; composed answers (list, figure,
+    # explain) carry a written block. Both would otherwise be lost from the PDF.
+    if answer.get("draft"):
+        story.append(P("Draft", st["h2"]))
+        for para in str(answer["draft"]).split("\n\n"):
+            if para.strip():
+                story.append(P(_cite_to_sup(para.strip()).replace("\n", "<br/>"), st["p"]))
+    if answer.get("composed"):
+        for para in str(answer["composed"]).split("\n\n"):
+            if para.strip():
+                story.append(P(_cite_to_sup(para.strip()).replace("\n", "<br/>"), st["p"]))
     if answer.get("disagreements"):
         story.append(P("Where the records disagree", st["h2"]))
         for d in answer["disagreements"]:

@@ -665,11 +665,24 @@ class SaveAnswerBody(BaseModel):
 
 
 @app.post("/saved")
-def save_answer(body: SaveAnswerBody, user=CurrentUser):
-    chat = mongo.db["chats"].find_one({"chat_id": body.chat_id})
-    msg = next((m for m in (chat or {}).get("messages", []) if m.get("job_id") == body.job_id), None)
+def _answer_message(chat_id: str, job_id: str):
+    """The assistant message for a job, plus the question that produced it.
+
+    The question message carries the same job_id (so a reopened chat can
+    re-attach to a running job), so the lookup must insist on the answer."""
+    chat = mongo.db["chats"].find_one({"chat_id": chat_id})
+    msgs = (chat or {}).get("messages", [])
+    msg = next((m for m in msgs if m.get("job_id") == job_id and m.get("role") == "assistant" and m.get("answer")), None)
     if not msg:
         raise HTTPException(404, "answer not found")
+    question = next((m.get("content") for m in msgs if m.get("job_id") == job_id and m.get("role") == "user"), None)
+    if question is None:
+        question = next((m.get("content") for m in reversed(msgs[: msgs.index(msg)]) if m.get("role") == "user"), "")
+    return chat, msg, question or ""
+
+
+def save_answer(body: SaveAnswerBody, user=CurrentUser):
+    chat, msg, _ = _answer_message(body.chat_id, body.job_id)
     doc = {"saved_id": body.job_id, "chat_id": body.chat_id, "property_id": chat.get("property_id"),
            "title": body.title or msg["answer"].get("headline", "")[:120], "answer": msg["answer"],
            "saved_by": user["user_id"], "saved_at": datetime.now(timezone.utc)}
@@ -1119,11 +1132,7 @@ def export_portfolio(user=CurrentUser):
 
 @app.get("/export/answer/{chat_id:path}/{job_id}.pdf")
 def export_answer(chat_id: str, job_id: str, user=CurrentUser):
-    chat = mongo.db["chats"].find_one({"chat_id": chat_id})
-    msg = next((m for m in (chat or {}).get("messages", []) if m.get("job_id") == job_id), None)
-    if not msg:
-        raise HTTPException(404, "answer not found")
-    q = next((m.get("content") for m in reversed(chat["messages"][: chat["messages"].index(msg)]) if m.get("role") == "user"), "")
+    _, msg, q = _answer_message(chat_id, job_id)
     return _pdf(exports.answer_pdf(msg["answer"], question=q, scope=msg["answer"].get("scope", ""), saved_by=user["name"]), f"answer-{job_id}.pdf")
 
 
