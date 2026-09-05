@@ -182,6 +182,7 @@ class PanelResult:
     coverage: str = ""
     draft: str = ""                                                  # Opus agent's original draft
     shape: str = "brief"                                            # brief | actions | draft | list | figure | explain | followup
+    mode: str = "full"                                              # full (Opus 5 + second read + panel) | fast (GPT-6 Astra alone)
     composed: Optional[str] = None                                   # ready-to-send text when the shape is draft
     sources: List[Dict[str, Any]] = field(default_factory=list)      # pad chunks with index
     steps: List[Dict[str, Any]] = field(default_factory=list)
@@ -318,12 +319,109 @@ class AnswerPanel:
             return {"verdict": "approve_with_notes", "confidence": 0, "notes": [f"verdict unavailable: {exc}"[:160]], "dissent": []}
 
     # -------------------------------------------------------------------- run
-    def answer(self, question: str, scope: Scope, *, conversation: Sequence[dict] = (),
-               on_event: Optional[Callable[[str, Dict[str, Any]], None]] = None,
-               remember_notes: Sequence[dict] = (), budget=None, max_points: Optional[int] = None) -> PanelResult:
+    # ------------------------------------------------------------- fast mode
+    @property
+    def fast_agent(self) -> Agent:
+        """GPT-6 Astra as the planner, sharing the search stack and verifier."""
+        if getattr(self, "_fast_agent", None) is None:
+            self._fast_agent = Agent(self.mongo, anthropic_api_key=self.agent.client.api_key, voyage_api_key="",
+                                     openai_api_key=self._okey, hybrid=self.agent.hs, model=cfg.CRITIC_MODEL)
+        return self._fast_agent
+
+    def _reconcile_openai(self, question: str, draft: str, pad: AgentScratchpad, *, shape: str, max_points: Optional[int]) -> Dict[str, Any]:
+        """The same writing rules, answered by GPT-6 Astra in JSON mode."""
+        from openai import OpenAI
+        idx = cited_indices(draft)[:60] or list(range(1, min(pad.n_chunks, 30) + 1))
+        passages = _passages_block(pad, idx, max_chars=2500)
+        limit = max_points or (15 if shape == "list" else 2 if shape == "figure" else cfg.ANSWER_MAX_POINTS)
+        user = (f"QUESTION:\n{question}\nSHAPE: {shape}\n\nYOUR DRAFT:\n{draft}\n\nSECOND READER:\n(none in fast mode)\n\nEVIDENCE:\n{passages}")
+        if max_points:
+            user += f"\n\nCOUNT: the asker asked for exactly {max_points}. Return exactly {max_points} points."
+        client = OpenAI(api_key=self._okey, max_retries=3)
+        r = client.chat.completions.create(model=cfg.CRITIC_MODEL, max_completion_tokens=8000, response_format={"type": "json_object"},
+                                           messages=[{"role": "system", "content": _RECONCILE_SYSTEM.format(max_points=limit)},
+                                                     {"role": "user", "content": user}])
+        data = _json(r.choices[0].message.content or "{}")
+        points = []
+        for p in (data.get("points") or [])[:limit]:
+            urg = str(p.get("urgency") or "normal").lower()
+            points.append({"text": str(p.get("text") or "").strip(), "urgency": urg if urg in cfg.ANSWER_URGENCIES else "normal",
+                           "sources": [int(s) for s in (p.get("sources") or []) if str(s).isdigit()]})
+        actions = [{"title": str(a.get("title") or "").strip(), "owner": str(a.get("owner") or "Rakesh"),
+                    "due": a.get("due") if a.get("due") not in ("null", "", None) else None, "why": str(a.get("why") or ""),
+                    "sources": [int(s) for s in (a.get("sources") or []) if str(s).isdigit()]} for a in (data.get("next_actions") or [])[:8]]
+        return {"headline": str(data.get("headline") or "").strip(), "shape": data.get("shape") if data.get("shape") in SHAPES else shape,
+                "draft": (str(data.get("draft")).strip() if data.get("draft") and str(data.get("draft")).lower() != "null" else None),
+                "points": points, "details": str(data.get("details") or "").strip(), "disagreements": [],
+                "next_actions": [a for a in actions if a["title"]], "second_opinion": "fast mode — no second reader",
+                "facts": [f for f in (data.get("facts") or []) if isinstance(f, dict) and f.get("claim")][:40]}
+
+    def answer_fast(self, question: str, scope: Scope, *, conversation: Sequence[dict] = (),
+                    on_event: Optional[Callable[[str, Dict[str, Any]], None]] = None,
+                    remember_notes: Sequence[dict] = (), budget=None, max_points: Optional[int] = None) -> PanelResult:
+        """Fast mode: GPT-6 Astra investigates (10 tool calls, 5 minutes) and writes.
+        No second reader, no skeptic, no panel verdict. Facts are still checked
+        byte-for-byte — that is deterministic and cheap. Labelled as fast in the UI."""
         started = time.time()
         emit = on_event or (lambda k, p: None)
         result = PanelResult(question=question, scope=scope.describe())
+        result.models = {"investigator": cfg.CRITIC_MODEL + " (fast)", "second_reader": "none (fast mode)",
+                         "reconciler": cfg.CRITIC_MODEL, "panel": "none (fast mode)"}
+        result.mode = "fast"
+        conv = list(conversation)
+        state = self._state_block(scope)
+        if state:
+            conv = [{"role": "user", "content": state}] + conv
+        if remember_notes:
+            block = "\n".join(f"- ({n.get('author', 'admin')}, {str(n.get('created_at', ''))[:10]}): {n.get('text')}" for n in remember_notes)
+            conv = [{"role": "user", "content": f"REMEMBER NOTES (verbatim, from the firm — treat as ground truth and attribute when used):\n{block}"}] + conv
+        if budget is not None:
+            budget.max_tool_calls = min(budget.max_tool_calls, cfg.FAST_MAX_TOOL_CALLS)
+            budget.max_wall_clock_s = min(budget.max_wall_clock_s, float(cfg.FAST_MAX_WALL_CLOCK_S))
+        else:
+            from .scratchpad import BudgetTracker
+            budget = BudgetTracker(max_tool_calls=cfg.FAST_MAX_TOOL_CALLS, max_wall_clock_s=float(cfg.FAST_MAX_WALL_CLOCK_S))
+        emit("phase", {"phase": "investigate", "label": f"{cfg.CRITIC_MODEL} investigating (fast: {cfg.FAST_MAX_TOOL_CALLS} tool calls, {cfg.FAST_MAX_WALL_CLOCK_S // 60} min)"})
+        agent_res: AgentResult = self.fast_agent.run(question, scope, conversation=conv, on_event=on_event,
+                                                    critique=False, skeptic=False, budget=budget, enforce_sufficiency=False)
+        pad = self._pad_from(agent_res)
+        result.draft, result.steps, result.budget, result.outcome = agent_res.answer, agent_res.steps, agent_res.budget, agent_res.outcome
+        result.sources = [h.as_dict() | {"index": i} for i, h in enumerate(agent_res.chunks, 1)]
+        shape = detect_shape(question)
+        emit("phase", {"phase": "reconcile", "label": f"{cfg.CRITIC_MODEL} writing the answer ({shape})"})
+        try:
+            final = self._reconcile_openai(question, agent_res.answer, pad, shape=shape, max_points=max_points)
+        except Exception as exc:
+            logger.warning("fast reconcile failed (%s); using draft", exc)
+            result.degrades.append(f"fast reconcile failed: {type(exc).__name__}")
+            final = {"headline": agent_res.answer.split("\n")[0][:200], "shape": shape, "draft": None, "points": [], "details": agent_res.answer,
+                     "disagreements": [], "next_actions": [], "second_opinion": "", "facts": agent_res.facts}
+        result.headline, result.points, result.details = final["headline"], final["points"], final["details"]
+        result.disagreements, result.next_actions, result.second_opinion = final["disagreements"], final["next_actions"], final["second_opinion"]
+        result.shape, result.composed = final.get("shape", shape), final.get("draft")
+        emit("phase", {"phase": "panel", "label": "Checking every figure against its source"})
+        try:
+            result.verification = self.verifier.verify(final.get("facts") or agent_res.facts, pad)
+        except Exception as exc:
+            result.verification = {"error": str(exc)[:200]}
+        result.verdict = {"verdict": "fast", "confidence": 0, "notes": ["Fast mode: single model, no second reader or panel review."], "dissent": []}
+        result.coverage = agent_res.coverage
+        result.elapsed_ms = int((time.time() - started) * 1000)
+        emit("done", {"elapsed_ms": result.elapsed_ms, "verdict": "fast"})
+        return result
+
+    # -------------------------------------------------------------------- run
+    def answer(self, question: str, scope: Scope, *, conversation: Sequence[dict] = (),
+               on_event: Optional[Callable[[str, Dict[str, Any]], None]] = None,
+               remember_notes: Sequence[dict] = (), budget=None, max_points: Optional[int] = None,
+               mode: str = "full") -> PanelResult:
+        if mode == "fast":
+            return self.answer_fast(question, scope, conversation=conversation, on_event=on_event,
+                                    remember_notes=remember_notes, budget=budget, max_points=max_points)
+        started = time.time()
+        emit = on_event or (lambda k, p: None)
+        result = PanelResult(question=question, scope=scope.describe())
+        result.mode = "full"
         result.models = {"investigator": cfg.AGENT_PLANNER_MODEL + " (high)", "second_reader": cfg.CRITIC_MODEL,
                          "reconciler": cfg.AGENT_PLANNER_MODEL, "panel": cfg.AGENT_PLANNER_MODEL}
 

@@ -60,11 +60,16 @@ export function ChatPanel({ propertyId, initialQuestion, className }: { property
   }, [q.data?.active?.[0]?.job_id]); // eslint-disable-line react-hooks/exhaustive-deps
   React.useEffect(() => () => { unsubRef.current?.(); }, []);
 
+  /* Full = Opus 5 investigation + GPT-6 Astra second read + panel (5–20 min).
+     Fast = GPT-6 Astra alone, 10 tool calls, ~5 min, labelled as such on the card. */
+  const [mode, setMode] = React.useState<"full" | "fast">(() => (typeof window !== "undefined" && localStorage.getItem("mt-answer-mode") === "fast" ? "fast" : "full"));
+  const pickMode = (m: "full" | "fast") => { setMode(m); try { localStorage.setItem("mt-answer-mode", m); } catch {} };
+
   const ask = async () => {
     const question = text.trim();
     if (!question || live) return;
     setText("");
-    const { job_id } = await api.post<{ job_id: string }>(propertyId ? `/chat/${propertyId}/ask` : "/chat/ask", { question });
+    const { job_id } = await api.post<{ job_id: string }>(propertyId ? `/chat/${propertyId}/ask` : "/chat/ask", { question, mode });
     qc.invalidateQueries({ queryKey: ["shell"] });
     attach(job_id, question);
   };
@@ -168,8 +173,17 @@ export function ChatPanel({ propertyId, initialQuestion, className }: { property
         <div className="rounded-2xl border border-line bg-elev shadow-[var(--shadow-sm)] focus-within:ring-2 focus-within:ring-accent/30 transition">
           <Textarea rows={2} value={text} onChange={(e) => setText(e.target.value)} placeholder={propertyId ? "Ask about this property…" : "Ask across every property…"} className="border-0 focus:ring-0 bg-transparent"
             onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(); } }} />
-          <div className="flex items-center justify-between px-3 pb-2"><span className="text-[11px] text-faint">{live ? "Answering — you can open another property and ask there; this one keeps going and will be here when you return." : "Opus 5 investigates · GPT-6 Astra second-reads · Opus 5 writes the final. Narrow question ~5 min, broad one up to 20. Enter to send."}</span>
-            <Button size="sm" variant="primary" onClick={ask} disabled={!text.trim() || !!live}><Send size={13} /> {live ? "Working…" : "Ask"}</Button></div>
+          <div className="flex items-center justify-between gap-3 px-3 pb-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="flex rounded-lg border border-line overflow-hidden text-[11px] shrink-0" title="Full: Opus 5 + GPT-6 Astra second read + panel. Fast: GPT-6 Astra alone, 10 tool calls.">
+                <button onClick={() => pickMode("full")} className={cn("px-2.5 h-6 transition", mode === "full" ? "bg-fg text-bg font-semibold" : "text-muted hover:bg-sunken")}>Full</button>
+                <button onClick={() => pickMode("fast")} className={cn("px-2.5 h-6 transition", mode === "fast" ? "bg-fg text-bg font-semibold" : "text-muted hover:bg-sunken")}>Fast</button>
+              </div>
+              <span className="text-[11px] text-faint truncate">{live ? "Answering — you can open another property and ask there; this one keeps going and will be here when you return."
+                : mode === "fast" ? "GPT-6 Astra alone · 10 tool calls · ~5 min · no second reader or panel. For quick lookups."
+                : "Opus 5 investigates · GPT-6 Astra second-reads · Opus 5 writes · panel checks. ~5 min narrow, up to 20 broad."}</span>
+            </div>
+            <Button size="sm" variant="primary" onClick={ask} disabled={!text.trim() || !!live}><Send size={13} /> {live ? "Working…" : mode === "fast" ? "Ask (fast)" : "Ask"}</Button></div>
         </div>
       </div>
       <Dialog open={noteOpen} onOpenChange={setNoteOpen}>

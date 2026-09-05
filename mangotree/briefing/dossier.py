@@ -57,10 +57,22 @@ def cached_block(mongo: Mongo, pid: str, *, max_chars: int = 6000) -> str:
 
 
 def context_for(mongo: Mongo, pid: str, *, force: bool = False) -> str:
-    """Convenience for consumers: the dossier block, keys taken from settings."""
+    """The dossier block for consumers (tasks, cards, agenda).
+
+    Reads what exists, at any age. Rebuilding is the job of the morning pass and
+    the arrival chain, which force it deliberately; a consumer must never start a
+    14-minute investigation as a side effect of someone pressing Refresh. Only
+    when no dossier exists at all is one built here.
+    """
     from mangotree.config.settings import SETTINGS
-    return PropertyDossier(mongo, anthropic_api_key=SETTINGS.anthropic_api_key, voyage_api_key=SETTINGS.voyage_api_key,
-                           openai_api_key=SETTINGS.openai_api_key_critic or "").block(pid, force=force)
+    d = PropertyDossier(mongo, anthropic_api_key=SETTINGS.anthropic_api_key, voyage_api_key=SETTINGS.voyage_api_key,
+                        openai_api_key=SETTINGS.openai_api_key_critic or "")
+    if force:
+        return d.block(pid, force=True)
+    existing = mongo.db["dossiers"].find_one({"property_id": pid}, {"block": 1, "built_at": 1})
+    if existing and existing.get("block"):
+        return f"(investigation as of {existing['built_at']:%Y-%m-%d %H:%M} UTC)\n" + existing["block"]
+    return d.block(pid)
 
 #: The standing question. Phrased so the agent's sufficiency checklist covers
 #: money, commitments, deadlines, risks and what has NOT happened.
@@ -105,8 +117,12 @@ class PropertyDossier:
     # -------------------------------------------------------- investigate
     def _investigate(self, pid: str) -> Dict[str, Any]:
         from mangotree.agent.agent import Agent
+        from mangotree.config.models import Seat, model_for
         from mangotree.retrieve.scope import Scope
-        agent = Agent(self.mongo, **self.keys)
+        # Fable 5.1 reads for itself (admin directive 2026-09-05): the model that
+        # writes the issues and the ledger does the property investigation, so its
+        # picture of the deal is its own, not a summary handed over from Opus.
+        agent = Agent(self.mongo, **self.keys, model=model_for(Seat.FINANCE))
         res = agent.run(QUESTION, Scope.for_property(pid), critique=False, skeptic=True)
         sources = []
         seen = set()
@@ -116,6 +132,7 @@ class PropertyDossier:
                 seen.add(sha)
                 sources.append({"sha256": sha, "name": getattr(h, "display_name", None) or getattr(h, "filename", None), "date": getattr(h, "date", None)})
         return {
+            "model": agent.model,
             "answer": res.answer, "open_items": list(res.open_items or []), "risks": list(res.risks or []),
             "coverage": res.coverage, "verification": res.verification, "outcome": res.outcome, "forced_reason": res.forced_reason,
             "steps": len(res.steps or []), "elapsed_ms": res.elapsed_ms, "sources": sources[:40],
@@ -166,7 +183,7 @@ class PropertyDossier:
     def render(doc: Dict[str, Any]) -> str:
         inv = doc.get("investigation") or {}
         mem = doc.get("memory") or {}
-        parts = [f"=== INVESTIGATION — where this deal stands (Opus 5 agent, {doc['built_at']:%Y-%m-%d %H:%M} UTC, "
+        parts = [f"=== INVESTIGATION — where this deal stands ({(doc.get('investigation') or {}).get('model') or 'agent'}, {doc['built_at']:%Y-%m-%d %H:%M} UTC, "
                  f"{inv.get('steps', 0)} tool steps, {(inv.get('verification') or {}).get('verified', '?')}/{(inv.get('verification') or {}).get('facts', '?')} facts verified) ==="]
         parts.append((inv.get("answer") or "").strip()[:9000])
         if inv.get("risks"):

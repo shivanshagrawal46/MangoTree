@@ -383,6 +383,9 @@ def evidence_original(sha: str, user=CurrentUser):
 
 class AskBody(BaseModel):
     question: str
+    #: full (Opus 5 investigation + GPT-6 Astra second read + panel, up to 20 min)
+    #: or fast (GPT-6 Astra alone, 10 tool calls, ~5 min, labelled as such).
+    mode: str = "full"
 
 
 def _chat_id(pid: Optional[str]) -> str:
@@ -469,6 +472,7 @@ def chat_ask(body: AskBody, pid: Optional[str] = None, user=CurrentUser):
     question = body.question.strip()
     if not question:
         raise HTTPException(400, "empty question")
+    mode = "fast" if body.mode == "fast" else "full"
     doc = _chat(pid)
     now = datetime.now(timezone.utc)
     users = {u["user_id"]: u for u in mongo.db["users"].find({}, {"user_id": 1, "role": 1, "name": 1})}
@@ -515,7 +519,8 @@ def chat_ask(body: AskBody, pid: Optional[str] = None, user=CurrentUser):
         # "give me three" is a hard count, not a suggestion.
         m = re.search(r"\b(?:give|list|tell|show)\b[^.?!]{0,40}?\b(one|two|three|four|five|1|2|3|4|5)\b", question, re.I)
         max_points = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5}.get((m.group(1) if m else "").lower(), None) or (int(m.group(1)) if m and m.group(1).isdigit() else None)
-        res = panel().answer(spoken, scope, conversation=conv, on_event=job.emit, remember_notes=notes, budget=job.budget, max_points=max_points)
+        res = panel().answer(spoken, scope, conversation=conv, on_event=job.emit, remember_notes=notes, budget=job.budget,
+                             max_points=max_points, mode=mode)
         if job.cancelled:
             # The question was deleted while this ran; write nothing back.
             return {"cancelled": True}
@@ -551,11 +556,11 @@ def chat_ask(body: AskBody, pid: Optional[str] = None, user=CurrentUser):
             "role": "assistant", "job_id": job.job_id, "at": datetime.now(timezone.utc), "answer": payload}}})
         return payload
 
-    job = jobs.start("answer", {"chat_id": doc["chat_id"], "question": question, "by": user["user_id"], "property_id": pid}, run)
+    job = jobs.start("answer", {"chat_id": doc["chat_id"], "question": question, "by": user["user_id"], "property_id": pid, "mode": mode}, run)
     # The question carries its job id, so a chat reopened mid-answer can find the
     # running job and re-attach to its event stream (events are replayed).
     mongo.db["chats"].update_one({"chat_id": doc["chat_id"]}, {"$push": {"messages": {
-        "role": "user", "content": question, "by": user["user_id"], "role_label": _speaker(user), "at": now, "job_id": job.job_id}}})
+        "role": "user", "content": question, "by": user["user_id"], "role_label": _speaker(user), "at": now, "job_id": job.job_id, "mode": mode}}})
     return {"job_id": job.job_id, "chat_id": doc["chat_id"]}
 
 

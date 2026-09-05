@@ -174,6 +174,12 @@ AGENT_MAX_TOTAL_TOKENS = 10_000_000
 AGENT_MAX_WALL_CLOCK_S = 15 * 60
 #: Consecutive reasoning-only turns (no tool call) before a finish is forced.
 AGENT_MAX_REASONING_STREAK = 3
+
+#: Fast mode (admin directive 2026-09-05): GPT-6 Astra investigates and writes on
+#: its own — 10 tool calls, five minutes, no second reader, no panel. A quick
+#: read for simple questions; the full run remains the default.
+FAST_MAX_TOOL_CALLS = 10
+FAST_MAX_WALL_CLOCK_S = 5 * 60
 #: Output allowance for the forced-finalise call, so a memo is never a stub.
 AGENT_FINALIZE_MAX_OUTPUT = 64_000
 AGENT_PLANNER_MODEL = model_for(Seat.ANALYST)

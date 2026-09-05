@@ -33,10 +33,16 @@ export function AnswerCard({ answer, onSave, onAcceptTasks, compact, pdfHref }: 
           {v.facts ? (
             <Badge tone={v.verified === v.facts ? "good" : "high"}>{v.verified === v.facts ? <ShieldCheck size={11} /> : <ShieldAlert size={11} />} {v.verified}/{v.facts} facts verified</Badge>
           ) : <Badge tone="neutral"><ShieldAlert size={11} /> no facts list</Badge>}
-          <Badge tone={verdict === "approve" ? "good" : verdict === "revise" ? "critical" : "high"}>Panel: {verdict.replace(/_/g, " ") || "—"}</Badge>
-          <button onClick={() => setTab(tab === "second" ? "none" : "second")}>
-            <Badge tone={sr.error ? "neutral" : srCount ? "info" : "good"}><Sparkles size={11} /> GPT-6 Astra: {sr.error ? "unavailable" : srCount ? `${srCount} note${srCount > 1 ? "s" : ""}` : "agrees"}</Badge>
-          </button>
+          {answer.mode === "fast" ? (
+            <Badge tone="info"><Sparkles size={11} /> Fast · GPT-6 Astra alone · no second reader or panel</Badge>
+          ) : (
+            <>
+              <Badge tone={verdict === "approve" ? "good" : verdict === "revise" ? "critical" : "high"}>Panel: {verdict.replace(/_/g, " ") || "—"}{answer.verdict?.revised ? " (revised once)" : ""}</Badge>
+              <button onClick={() => setTab(tab === "second" ? "none" : "second")}>
+                <Badge tone={sr.error ? "neutral" : srCount ? "info" : "good"}><Sparkles size={11} /> GPT-6 Astra: {sr.error ? "unavailable" : srCount ? `${srCount} note${srCount > 1 ? "s" : ""}` : "agrees"}</Badge>
+              </button>
+            </>
+          )}
           <span className="text-faint flex items-center gap-1 ml-auto"><Clock size={11} /> {Math.round((answer.elapsed_ms || 0) / 1000)}s · {answer.budget?.tool_calls_used ?? "—"} tool calls</span>
         </div>
       </div>

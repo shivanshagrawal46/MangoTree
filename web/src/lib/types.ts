@@ -35,10 +35,11 @@ export type Source = { index: number; chunk_id: string; artifact_sha: string; ci
 export type Answer = {
   question: string; scope: string; headline: string; points: AnswerPoint[]; details: string;
   shape?: "brief" | "actions" | "draft" | "list" | "figure" | "explain" | "followup"; composed?: string | null;
+  mode?: "full" | "fast";
   disagreements: string[]; next_actions: NextAction[]; second_opinion: string;
   second_reader: { provider?: string; model?: string; answer?: string; missed?: string[]; wrong?: string[]; disagree?: string[]; error?: string };
   risks: string[]; verification: { facts?: number; verified?: number; rate?: number; unverified?: any[] };
-  verdict: { verdict: string; confidence: number; notes: string[]; dissent: string[] };
+  verdict: { verdict: string; confidence: number; notes: string[]; dissent: string[]; revised?: boolean };
   coverage: string; draft: string; sources: Source[]; steps: any[]; budget: any; outcome: string;
   degrades: string[]; elapsed_ms: number; models: Record<string, string>; suggested_task_ids?: string[];
 };

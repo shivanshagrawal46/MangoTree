@@ -77,6 +77,25 @@ class AgentResult:
         }
 
 
+class _Block:
+    """A minimal stand-in for an Anthropic content block, built from an OpenAI
+    reply so the loop reads both providers the same way."""
+    def __init__(self, type: str, **kw):
+        self.type = type
+        for k, v in kw.items():
+            setattr(self, k, v)
+
+
+class _Usage:
+    def __init__(self, input_tokens: int = 0, output_tokens: int = 0, cache_read: int = 0):
+        self.input_tokens, self.output_tokens, self.cache_read_input_tokens = input_tokens, output_tokens, cache_read
+
+
+class _Resp:
+    def __init__(self, content: List[Any], usage: _Usage, stop_reason: str):
+        self.content, self.usage, self.stop_reason = content, usage, stop_reason
+
+
 class Agent:
     def __init__(self, mongo: Mongo, *, anthropic_api_key: str, voyage_api_key: str, openai_api_key: str = "",
                  hybrid: Optional[HybridSearch] = None, model: Optional[str] = None):
@@ -85,9 +104,84 @@ class Agent:
         self.mongo = mongo
         self.client = anthropic.Anthropic(api_key=anthropic_api_key, max_retries=3)
         self.model = model or cfg.AGENT_PLANNER_MODEL
+        # The planner can be an OpenAI model (fast mode runs GPT-6 Astra). The loop,
+        # tools, scratchpad and verifier are shared; only the wire format differs.
+        self.provider = "openai" if self.model.lower().startswith(("gpt", "o1", "o3", "o4")) else "anthropic"
+        self._openai_key = openai_api_key
+        self._openai = None
         self.hs = hybrid or HybridSearch(mongo, voyage_api_key=voyage_api_key, anthropic_api_key=anthropic_api_key)
         self.verifier = Verifier(anthropic_api_key)
         self.hardening = Hardening(anthropic_api_key=anthropic_api_key, openai_api_key=openai_api_key)
+
+    def _openai_client(self):
+        if self._openai is None:
+            from openai import OpenAI
+            if not self._openai_key:
+                raise RuntimeError("fast mode needs OPENAI_API_KEY_CRITIC (or OPENAI_API_KEY)")
+            self._openai = OpenAI(api_key=self._openai_key, max_retries=3)
+        return self._openai
+
+    # ------------------------------------------------------- openai adapters
+    @staticmethod
+    def _to_responses_input(messages: List[dict]) -> List[dict]:
+        """Anthropic-shaped history -> OpenAI Responses API input items.
+
+        GPT-6 Astra accepts function tools only through /v1/responses (chat
+        completions rejects them unless reasoning is off, and this model has no
+        'off'). Text turns become messages; a tool_use becomes a function_call
+        item; a tool_result becomes a function_call_output with the same call id.
+        """
+        out: List[dict] = []
+        for m in messages:
+            content = m.get("content")
+            if isinstance(content, str):
+                out.append({"role": m["role"], "content": content})
+                continue
+            for b in content:
+                t = b.get("type")
+                if m["role"] == "assistant":
+                    if t == "text" and b.get("text"):
+                        out.append({"role": "assistant", "content": b["text"]})
+                    elif t == "tool_use":
+                        out.append({"type": "function_call", "call_id": b["id"], "name": b["name"], "arguments": json.dumps(b.get("input") or {})})
+                else:
+                    if t == "tool_result":
+                        c = b.get("content")
+                        out.append({"type": "function_call_output", "call_id": b["tool_use_id"], "output": c if isinstance(c, str) else json.dumps(c)})
+                    elif t == "text" and b.get("text"):
+                        out.append({"role": "user", "content": b["text"]})
+        return out
+
+    def _planner_call_openai(self, *, system: str, tools: List[dict], messages: List[dict],
+                             tool_choice: Optional[dict], max_tokens: int) -> _Resp:
+        oa_tools = [{"type": "function", "name": t["name"], "description": t["description"], "parameters": t["input_schema"]} for t in tools]
+        kwargs: Dict[str, Any] = dict(model=self.model, instructions=system, input=self._to_responses_input(messages),
+                                      tools=oa_tools, max_output_tokens=min(max_tokens, 16000),
+                                      # Fast mode is the quick read: light reasoning, not none (unsupported).
+                                      reasoning={"effort": "low"})
+        if tool_choice and tool_choice.get("type") == "tool":
+            kwargs["tool_choice"] = {"type": "function", "name": tool_choice["name"]}
+        r = self._openai_client().responses.create(**kwargs)
+        blocks: List[Any] = []
+        texts: List[str] = []
+        for item in r.output or []:
+            t = getattr(item, "type", None)
+            if t == "message":
+                for c in getattr(item, "content", None) or []:
+                    if getattr(c, "type", None) == "output_text" and getattr(c, "text", None):
+                        texts.append(c.text)
+            elif t == "function_call":
+                try:
+                    args = json.loads(getattr(item, "arguments", None) or "{}")
+                except json.JSONDecodeError:
+                    args = {}
+                blocks.append(_Block("tool_use", id=item.call_id, name=item.name, input=args))
+        if texts:
+            blocks.insert(0, _Block("text", text="\n".join(texts)))
+        u = r.usage
+        cached = getattr(getattr(u, "input_tokens_details", None), "cached_tokens", 0) or 0
+        return _Resp(blocks, _Usage(getattr(u, "input_tokens", 0) or 0, getattr(u, "output_tokens", 0) or 0, cached),
+                     "tool_use" if any(b.type == "tool_use" for b in blocks) else "end_turn")
 
     # ------------------------------------------------------------------ seed
     def _seed(self, question: str, scope: Scope, pad: AgentScratchpad, box: ToolBox,
@@ -179,6 +273,8 @@ class Agent:
 
     def _planner_call(self, *, system: str, tools: List[dict], messages: List[dict],
                       tool_choice: Optional[dict] = None, max_tokens: int = cfg.AGENT_PLANNER_MAX_OUTPUT):
+        if self.provider == "openai":
+            return self._planner_call_openai(system=system, tools=tools, messages=messages, tool_choice=tool_choice, max_tokens=max_tokens)
         kwargs: Dict[str, Any] = dict(
             model=self.model, max_tokens=max_tokens,
             system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
@@ -229,7 +325,10 @@ class Agent:
                         box: ToolBox, pad: AgentScratchpad, reason: str) -> Optional[Dict[str, Any]]:
         note = FORCE_FINALIZE_NOTE.format(reason=reason)
         msgs = messages + [{"role": "user", "content": note}]
-        for choice in ({"type": "tool", "name": "submit_final_answer"}, None):
+        # Fable-family models reject a forced tool choice (400); go straight to the
+        # instruction-only attempt for them instead of paying for the failure.
+        choices = (None,) if "fable" in self.model else ({"type": "tool", "name": "submit_final_answer"}, None)
+        for choice in choices:
             try:
                 r = self._planner_call(system=system, tools=tools, messages=msgs, tool_choice=choice,
                                        max_tokens=cfg.AGENT_FINALIZE_MAX_OUTPUT)
