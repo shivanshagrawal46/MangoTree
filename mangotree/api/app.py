@@ -7,7 +7,9 @@ direct read or a small audited write.
 from __future__ import annotations
 
 import io
+import logging
 import mimetypes
+import os
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
@@ -83,7 +85,15 @@ from mangotree.briefing.morning import Briefing, Scheduler  # noqa: E402
 from . import exports  # noqa: E402
 
 _scheduler = Scheduler(mongo, anthropic_api_key=SETTINGS.anthropic_api_key)
-_scheduler.start()
+# The standing jobs run in exactly one place: the server, whose service file sets
+# MT_SCHEDULER=1. A developer's laptop running the API against the same database
+# must never start them — on 2026-09-06 a local API left running overnight ran
+# the whole morning pass (15 Fable investigations) a second time after the
+# droplet had already done it. Everything else in the API works without it.
+if os.environ.get("MT_SCHEDULER", "0").strip().lower() in ("1", "true", "yes"):
+    _scheduler.start()
+else:
+    logging.getLogger("mangotree").warning("scheduler OFF (set MT_SCHEDULER=1 on the server); mail intake, morning pass and briefings will not run here")
 _threading.Thread(target=lambda: (data.portfolio(mongo), _warm_caches()), daemon=True, name="warm-caches").start()
 _cards = CardDetector(mongo, anthropic_api_key=SETTINGS.anthropic_api_key)
 _briefing = Briefing(mongo, anthropic_api_key=SETTINGS.anthropic_api_key)

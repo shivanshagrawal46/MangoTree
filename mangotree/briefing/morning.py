@@ -9,7 +9,9 @@ writes it before 6 a.m. and it can be regenerated on demand.
 from __future__ import annotations
 
 import json
+import os
 import re
+import socket
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -219,16 +221,56 @@ class Scheduler:
             self._wes = WesAgenda(self.mongo, anthropic_api_key=self.key)
         return self._wes
 
-    def _due_daily(self, job: str) -> bool:
-        """Once a day, from two hours before the briefing hour, if not yet recorded today.
+    # ------------------------------------------------------------ daily lock
+    # One claim per (job, day) across every process that shares the database.
+    # A unique index makes the claim atomic; a failed run may be retried once;
+    # a claim left "running" for six hours (crashed process) may be taken over.
+    # Before this, two processes each saw "not recorded today" and both ran the
+    # morning pass — fifteen full investigations, twice, on 2026-09-06.
+    MAX_ATTEMPTS = 2
+    STALE_AFTER = timedelta(hours=6)
 
-        Two hours because the pass now starts with a full agent investigation of
-        every property (~5 min each, three at a time) before the ledger and the
-        agenda, and the 6 a.m. brief must read the finished result."""
+    @property
+    def locks(self):
+        if getattr(self, "_locks", None) is None:
+            self._locks = self.mongo.db["daily_locks"]
+            self._locks.create_index([("job", 1), ("day", 1)], unique=True, name="ux_daily_lock")
+        return self._locks
+
+    def _claim_daily(self, job: str) -> bool:
+        from pymongo.errors import DuplicateKeyError
+        day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        now = datetime.now(timezone.utc)
+        who = {"host": socket.gethostname(), "pid": os.getpid()}
+        try:
+            self.locks.insert_one({"job": job, "day": day, "status": "running", "attempts": 1, "started_at": now, **who})
+            return True
+        except DuplicateKeyError:
+            pass
+        taken = self.locks.find_one_and_update(
+            {"job": job, "day": day, "$or": [
+                {"status": "failed", "attempts": {"$lt": self.MAX_ATTEMPTS}},
+                {"status": "running", "started_at": {"$lt": now - self.STALE_AFTER}},
+            ]},
+            {"$set": {"status": "running", "started_at": now, **who}, "$inc": {"attempts": 1}})
+        return taken is not None
+
+    def _release_daily(self, job: str, ok: bool) -> None:
+        day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        self.locks.update_one({"job": job, "day": day}, {"$set": {"status": "ok" if ok else "failed", "finished_at": datetime.now(timezone.utc)}})
+
+    def _due_daily(self, job: str) -> bool:
+        """Once a day, from two hours before the briefing hour, if not yet done today.
+
+        Two hours because the pass starts with an agent investigation of every
+        property that has changed before the ledger and the agenda, and the
+        6 a.m. brief must read the finished result. Cheap pre-check; the claim
+        below is what actually guarantees a single run."""
         if datetime.now().hour < max(0, self.hour - 2):
             return False
         day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        return self.runs.count_documents({"job": job, "day": day, "ok": True}) == 0
+        lock = self.locks.find_one({"job": job, "day": day})
+        return lock is None or lock.get("status") == "failed"
 
     def run_money_and_wes(self) -> Dict[str, Any]:
         """Morning pass: investigate every property, then the ledger, then the Wes
@@ -241,9 +283,19 @@ class Scheduler:
         out: Dict[str, Any] = {}
         dossier = PropertyDossier(self.mongo, anthropic_api_key=self.key, voyage_api_key=SETTINGS.voyage_api_key,
                                   openai_api_key=SETTINGS.openai_api_key_critic or "")
+        # Re-investigate only what changed since the last dossier (new documents,
+        # chat, notes, human corrections), plus anything older than a week.
+        def refresh(p):
+            try:
+                d = dossier.refresh_if_changed(p.property_id)
+                return d.get("rebuild_reason") or "kept"
+            except Exception as exc:
+                logger.exception("dossier refresh failed for %s", p.property_id)
+                return f"error: {type(exc).__name__}"
         with ThreadPoolExecutor(max_workers=3) as pool:
-            built = list(pool.map(lambda p: bool(dossier.block(p.property_id, force=True)), PROPERTIES))
-        out["dossiers"] = f"{sum(built)}/{len(built)} rebuilt"
+            results = list(pool.map(refresh, PROPERTIES))
+        rebuilt = sum(1 for r in results if r not in ("kept",) and not r.startswith("error"))
+        out["dossiers"] = f"{rebuilt}/{len(results)} rebuilt, {sum(1 for r in results if r == 'kept')} unchanged, {sum(1 for r in results if r.startswith('error'))} failed"
         # Resolution before generation: yesterday's items are checked against
         # overnight records, so today's agenda cannot re-raise what is done.
         from mangotree.briefing.resolution import ResolutionPass
@@ -253,6 +305,13 @@ class Scheduler:
         out["resolution"] = {k: sum(r.get(k, 0) for r in res if isinstance(r, dict)) for k in ("items", "resolved", "superseded", "reported")}
         out["ledger"] = LedgerBuilder(self.mongo, anthropic_api_key=self.key).run(concurrency=4).as_dict()
         out["wes"] = self.wes.run(force=True, concurrency=4)
+        # Every model call failed (invalid key, outage): say so, so the day is not
+        # recorded as done with nothing built.
+        wes_vals = list((out["wes"] or {}).values()) if isinstance(out["wes"], dict) else []
+        out["all_failed"] = bool(
+            (out["ledger"].get("calls", 0) == 0 and out["ledger"].get("errors"))
+            and wes_vals and all(isinstance(v, dict) and v.get("error") for v in wes_vals)
+        )
         return out
 
     def _due_poll(self) -> bool:
@@ -306,16 +365,18 @@ class Scheduler:
                     self._record("tasks_cards", "error" not in flushed, flushed)
             except Exception as exc:
                 logger.exception("debounced tasks/cards failed")
-        if self.intake_enabled and self._due_nightly():
+        if self.intake_enabled and self._due_nightly() and self._claim_daily("nightly"):
             day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
             try:
                 sweep = self.run_intake(kind="sweep", hours=72)
                 nightly = self.chain.nightly()
                 self.runs.insert_one({"job": "nightly", "day": day, "ok": True, "detail": {"sweep": sweep.get("intake"), "nightly": {k: str(v)[:200] for k, v in nightly.items()}},
                                       "at": datetime.now(timezone.utc)})
+                self._release_daily("nightly", True)
             except Exception as exc:
                 logger.exception("nightly sweep failed")
                 self.runs.insert_one({"job": "nightly", "day": day, "ok": False, "detail": str(exc)[:400], "at": datetime.now(timezone.utc)})
+                self._release_daily("nightly", False)
         if self._due_cards():
             try:
                 from .cards import CardDetector
@@ -327,23 +388,32 @@ class Scheduler:
         # Money and the Wes agenda run BEFORE the briefing so the brief reads the
         # morning's ledger, not yesterday's. Recorded per day; a failure retries on
         # the next tick rather than waiting for tomorrow.
-        if self._due_daily("money_wes"):
+        if self._due_daily("money_wes") and self._claim_daily("money_wes"):
             day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
             try:
                 out = self.run_money_and_wes()
-                self.runs.insert_one({"job": "money_wes", "day": day, "ok": True, "detail": {k: str(v)[:400] for k, v in out.items()}, "at": datetime.now(timezone.utc)})
+                # A pass whose model calls all failed (bad key, outage) is a failure,
+                # not a success to record — otherwise the day is marked done with
+                # nothing built.
+                ok = not out.get("all_failed")
+                self.runs.insert_one({"job": "money_wes", "day": day, "ok": ok, "detail": {k: str(v)[:400] for k, v in out.items()}, "at": datetime.now(timezone.utc)})
+                self._release_daily("money_wes", ok)
             except Exception as exc:
                 logger.exception("money/wes daily run failed")
                 self.runs.insert_one({"job": "money_wes", "day": day, "ok": False, "detail": str(exc)[:400], "at": datetime.now(timezone.utc)})
-        if self._due_briefing():
+                self._release_daily("money_wes", False)
+        if self._due_briefing() and self._claim_daily("briefing"):
             b = Briefing(self.mongo, anthropic_api_key=self.key)
+            all_ok = True
             for u in self.users:
                 try:
                     b.generate(u)
                     self._record(f"briefing:{u}", True, "written")
                 except Exception as exc:
+                    all_ok = False
                     logger.exception("briefing failed for %s", u)
                     self._record(f"briefing:{u}", False, str(exc)[:400])
+            self._release_daily("briefing", all_ok)
 
     def start(self) -> None:
         def loop():

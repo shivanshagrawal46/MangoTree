@@ -42,6 +42,9 @@ from mangotree.storage.mongo import Mongo
 #: property; between those, a consumer reuses it. Twelve hours only matters if
 #: both of those failed to run.
 MAX_AGE_HOURS = float(os.environ.get("MT_DOSSIER_MAX_AGE_H", "12"))
+# The morning pass re-investigates a property whose dossier is older than this
+# even if nothing arrived — so the picture is never more than a week old.
+MAX_STALE_DAYS = float(os.environ.get("MT_DOSSIER_MAX_STALE_DAYS", "7"))
 
 
 def cached_block(mongo: Mongo, pid: str, *, max_chars: int = 6000) -> str:
@@ -105,7 +108,7 @@ class PropertyDossier:
             {"_id": 0, "text": 1, "author": 1, "created_at": 1, "scope": 1}).sort("created_at", -1).limit(30))
         dismissals = list(self.mongo.db["corrections"].find({"kind": "card_dismissal", "property_id": pid}, {"_id": 0, "title": 1, "remark": 1, "at": 1, "by": 1}).sort("at", -1).limit(12))
         # Closed by a person (done_by is a user id), not by the extractor.
-        closed = list(self.mongo.db["tasks"].find({"property_id": pid, "status": {"$in": ["done", "dismissed"]}, "done_by": {"$nin": [None, "opus-5"]}},
+        closed = list(self.mongo.db["tasks"].find({"property_id": pid, "status": {"$in": ["done", "dismissed"]}, "done_by": {"$in": self._user_ids()}},
                                                   {"_id": 0, "title": 1, "status": 1, "done_by": 1, "done_at": 1, "last_remark": 1}).sort("updated_at", -1).limit(12))
         recent_qa = []
         for m in (chat or {}).get("messages") or []:
@@ -136,7 +139,56 @@ class PropertyDossier:
             "answer": res.answer, "open_items": list(res.open_items or []), "risks": list(res.risks or []),
             "coverage": res.coverage, "verification": res.verification, "outcome": res.outcome, "forced_reason": res.forced_reason,
             "steps": len(res.steps or []), "elapsed_ms": res.elapsed_ms, "sources": sources[:40],
+            # Token counts, so the cost of a morning pass can be read from the database.
+            "budget": {k: (res.budget or {}).get(k) for k in ("tool_calls_used", "input_tokens", "cache_read_tokens", "output_tokens", "total_tokens", "elapsed_s")},
         }
+
+    # ------------------------------------------------------------- freshness
+    def changed_since(self, pid: str, since: datetime) -> Optional[str]:
+        """What, if anything, arrived for this property after ``since``.
+
+        Returns a short reason or None. The morning pass uses this to skip the
+        investigation for a property nothing happened to: an investigation is
+        20–34 model turns over a conversation that grows to 100–280k tokens, and
+        on 2026-09-06 all fifteen were re-run (twice) with zero new documents."""
+        db = self.mongo.db
+        if self.mongo.artifacts.count_documents(
+                {"property_ids": pid, "is_inline_image": {"$ne": True},
+                 "$or": [{"created_at": {"$gt": since}}, {"date": {"$gt": since}}]}, limit=1):
+            return "new documents"
+        if db["chats"].count_documents({"kind": "property", "property_id": pid, "messages": {"$elemMatch": {"at": {"$gt": since}}}}, limit=1):
+            return "new chat"
+        if db["remember_notes"].count_documents({"active": {"$ne": False}, "created_at": {"$gt": since},
+                                                 "$or": [{"scope": "global"}, {"scope": "property", "property_id": pid}]}, limit=1):
+            return "new remember note"
+        if db["corrections"].count_documents({"property_id": pid, "at": {"$gt": since}}, limit=1):
+            return "new human correction"
+        if db["tasks"].count_documents({"property_id": pid, "updated_at": {"$gt": since}, "done_by": {"$in": self._user_ids()}}, limit=1):
+            return "task closed by a person"
+        return None
+
+    def _user_ids(self) -> List[str]:
+        """Login ids of real people — the automatic passes close tasks as 'dedupe',
+        'evidence', 'opus-5' and must not count as a human change."""
+        return [u["user_id"] for u in self.mongo.db["users"].find({}, {"user_id": 1}) if u.get("user_id")]
+
+    def refresh_if_changed(self, pid: str, *, max_stale_days: float = MAX_STALE_DAYS) -> Dict[str, Any]:
+        """Rebuild when the property changed since the last dossier, or the dossier
+        is older than ``max_stale_days``; otherwise return the existing one."""
+        existing = self.coll.find_one({"property_id": pid}, {"_id": 0})
+        built = (existing or {}).get("built_at")
+        if not existing or not built:
+            return self.build(pid, force=True)
+        now = datetime.now(timezone.utc)
+        reason = self.changed_since(pid, built)
+        if reason is None and (now - built) < timedelta(days=max_stale_days):
+            logger.info("dossier %s: unchanged since %s — kept", pid, f"{built:%m-%d %H:%M}")
+            self.coll.update_one({"property_id": pid}, {"$set": {"checked_at": now, "kept_reason": "unchanged"}})
+            return existing
+        logger.info("dossier %s: rebuilding (%s)", pid, reason or f"older than {max_stale_days:g} days")
+        doc = self.build(pid, force=True)
+        doc["rebuild_reason"] = reason or "stale"
+        return doc
 
     # ---------------------------------------------------------------- build
     def build(self, pid: str, *, force: bool = False, max_age_hours: float = MAX_AGE_HOURS) -> Dict[str, Any]:

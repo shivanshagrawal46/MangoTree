@@ -183,6 +183,10 @@ User=$RUN_USER
 WorkingDirectory=$PROJECT
 EnvironmentFile=$PROJECT/.env
 Environment=PYTHONUNBUFFERED=1
+# This is the ONE process that runs the standing jobs (mail intake, morning
+# pass, briefings). Set here, not in .env, so a copy of .env on a laptop
+# cannot start a second scheduler against the same database.
+Environment=MT_SCHEDULER=1
 # One worker: the scheduler and in-flight answers live in this process.
 ExecStart=$PROJECT/.venv/bin/python -m uvicorn mangotree.api.app:app --host 127.0.0.1 --port $API_PORT --workers 1 --timeout-keep-alive 75
 Restart=always
