@@ -326,6 +326,31 @@ def _parse_final(data: dict, *, shape: str, limit: int, second_opinion: Optional
     }
 
 
+_FINAL_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "headline": {"type": "string"},
+        "shape": {"type": "string", "enum": list(SHAPES)},
+        "points": {"type": "array", "items": {"type": "object", "properties": {
+            "text": {"type": "string"}, "urgency": {"type": "string", "enum": list(cfg.ANSWER_URGENCIES)},
+            "sources": {"type": "array", "items": {"type": "integer"}}}, "required": ["text", "urgency", "sources"]}},
+        "draft": {"type": ["string", "null"]},
+        "details": {"type": "string"},
+        "disagreements": {"type": "array", "items": {"type": "string"}},
+        "next_actions": {"type": "array", "items": {"type": "object", "properties": {
+            "title": {"type": "string"}, "owner": {"type": "string"}, "due": {"type": ["string", "null"]},
+            "why": {"type": "string"}, "sources": {"type": "array", "items": {"type": "integer"}}}, "required": ["title", "owner"]}},
+        "emails": {"type": "array", "items": {"type": "object", "properties": {
+            "to": {"type": "string"}, "to_email": {"type": ["string", "null"]}, "from": {"type": "string"},
+            "subject": {"type": "string"}, "body": {"type": "string"}, "for_action": {"type": "string"}}, "required": ["to", "from", "subject", "body"]}},
+        "second_opinion": {"type": "string"},
+        "facts": {"type": "array", "items": {"type": "object", "properties": {
+            "claim": {"type": "string"}, "quote": {"type": "string"}, "sources": {"type": "array", "items": {"type": "integer"}}}, "required": ["claim", "quote"]}},
+    },
+    "required": ["headline", "shape", "points", "details", "next_actions", "facts"],
+}
+
+
 def _signatures_block() -> str:
     return "SIGNATURES (use exactly, for the sender):\n" + "\n".join(f"  {k}:\n    " + v.replace("\n", "\n    ") for k, v in cfg.EMAIL_SIGNATURES.items())
 
@@ -427,31 +452,62 @@ class AnswerPanel:
                      ("\nDissent:\n" + "\n".join(f"- {d}" for d in revision.get("dissent", [])) if revision.get("dissent") else "") +
                      "\nWrite the corrected final answer, addressing each note that the evidence supports.")
         system_text = _RECONCILE_SYSTEM.format(max_points=limit)
-        writer = cfg.DEEP_WRITER_MODEL
-        if writer.lower().startswith(("gpt", "o1", "o3", "o4")):
-            # The final answer is written by GPT-6 Astra (admin directive 2026-09-07:
-            # the investigator writes; Opus 5 is the second reader). Same rules,
-            # same JSON shape, OpenAI JSON mode.
-            from openai import OpenAI
-            if self._openai is None:
-                self._openai = OpenAI(api_key=self._okey, max_retries=3)
-            r = self._openai.chat.completions.create(
-                model=writer, max_completion_tokens=12000, response_format={"type": "json_object"},
-                reasoning_effort=cfg.OPENAI_REASONING_EFFORT,
-                messages=[{"role": "system", "content": system_text}, {"role": "user", "content": user}])
-            METER.record_openai(writer, getattr(r, "usage", None))
-            raw = r.choices[0].message.content or "{}"
-        else:
-            with self.anthropic.messages.stream(
-                model=writer, max_tokens=12000,
-                system=[{"type": "text", "text": system_text, "cache_control": {"type": "ephemeral"}}],
-                messages=[{"role": "user", "content": user}],
-                **cfg.OPUS_HIGH_KWARGS,
-            ) as stream:
-                r = stream.get_final_message()
-            METER.record_anthropic(writer, r)
-            raw = "".join(b.text for b in r.content if b.type == "text")
-        return _parse_final(_json(raw), shape=shape, limit=limit)
+        return self._write_final(cfg.DEEP_WRITER_MODEL, system_text, user, draft=draft, shape=shape, limit=limit)
+
+    # ------------------------------------------------------------------ writer
+    def _write_openai(self, model: str, system_text: str, user: str, *, effort: str) -> dict:
+        """One forced function call through the Responses API. JSON mode was tried
+        first and on 2026-09-07 returned a syntactically valid but EMPTY answer
+        (blank headline, no points) twice in a row — the panel even said so — and
+        nothing stopped it reaching the screen. A schema-bound function call is
+        what the resolution pass and the ledger use, and it has not done that."""
+        from openai import OpenAI
+        from mangotree.core.llm_json import json_call_openai
+        if self._openai is None:
+            self._openai = OpenAI(api_key=self._okey, max_retries=3)
+        return json_call_openai(self._openai, model=model, system=system_text, user=user, tool_name="final_answer",
+                                description="The final answer in the required shape.", schema=_FINAL_SCHEMA,
+                                max_tokens=32000, reasoning_effort=effort)
+
+    def _write_anthropic(self, model: str, system_text: str, user: str) -> dict:
+        with self.anthropic.messages.stream(
+            model=model, max_tokens=12000,
+            system=[{"type": "text", "text": system_text, "cache_control": {"type": "ephemeral"}}],
+            messages=[{"role": "user", "content": user}],
+            **cfg.OPUS_HIGH_KWARGS,
+        ) as stream:
+            r = stream.get_final_message()
+        METER.record_anthropic(model, r)
+        return _json("".join(b.text for b in r.content if b.type == "text"))
+
+    def _write_final(self, writer: str, system_text: str, user: str, *, draft: str, shape: str, limit: int) -> Dict[str, Any]:
+        """Write; if the result is empty, retry; then the other provider; then the
+        investigator's own draft. An empty final answer never leaves this method."""
+        is_openai = writer.lower().startswith(("gpt", "o1", "o3", "o4"))
+        attempts = ([(writer, cfg.OPENAI_REASONING_EFFORT), (writer, "medium"), (cfg.AGENT_PLANNER_MODEL, None)]
+                    if is_openai else [(writer, None), (writer, None)])
+        degrade = None
+        for model, effort in attempts:
+            try:
+                data = self._write_openai(model, system_text, user, effort=effort) if effort else self._write_anthropic(model, system_text, user)
+                final = _parse_final(data, shape=shape, limit=limit)
+            except Exception as exc:
+                logger.warning("final writer %s failed: %s", model, str(exc)[:200])
+                degrade = f"final writer {model} failed ({type(exc).__name__})"
+                continue
+            if final["headline"] or final["points"] or final.get("draft"):
+                if degrade:
+                    final["degrade"] = degrade + f"; written by {model}"
+                return final
+            logger.warning("final writer %s returned an empty answer (effort=%s); trying the next option", model, effort)
+            degrade = f"final writer {model} returned an empty answer"
+        # Last resort: the investigator's draft, verbatim, so the reader gets the
+        # substance instead of a blank card.
+        first = next((ln.strip() for ln in (draft or "").splitlines() if ln.strip()), "")
+        headline = re.sub(r"\*\*|\[#\d+\]", "", first)[:200] or "The investigation finished; the final write-up failed."
+        final = _parse_final({"headline": headline, "shape": "explain", "details": draft or ""}, shape="explain", limit=limit)
+        final["degrade"] = (degrade or "final writer failed") + "; showing the investigator's draft"
+        return final
 
     def _contacts_block(self, scope: Scope) -> str:
         """Names and addresses of the people around this property, so an email the
@@ -528,14 +584,8 @@ class AnswerPanel:
                 f"{self._contacts_block(scope) if scope else ''}\n\n{_signatures_block()}\n\nEVIDENCE:\n{passages}")
         if max_points:
             user += f"\n\nCOUNT: the asker asked for exactly {max_points}. Return exactly {max_points} points."
-        client = OpenAI(api_key=self._okey, max_retries=3)
-        r = client.chat.completions.create(model=cfg.CRITIC_MODEL, max_completion_tokens=8000, response_format={"type": "json_object"},
-                                           reasoning_effort=cfg.OPENAI_REASONING_EFFORT,
-                                           messages=[{"role": "system", "content": _RECONCILE_SYSTEM.format(max_points=limit)},
-                                                     {"role": "user", "content": user}])
-        from mangotree.core.usage import METER
-        METER.record_openai(cfg.CRITIC_MODEL, getattr(r, "usage", None))
-        out = _parse_final(_json(r.choices[0].message.content or "{}"), shape=shape, limit=limit, second_opinion="fast mode — no second reader")
+        out = self._write_final(cfg.CRITIC_MODEL, _RECONCILE_SYSTEM.format(max_points=limit), user, draft=draft, shape=shape, limit=limit)
+        out["second_opinion"] = "fast mode — no second reader"
         out["disagreements"] = []
         return out
 
@@ -583,6 +633,8 @@ class AnswerPanel:
         result.headline, result.points, result.details = final["headline"], final["points"], final["details"]
         result.disagreements, result.next_actions, result.second_opinion = final["disagreements"], final["next_actions"], final["second_opinion"]
         result.shape, result.composed, result.emails = final.get("shape", shape), final.get("draft"), list(final.get("emails") or [])
+        if final.get("degrade"):
+            result.degrades.append(final["degrade"])
         emit("phase", {"phase": "panel", "label": "Checking every figure against its source"})
         try:
             result.verification = self.verifier.verify(final.get("facts") or agent_res.facts, pad)
@@ -654,6 +706,8 @@ class AnswerPanel:
         result.headline, result.points, result.details = final["headline"], final["points"], final["details"]
         result.disagreements, result.next_actions, result.second_opinion = final["disagreements"], final["next_actions"], final["second_opinion"]
         result.shape, result.composed, result.emails = final.get("shape", shape), final.get("draft"), list(final.get("emails") or [])
+        if final.get("degrade"):
+            result.degrades.append(final["degrade"])
 
         emit("phase", {"phase": "panel", "label": "Panel: verifying, skeptic, verdict"})
         facts = final.get("facts") or agent_res.facts
@@ -680,6 +734,8 @@ class AnswerPanel:
                 result.headline, result.points, result.details = final["headline"], final["points"], final["details"]
                 result.disagreements, result.next_actions, result.second_opinion = final["disagreements"], final["next_actions"], final["second_opinion"]
                 result.shape, result.composed, result.emails = final.get("shape", shape), final.get("draft"), list(final.get("emails") or [])
+                if final.get("degrade"):
+                    result.degrades.append(final["degrade"])
                 facts = final.get("facts") or agent_res.facts
                 result.verification = self.verifier.verify(facts, pad)
                 answer_text = result.headline + "\n" + "\n".join(p["text"] + " " + " ".join(f"[#{s}]" for s in p["sources"]) for p in result.points)
