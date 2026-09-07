@@ -77,11 +77,27 @@ Produce ONE final answer. Rules:
   Sir, side with him and say the document differs. If it contradicts another
   team member, say both and lean to the person. Never present as open something
   the team has said is done.
-* SHAPE — fit the answer to the question. The question's SHAPE is given below
-  the question. Use exactly that shape:
+* ANSWER WHAT WAS ASKED, FIRST. Read the question and decide what the reader
+  wants to know; the headline answers exactly that. A yes/no question ("did
+  Wes reply?", "has the certificate arrived?") gets a headline that begins
+  Yes or No, with the date. A "what did he say" question gets what he said. A
+  comparison ("did he answer everything Rakesh asked?") gets what was answered
+  and what was left out. Only when the reader asks what to do are the points
+  actions. Otherwise the points are FACTS that support the headline — what was
+  said, what is missing, what differs — and any recommended steps go in
+  "next_actions" only, never as the points. An answer that turns a question
+  into a to-do list has failed, however useful the list.
+* SHAPE — fit the answer to the question. A detected SHAPE is given below the
+  question as a hint from a simple rule. If the question plainly asks for
+  something else (the hint was fooled by a word in an email's subject, for
+  instance), use the right shape and return it in "shape":
     brief    — the default. Headline of at most 18 words answering directly;
                then at most {max_points} points of at most 25 words, one idea
-               each, most urgent first, numbered so the reader can say "point 2".
+               each, numbered so the reader can say "point 2". Order: the
+               points that answer the question first, then what is missing or
+               conflicting, then background. Facts carry urgency normal or
+               info; "high" and "critical" are only for a real deadline or
+               money at risk, never for something you would merely like done.
     actions  — the reader asked what to do. Headline; then the actions as the
                points, each starting with a verb and naming who does it and by
                when if known; ordered by urgency. Nothing else as points.
@@ -118,6 +134,27 @@ Produce ONE final answer. Rules:
 * "next_actions": concrete things a person should do, each with a suggested
   owner (Rakesh / JP / Manjunath / Wes / other) and a due hint if the evidence
   gives one. Leave empty for draft, list and figure unless the question asks.
+* "emails" — WRITE THE EMAIL, DON'T JUST SAY ONE IS NEEDED. The system exists
+  to take work off Rakesh Sir's desk. For every next action whose natural
+  execution is a message to someone outside RKB (asking, chasing, confirming,
+  instructing, notifying — Wes, a borrower, counsel, title, an insurer),
+  include the complete email, ready to send:
+    to        — the recipient's name; to_email from CONTACTS if listed, else null
+    from      — the RKB person who owns the action (Rakesh / JP / Manjunath)
+    subject   — specific: property and the thing ("1512 Varnum — insurance
+                certificate naming RKB as loss payee")
+    body      — greeting by first name; two to five short paragraphs saying
+                exactly what is needed, by when, and the fact that makes it
+                necessary, stated plainly from the evidence (no [#N] inside the
+                body); a clear closing line; then the sign-off given in
+                SIGNATURES for the sender. Courteous, direct, firm where the
+                facts warrant. Never threaten; never invent a fact or a date.
+    for_action — the exact title of the next action it carries out
+  One email per recipient: if several actions go to the same person, one email
+  that lists them. No email for internal steps (something Rakesh, JP or
+  Manjunath does themselves) or for steps that need a phone call or a decision.
+  When the SHAPE is draft, the requested text goes in "draft"; "emails" then
+  holds only emails for OTHER actions, if any.
 * "second_opinion": one line — did the second reader agree, add points, or
   disagree?
 
@@ -129,6 +166,7 @@ Return JSON only:
   "details": "...",
   "disagreements": ["..."],
   "next_actions": [{{"title": "...", "owner": "Rakesh", "due": "2026-09-10 or null", "why": "...", "sources": [3]}}],
+  "emails": [{{"to": "Wes Stone", "to_email": "wes@... or null", "from": "Rakesh", "subject": "...", "body": "...", "for_action": "..."}}],
   "second_opinion": "...",
   "facts": [{{"claim": "...", "quote": "verbatim", "sources": [3]}}]}}
 "facts" = every number, date, name and amount you state, with a byte-for-byte
@@ -140,17 +178,50 @@ _SHAPE_RULES = (
     ("draft", re.compile(r"\b(draft|write|compose|prepare)\b.{0,40}\b(email|e-mail|mail|letter|message|note|reply|response|memo|text)\b|\breply to\b|\bemail (to|for)\b", re.I)),
     ("followup", re.compile(r"\b(point|item|step|number)\s*\d\b|\b(shorter|longer|rephrase|reword|redo|instead|again but|make it|change (that|it|this)|add the|remove the|without the)\b", re.I)),
     ("list", re.compile(r"\b(list|enumerate|every|all (the|of)|how many|which (documents|emails|invoices|payments|draws))\b", re.I)),
-    ("actions", re.compile(r"\b(next steps?|action steps?|actions?|what (should|do|must) (we|i|rakesh|jp|manjunath)|to[- ]?dos?|what needs? (to be )?done|priorit)", re.I)),
+    # Only when the ASK is for actions: "what should we do", "give me the next
+    # steps", "three urgent actions" — not because the word appears somewhere.
+    ("actions", re.compile(r"\b(next steps?|action (steps?|plan|list)|what (should|do|must|can) (we|i|rakesh|jp|manjunath|wes|the team) do|"
+                           r"(give|tell|send|show|list)( me)?( the)?( top| three| 3| five| 5| two| 2)?( most)?( urgent| important| key| next)? ?(actions?|steps?|to[- ]?dos?|tasks?|priorities|things to do)\b|"
+                           r"what needs? (to be )?done|what (is|are) (the )?(priorit|urgent))", re.I)),
     ("figure", re.compile(r"\b(how much|what is the (amount|balance|payoff|figure|total|rate|date|maturity|deadline)|what('s| is) (owed|due|outstanding)|when (is|does|did))\b", re.I)),
     ("explain", re.compile(r"\b(explain|why|how (did|does|is|was)|walk me through|summari[sz]e|what happened|background|history of)\b", re.I)),
 )
 
 
+#: Things the question talks ABOUT, not what it asks FOR: "the email on next
+#: action items", "his reply about the budget", "the list titled …". Removed
+#: before shape detection so their words cannot decide the shape. On 2026-09-07
+#: "has Wes replied to Rakesh Sir's email on next action items?" was answered as
+#: a to-do list because "action" appeared in the email's subject.
+_REFERENCE = re.compile(
+    r"\b(email|e-mail|mail|reply|response|message|thread|letter|note|list|memo|document|attachment|subject|item)s?\b"
+    r"(\s+\w+){0,4}?\s+(on|about|regarding|re|titled|called|named|headed|concerning|for)\s+[^?.;,]{1,80}", re.I)
+_QUOTED = re.compile(r"[\"“”'‘’][^\"“”'‘’]{3,120}[\"“”'‘’]")
+#: A question whose first words ask whether something happened is a factual
+#: question whatever else it contains. Answer it; do not turn it into steps.
+_YES_NO = re.compile(r"^\s*(did|has|have|had|is|was|are|were|does|do|can you (confirm|check|tell me)|confirm (whether|if|that)|check (whether|if))\b", re.I)
+
+
 def detect_shape(question: str) -> str:
-    """Deterministic first pass; the model may refine within the same family."""
+    """Deterministic first pass on what the question ASKS FOR; the writer may
+    refine within the same family."""
     q = question or ""
+    unquoted = _QUOTED.sub(" ", q)
+    # A follow-up or a draft request keeps its shape whatever else it mentions;
+    # judged on the full wording, since "draft an email to Wes" IS the ask.
+    for name in ("followup", "draft"):
+        rx = dict(_SHAPE_RULES)[name]
+        if rx.search(unquoted):
+            return name
+    ask = _REFERENCE.sub(" ", unquoted)
+    if _YES_NO.search(ask):
+        # "Did he reply, and what should we do?" — still answer first; the
+        # writer puts any steps in next_actions, never as the points.
+        return "brief"
     for name, rx in _SHAPE_RULES:
-        if rx.search(q):
+        if name in ("followup", "draft"):
+            continue
+        if rx.search(ask):
             return name
     return "brief"
 
@@ -185,6 +256,7 @@ class PanelResult:
     shape: str = "brief"                                            # brief | actions | draft | list | figure | explain | followup
     mode: str = "full"                                              # full (Opus 5 + second read + panel) | fast (GPT-6 Astra alone)
     composed: Optional[str] = None                                   # ready-to-send text when the shape is draft
+    emails: List[Dict[str, Any]] = field(default_factory=list)       # ready-to-send emails for the next actions
     sources: List[Dict[str, Any]] = field(default_factory=list)      # pad chunks with index
     steps: List[Dict[str, Any]] = field(default_factory=list)
     budget: Dict[str, Any] = field(default_factory=dict)
@@ -210,6 +282,52 @@ def _pretty(model: str) -> str:
     if m.startswith("claude-sonnet-5"):
         return "Sonnet 5"
     return model or "model"
+
+
+def _parse_final(data: dict, *, shape: str, limit: int, second_opinion: Optional[str] = None) -> Dict[str, Any]:
+    """The writer's JSON → the answer payload. One parser for both providers, so a
+    field added to the schema (emails) is never present in one mode and lost
+    in the other."""
+    points = []
+    for p in (data.get("points") or [])[:limit]:
+        urg = str(p.get("urgency") or "normal").lower()
+        # The screen numbers the points; strip a number the model wrote into the text.
+        text = re.sub(r"^\s*(?:\(?\d{1,2}[.)]\s*)+", "", str(p.get("text") or "")).strip()
+        points.append({"text": text,
+                       "urgency": urg if urg in cfg.ANSWER_URGENCIES else "normal",
+                       "sources": [int(s) for s in (p.get("sources") or []) if str(s).isdigit()]})
+    actions = []
+    for a in (data.get("next_actions") or [])[:8]:
+        actions.append({"title": str(a.get("title") or "").strip(), "owner": str(a.get("owner") or cfg.EMAIL_DEFAULT_SENDER),
+                        "due": a.get("due") if a.get("due") not in ("null", "", None) else None,
+                        "why": str(a.get("why") or ""), "sources": [int(s) for s in (a.get("sources") or []) if str(s).isdigit()]})
+    emails = []
+    for e in (data.get("emails") or [])[:6]:
+        if not isinstance(e, dict) or not str(e.get("body") or "").strip():
+            continue
+        sender = str(e.get("from") or cfg.EMAIL_DEFAULT_SENDER).strip()
+        sender = next((k for k in cfg.EMAIL_SIGNATURES if k.lower() in sender.lower()), cfg.EMAIL_DEFAULT_SENDER)
+        to_email = e.get("to_email")
+        to_email = str(to_email).strip() if to_email and "@" in str(to_email) else None
+        emails.append({"to": str(e.get("to") or "").strip()[:120], "to_email": to_email, "from": sender,
+                       "subject": str(e.get("subject") or "").strip()[:200], "body": str(e.get("body")).strip()[:6000],
+                       "for_action": str(e.get("for_action") or "").strip()[:200]})
+    draft = data.get("draft")
+    return {
+        "headline": str(data.get("headline") or "").strip(),
+        "shape": data.get("shape") if data.get("shape") in SHAPES else shape,
+        "draft": (str(draft).strip() if draft and str(draft).lower() != "null" else None),
+        "points": points, "details": str(data.get("details") or "").strip(),
+        "disagreements": [str(x) for x in (data.get("disagreements") or [])][:6],
+        "next_actions": [a for a in actions if a["title"]],
+        "emails": emails,
+        "second_opinion": second_opinion if second_opinion is not None else str(data.get("second_opinion") or "").strip(),
+        "facts": [f for f in (data.get("facts") or []) if isinstance(f, dict) and f.get("claim")][:40],
+    }
+
+
+def _signatures_block() -> str:
+    return "SIGNATURES (use exactly, for the sender):\n" + "\n".join(f"  {k}:\n    " + v.replace("\n", "\n    ") for k, v in cfg.EMAIL_SIGNATURES.items())
 
 
 def _json(raw: str) -> dict:
@@ -289,7 +407,7 @@ class AnswerPanel:
     # --------------------------------------------------------------- reconcile
     def reconcile(self, question: str, draft: str, second: Dict[str, Any], pad: AgentScratchpad,
                   *, max_points: Optional[int] = None, revision: Optional[Dict[str, Any]] = None,
-                  shape: str = "brief") -> Dict[str, Any]:
+                  shape: str = "brief", scope: Optional[Scope] = None) -> Dict[str, Any]:
         idx = cited_indices(draft) + cited_indices(second.get("answer", "")) + \
             [i for s in second.get("missed", []) for i in cited_indices(s)]
         idx = list(dict.fromkeys(idx))[:60] or list(range(1, min(pad.n_chunks, 30) + 1))
@@ -297,8 +415,8 @@ class AnswerPanel:
         second_txt = json.dumps({k: second.get(k) for k in ("answer", "missed", "wrong", "disagree")}, indent=1) \
             if not second.get("error") else f"(second reader unavailable: {second.get('error')})"
         limit = max_points or (15 if shape == "list" else 2 if shape == "figure" else cfg.ANSWER_MAX_POINTS)
-        user = (f"QUESTION:\n{question}\nSHAPE: {shape}\n\nYOUR DRAFT:\n{draft}\n\nSECOND READER:\n{second_txt}\n\n"
-                f"EVIDENCE:\n{passages}")
+        user = (f"QUESTION:\n{question}\nSHAPE (detected, a hint): {shape}\n\nYOUR DRAFT:\n{draft}\n\nSECOND READER:\n{second_txt}\n\n"
+                f"{self._contacts_block(scope) if scope else ''}\n\n{_signatures_block()}\n\nEVIDENCE:\n{passages}")
         if max_points:
             user += (f"\n\nCOUNT: the asker asked for exactly {max_points}. Return exactly {max_points} points — "
                      "the most important ones — and nothing further as points; anything else goes in details.")
@@ -333,28 +451,25 @@ class AnswerPanel:
                 r = stream.get_final_message()
             METER.record_anthropic(writer, r)
             raw = "".join(b.text for b in r.content if b.type == "text")
-        data = _json(raw)
-        points = []
-        for p in (data.get("points") or [])[:limit]:
-            urg = str(p.get("urgency") or "normal").lower()
-            points.append({"text": str(p.get("text") or "").strip(),
-                           "urgency": urg if urg in cfg.ANSWER_URGENCIES else "normal",
-                           "sources": [int(s) for s in (p.get("sources") or []) if str(s).isdigit()]})
-        actions = []
-        for a in (data.get("next_actions") or [])[:8]:
-            actions.append({"title": str(a.get("title") or "").strip(), "owner": str(a.get("owner") or "Rakesh"),
-                            "due": a.get("due") if a.get("due") not in ("null", "", None) else None,
-                            "why": str(a.get("why") or ""), "sources": [int(s) for s in (a.get("sources") or []) if str(s).isdigit()]})
-        return {
-            "headline": str(data.get("headline") or "").strip(),
-            "shape": data.get("shape") if data.get("shape") in SHAPES else shape,
-            "draft": (str(data.get("draft")).strip() if data.get("draft") and str(data.get("draft")).lower() != "null" else None),
-            "points": points, "details": str(data.get("details") or "").strip(),
-            "disagreements": [str(x) for x in (data.get("disagreements") or [])][:6],
-            "next_actions": [a for a in actions if a["title"]],
-            "second_opinion": str(data.get("second_opinion") or "").strip(),
-            "facts": [f for f in (data.get("facts") or []) if isinstance(f, dict) and f.get("claim")][:40],
-        }
+        return _parse_final(_json(raw), shape=shape, limit=limit)
+
+    def _contacts_block(self, scope: Scope) -> str:
+        """Names and addresses of the people around this property, so an email the
+        writer drafts carries a real 'To' — from the CRM, never guessed."""
+        try:
+            from mangotree.api import data as _data
+            pid = getattr(scope, "property_id", None)
+            rows = _data.people(self.mongo, property_id=pid)[:25] if pid else _data.people(self.mongo)[:15]
+        except Exception:
+            return ""
+        lines = []
+        for p in rows:
+            addrs = [a for a in (p.get("addresses") or []) if "@" in a][:2]
+            if not (p.get("display_name") or addrs):
+                continue
+            lines.append(f"  {p.get('display_name') or '?'}" + (f" ({p.get('role')})" if p.get("role") else "")
+                         + (f", {p.get('org')}" if p.get("org") else "") + (" — " + ", ".join(addrs) if addrs else " — no address on file"))
+        return ("CONTACTS (from the records; use the address only if it is listed here):\n" + "\n".join(lines)) if lines else ""
 
     # ----------------------------------------------------------------- verdict
     def verdict(self, question: str, final: Dict[str, Any], second: Dict[str, Any],
@@ -402,13 +517,15 @@ class AnswerPanel:
                                          reasoning_effort=cfg.OPENAI_REASONING_EFFORT)
         return self._deep_agent
 
-    def _reconcile_openai(self, question: str, draft: str, pad: AgentScratchpad, *, shape: str, max_points: Optional[int]) -> Dict[str, Any]:
+    def _reconcile_openai(self, question: str, draft: str, pad: AgentScratchpad, *, shape: str, max_points: Optional[int],
+                          scope: Optional[Scope] = None) -> Dict[str, Any]:
         """The same writing rules, answered by GPT-6 Astra in JSON mode."""
         from openai import OpenAI
         idx = cited_indices(draft)[:60] or list(range(1, min(pad.n_chunks, 30) + 1))
         passages = _passages_block(pad, idx, max_chars=2500)
         limit = max_points or (15 if shape == "list" else 2 if shape == "figure" else cfg.ANSWER_MAX_POINTS)
-        user = (f"QUESTION:\n{question}\nSHAPE: {shape}\n\nYOUR DRAFT:\n{draft}\n\nSECOND READER:\n(none in fast mode)\n\nEVIDENCE:\n{passages}")
+        user = (f"QUESTION:\n{question}\nSHAPE (detected, a hint): {shape}\n\nYOUR DRAFT:\n{draft}\n\nSECOND READER:\n(none in fast mode)\n\n"
+                f"{self._contacts_block(scope) if scope else ''}\n\n{_signatures_block()}\n\nEVIDENCE:\n{passages}")
         if max_points:
             user += f"\n\nCOUNT: the asker asked for exactly {max_points}. Return exactly {max_points} points."
         client = OpenAI(api_key=self._okey, max_retries=3)
@@ -418,20 +535,9 @@ class AnswerPanel:
                                                      {"role": "user", "content": user}])
         from mangotree.core.usage import METER
         METER.record_openai(cfg.CRITIC_MODEL, getattr(r, "usage", None))
-        data = _json(r.choices[0].message.content or "{}")
-        points = []
-        for p in (data.get("points") or [])[:limit]:
-            urg = str(p.get("urgency") or "normal").lower()
-            points.append({"text": str(p.get("text") or "").strip(), "urgency": urg if urg in cfg.ANSWER_URGENCIES else "normal",
-                           "sources": [int(s) for s in (p.get("sources") or []) if str(s).isdigit()]})
-        actions = [{"title": str(a.get("title") or "").strip(), "owner": str(a.get("owner") or "Rakesh"),
-                    "due": a.get("due") if a.get("due") not in ("null", "", None) else None, "why": str(a.get("why") or ""),
-                    "sources": [int(s) for s in (a.get("sources") or []) if str(s).isdigit()]} for a in (data.get("next_actions") or [])[:8]]
-        return {"headline": str(data.get("headline") or "").strip(), "shape": data.get("shape") if data.get("shape") in SHAPES else shape,
-                "draft": (str(data.get("draft")).strip() if data.get("draft") and str(data.get("draft")).lower() != "null" else None),
-                "points": points, "details": str(data.get("details") or "").strip(), "disagreements": [],
-                "next_actions": [a for a in actions if a["title"]], "second_opinion": "fast mode — no second reader",
-                "facts": [f for f in (data.get("facts") or []) if isinstance(f, dict) and f.get("claim")][:40]}
+        out = _parse_final(_json(r.choices[0].message.content or "{}"), shape=shape, limit=limit, second_opinion="fast mode — no second reader")
+        out["disagreements"] = []
+        return out
 
     def answer_fast(self, question: str, scope: Scope, *, conversation: Sequence[dict] = (),
                     on_event: Optional[Callable[[str, Dict[str, Any]], None]] = None,
@@ -468,7 +574,7 @@ class AnswerPanel:
         shape = detect_shape(question)
         emit("phase", {"phase": "reconcile", "label": f"{cfg.CRITIC_MODEL} writing the answer ({shape})"})
         try:
-            final = self._reconcile_openai(question, agent_res.answer, pad, shape=shape, max_points=max_points)
+            final = self._reconcile_openai(question, agent_res.answer, pad, shape=shape, max_points=max_points, scope=scope)
         except Exception as exc:
             logger.warning("fast reconcile failed (%s); using draft", exc)
             result.degrades.append(f"fast reconcile failed: {type(exc).__name__}")
@@ -476,7 +582,7 @@ class AnswerPanel:
                      "disagreements": [], "next_actions": [], "second_opinion": "", "facts": agent_res.facts}
         result.headline, result.points, result.details = final["headline"], final["points"], final["details"]
         result.disagreements, result.next_actions, result.second_opinion = final["disagreements"], final["next_actions"], final["second_opinion"]
-        result.shape, result.composed = final.get("shape", shape), final.get("draft")
+        result.shape, result.composed, result.emails = final.get("shape", shape), final.get("draft"), list(final.get("emails") or [])
         emit("phase", {"phase": "panel", "label": "Checking every figure against its source"})
         try:
             result.verification = self.verifier.verify(final.get("facts") or agent_res.facts, pad)
@@ -539,7 +645,7 @@ class AnswerPanel:
         shape = detect_shape(question)
         emit("phase", {"phase": "reconcile", "label": f"{_pretty(cfg.DEEP_WRITER_MODEL)} writing the final answer ({shape}), with {_pretty(cfg.DEEP_SECOND_READER_MODEL)}'s reading in hand"})
         try:
-            final = self.reconcile(question, agent_res.answer, second, pad, max_points=max_points, shape=shape)
+            final = self.reconcile(question, agent_res.answer, second, pad, max_points=max_points, shape=shape, scope=scope)
         except Exception as exc:
             logger.warning("reconciliation failed (%s); using draft", exc)
             result.degrades.append(f"reconciliation failed: {type(exc).__name__}")
@@ -547,7 +653,7 @@ class AnswerPanel:
                      "disagreements": [], "next_actions": [], "second_opinion": "", "facts": agent_res.facts}
         result.headline, result.points, result.details = final["headline"], final["points"], final["details"]
         result.disagreements, result.next_actions, result.second_opinion = final["disagreements"], final["next_actions"], final["second_opinion"]
-        result.shape, result.composed = final.get("shape", shape), final.get("draft")
+        result.shape, result.composed, result.emails = final.get("shape", shape), final.get("draft"), list(final.get("emails") or [])
 
         emit("phase", {"phase": "panel", "label": "Panel: verifying, skeptic, verdict"})
         facts = final.get("facts") or agent_res.facts
@@ -567,13 +673,13 @@ class AnswerPanel:
         if result.verdict.get("verdict") == "revise" and (result.verdict.get("notes") or result.verdict.get("dissent")):
             emit("phase", {"phase": "reconcile", "label": "Panel asked for changes — Opus 5 revising"})
             try:
-                revised = self.reconcile(question, agent_res.answer, second, pad, max_points=max_points, shape=shape,
+                revised = self.reconcile(question, agent_res.answer, second, pad, max_points=max_points, shape=shape, scope=scope,
                                          revision={"previous": final, "notes": result.verdict.get("notes", []), "dissent": result.verdict.get("dissent", [])})
                 first_verdict = result.verdict
                 final = revised
                 result.headline, result.points, result.details = final["headline"], final["points"], final["details"]
                 result.disagreements, result.next_actions, result.second_opinion = final["disagreements"], final["next_actions"], final["second_opinion"]
-                result.shape, result.composed = final.get("shape", shape), final.get("draft")
+                result.shape, result.composed, result.emails = final.get("shape", shape), final.get("draft"), list(final.get("emails") or [])
                 facts = final.get("facts") or agent_res.facts
                 result.verification = self.verifier.verify(facts, pad)
                 answer_text = result.headline + "\n" + "\n".join(p["text"] + " " + " ".join(f"[#{s}]" for s in p["sources"]) for p in result.points)

@@ -12,6 +12,7 @@ import { ShieldCheck, ShieldAlert, Sparkles, ChevronDown, Eye, Bookmark, ListChe
 import { Badge, Button } from "@/components/ui";
 import { Cited } from "@/components/evidence";
 import { cn, URGENCY, fmtDate, modelLabel } from "@/lib/utils";
+import { EmailDrafts } from "@/components/email-draft";
 import type { Answer } from "@/lib/types";
 import type { SSEEvent } from "@/lib/api";
 
@@ -91,6 +92,8 @@ export function AnswerCard({ answer, onSave, onAcceptTasks, compact, pdfHref }: 
           ))}</ul>
         </div>
       )}
+
+      {!compact && <EmailDrafts drafts={answer.emails} />}
 
       <div className="px-5 py-2.5 border-t border-line flex flex-wrap items-center gap-1 text-xs">
         {[["details", "Details"], ["sources", `Sources (${answer.sources?.length || 0})`], ["second", "Second opinion"], ["trace", `How it worked (${answer.steps?.length || 0} steps)`]].map(([k, label]) => (

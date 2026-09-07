@@ -196,6 +196,12 @@ def answer_pdf(answer: Dict[str, Any], *, question: str, scope: str, saved_by: s
         story.append(P("Next steps", st["h2"]))
         for a in answer["next_actions"]:
             story.append(P(f"• <b>{_esc(a.get('owner'))}</b>: {_cite_to_sup(a.get('title', ''))}" + (f" (by {_esc(a['due'])})" if a.get("due") else ""), st["p"]))
+    for e in answer.get("emails") or []:
+        story.append(P(f"Email ready to send — to {_esc(e.get('to'))}" + (f" &lt;{_esc(e.get('to_email'))}&gt;" if e.get("to_email") else ""), st["h2"]))
+        story.append(P(f"<b>Subject:</b> {_esc(e.get('subject'))}", st["p"]))
+        for para in str(e.get("body") or "").split("\n\n"):
+            if para.strip():
+                story.append(P(_esc(para.strip()).replace("\n", "<br/>"), st["p"]))
     if answer.get("details"):
         story.append(P("Details", st["h2"]))
         for para in str(answer["details"]).split("\n\n"):

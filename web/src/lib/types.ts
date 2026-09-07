@@ -29,6 +29,8 @@ export type ArtifactRow = {
 
 export type AnswerPoint = { text: string; urgency: "critical" | "high" | "normal" | "info" | "good"; sources: number[] };
 export type NextAction = { title: string; owner: string; due?: string | null; why?: string; sources: number[] };
+/* An email the AI wrote for a next step, on the team's behalf. */
+export type EmailDraft = { to: string; to_email?: string | null; from: string; subject: string; body: string; for_action?: string };
 export type Source = { index: number; chunk_id: string; artifact_sha: string; citation: string; display_name: string;
   property_ids: string[]; placement: string; label: string; date: string; text: string; context: string; origin: string };
 
@@ -36,7 +38,7 @@ export type Answer = {
   question: string; scope: string; headline: string; points: AnswerPoint[]; details: string;
   shape?: "brief" | "actions" | "draft" | "list" | "figure" | "explain" | "followup"; composed?: string | null;
   mode?: "full" | "fast";
-  disagreements: string[]; next_actions: NextAction[]; second_opinion: string;
+  disagreements: string[]; next_actions: NextAction[]; emails?: EmailDraft[]; second_opinion: string;
   second_reader: { provider?: string; model?: string; answer?: string; missed?: string[]; wrong?: string[]; disagree?: string[]; error?: string };
   risks: string[]; verification: { facts?: number; verified?: number; rate?: number; unverified?: any[] };
   verdict: { verdict: string; confidence: number; notes: string[]; dissent: string[]; revised?: boolean };
@@ -52,6 +54,7 @@ export type Task = {
   task_id: string; title: string; owner: string; property_id?: string | null; status: "suggested" | "open" | "done" | "dismissed";
   priority: "critical" | "high" | "normal" | "low"; source: string; due?: string | null; why?: string;
   evidence?: { quote: string; source_sha?: string }[]; created_by: string; created_at: string; done_at?: string | null; done_by?: string | null;
+  draft_email?: EmailDraft | null;
 };
 
 export type WesItem = { title: string; status: "done" | "in_progress" | "remaining" | "blocked"; due?: string | null; quote: string; source_sha?: string };

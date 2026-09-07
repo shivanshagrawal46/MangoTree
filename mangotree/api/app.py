@@ -496,7 +496,9 @@ def chat_ask(body: AskBody, pid: Optional[str] = None, user=CurrentUser):
             lines.append(f"{i}. {p.get('text')}")
         if a.get("composed"):
             lines.append("DRAFT:\n" + str(a["composed"])[:2500])
-        return "\n".join(lines)[:4000]
+        for e in (a.get("emails") or [])[:3]:
+            lines.append(f"EMAIL DRAFTED (to {e.get('to')}, from {e.get('from')}) — subject: {e.get('subject')}\n{str(e.get('body'))[:1500]}")
+        return "\n".join(lines)[:6000]
     history = [{"role": m["role"],
                 "content": (f"[{_speaker(users.get(m.get('by'), {}))}] {m.get('content')}" if m["role"] == "user"
                             else _assistant_text(m.get("answer", {})))}
@@ -552,13 +554,21 @@ def chat_ask(body: AskBody, pid: Optional[str] = None, user=CurrentUser):
         def similar(a: str, b: str) -> bool:
             wa = set(re.findall(r"[a-z0-9$]{3,}", a.lower())); wb = set(re.findall(r"[a-z0-9$]{3,}", b.lower()))
             return bool(wa and wb) and len(wa & wb) / len(wa | wb) >= 0.5
+        # An email the writer drafted for an action travels with the task, so
+        # accepting the task in the board gives the sender the text ready to go.
+        drafts = list(getattr(res, "emails", None) or [])
+        def draft_for(title: str):
+            for e in drafts:
+                if e.get("for_action") and (e["for_action"].strip().lower() == title.strip().lower() or similar(e["for_action"], title)):
+                    return e
+            return None
         for a in res.next_actions:
             if any(similar(a["title"], e.get("title") or "") for e in existing):
                 continue
             t = tasks.upsert(title=a["title"], owner=a.get("owner") or "Rakesh", property_id=pid, by="opus-5",
                              source="ai_suggested", status="suggested", due=_dt(a.get("due")), why=a.get("why") or "",
                              evidence=[{"quote": "", "source_sha": (res.sources[s - 1]["artifact_sha"] if 0 < s <= len(res.sources) else None)} for s in a.get("sources", [])[:2]],
-                             tags=["from_answer"])
+                             tags=["from_answer"], draft_email=draft_for(a["title"]))
             suggested.append(t["task_id"])
             existing.append({"title": a["title"], "status": "suggested"})
         payload["suggested_task_ids"] = suggested

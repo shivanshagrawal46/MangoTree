@@ -236,6 +236,19 @@ RESOLUTION_MODEL = "gpt-6-astra"
 OPENAI_REASONING_EFFORT = "high"
 
 # =============================================================================
+# Emails written on the team's behalf (admin directive 2026-09-08)
+# =============================================================================
+#: When a next step is a message to someone outside the room, the answer carries
+#: the email ready to send, signed as the person who owns the step. Edit the
+#: sign-offs here; they are the only place the wording lives.
+EMAIL_SIGNATURES = {
+    "Rakesh": "Rakesh Bhargava\nRKB Consulting Group, Inc.",
+    "JP": "JP\nRKB Consulting Group, Inc.",
+    "Manjunath": "Manjunath\nRKB Consulting Group, Inc.",
+}
+EMAIL_DEFAULT_SENDER = "Rakesh"
+
+# =============================================================================
 # Query understanding
 # =============================================================================
 

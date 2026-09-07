@@ -62,7 +62,7 @@ class TaskStore:
     def upsert(self, *, title: str, owner: str, property_id: Optional[str], by: str, source: str = "manual",
                status: str = "open", priority: str = "normal", due: Optional[datetime] = None, why: str = "",
                evidence: Optional[List[Dict[str, Any]]] = None, source_sha: Optional[str] = None,
-               tags: Sequence[str] = ()) -> Dict[str, Any]:
+               tags: Sequence[str] = (), draft_email: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         owner = normalise_owner(owner)
         status = status if status in STATUSES else "open"
         priority = priority if priority in PRIORITIES else "normal"
@@ -78,12 +78,16 @@ class TaskStore:
                 update["due"] = due
             if evidence:
                 update["evidence"] = evidence
+            if draft_email and not existing.get("draft_email"):
+                update["draft_email"] = draft_email
             self.coll.update_one({"task_id": tid}, {"$set": update})
             return self.coll.find_one({"task_id": tid})
         doc = {
             "task_id": tid, "title": title.strip(), "owner": owner, "property_id": property_id,
             "status": status, "priority": priority, "source": source if source in SOURCES else "manual",
             "due": due, "why": why, "evidence": evidence or [], "source_sha": source_sha, "tags": list(tags),
+            # A ready-to-send email when the task is a message to someone (2026-09-08).
+            "draft_email": draft_email,
             "created_by": by, "created_at": now, "updated_at": now,
             "done_at": None, "done_by": None,
         }

@@ -11,6 +11,7 @@ import { Plus, Sparkles, Check, X, Clock, History } from "lucide-react";
 import { api } from "@/lib/api";
 import { Badge, Button, Checkbox, Dialog, DialogContent, Input, Select, Textarea, Empty, Tip } from "@/components/ui";
 import { useEvidence } from "@/components/evidence";
+import { EmailDraftCard } from "@/components/email-draft";
 import { cn, fmtDate, propertyLabel } from "@/lib/utils";
 import type { Task } from "@/lib/types";
 
@@ -72,6 +73,7 @@ export function TaskBoard({ propertyId, ownerFilter, statusFilter, showAdd = tru
                       {t.why && <span className="text-faint">— {t.why}</span>}
                     </div>
                     {t.evidence?.[0]?.quote && <button onClick={() => t.evidence?.[0]?.source_sha && open({ sha: t.evidence[0].source_sha, highlight: t.evidence[0].quote.slice(0, 60) })} className="mt-1 text-[11.5px] text-left italic text-muted border-l-2 border-accent/40 pl-2 hover:text-fg line-clamp-2">“{t.evidence[0].quote}”</button>}
+                    {t.draft_email && <div className="mt-1.5"><EmailDraftCard draft={t.draft_email} compact /></div>}
                   </div>
                   <Button size="sm" variant="soft" onClick={() => mutate(t.task_id, "open")}><Check size={13} /> Accept</Button>
                   <Button size="icon" variant="ghost" onClick={() => mutate(t.task_id, "dismissed")}><X size={14} /></Button>
@@ -107,6 +109,7 @@ export function TaskBoard({ propertyId, ownerFilter, statusFilter, showAdd = tru
                       {!compact && t.why && <span className="text-faint">— {t.why}</span>}
                     </div>
                     {!compact && t.evidence?.[0]?.quote && <button onClick={() => t.evidence?.[0]?.source_sha && open({ sha: t.evidence[0].source_sha, highlight: t.evidence[0].quote.slice(0, 60) })} className="mt-1 text-[11.5px] text-left italic text-muted border-l-2 border-line pl-2 hover:text-fg hover:border-accent line-clamp-1">“{t.evidence[0].quote}”</button>}
+                    {t.draft_email && t.status !== "done" && <div className="mt-1.5"><EmailDraftCard draft={t.draft_email} compact /></div>}
                   </div>
                   <Tip content="History"><button className="opacity-0 group-hover:opacity-100 h-7 w-7 grid place-items-center rounded-lg text-faint hover:bg-sunken" onClick={async () => { const h = await api.get<any[]>(`/tasks/${t.task_id}/history`); toast.message("History", { description: h.map((x) => `${fmtDate(x.at, "MMM d HH:mm")} · ${x.action} · ${x.by}`).join("\n") }); }}><History size={13} /></button></Tip>
                   {t.status === "open" && <button className="opacity-0 group-hover:opacity-100 h-7 w-7 grid place-items-center rounded-lg text-faint hover:bg-sunken" onClick={() => mutate(t.task_id, "dismissed")} title="Dismiss"><X size={13} /></button>}
