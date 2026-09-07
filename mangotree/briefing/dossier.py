@@ -179,6 +179,13 @@ class PropertyDossier:
         built = (existing or {}).get("built_at")
         if not existing or not built:
             return self.build(pid, force=True)
+        # A stub left by a failed investigation is not a picture of the deal;
+        # rebuild it whether or not anything changed.
+        if ((existing.get("investigation") or {}).get("outcome")) == "failed":
+            logger.info("dossier %s: last investigation failed — rebuilding", pid)
+            doc = self.build(pid, force=True)
+            doc["rebuild_reason"] = "previous investigation failed"
+            return doc
         now = datetime.now(timezone.utc)
         reason = self.changed_since(pid, built)
         if reason is None and (now - built) < timedelta(days=max_stale_days):
@@ -214,11 +221,22 @@ class PropertyDossier:
         try:
             logger.info("dossier %s: investigating", pid)
             inv = self._investigate(pid)
+            # A failed investigation must never replace a good one. The agent
+            # returns outcome="failed" instead of raising, so on 2026-09-07 a
+            # revoked API key turned all fifteen dossiers into one-line stubs and
+            # the real ones were gone. Keep the old picture and try again later.
+            if inv.get("outcome") == "failed" and existing:
+                logger.warning("dossier %s: investigation failed (%s) — keeping the one from %s",
+                               pid, str(inv.get("forced_reason"))[:120], f"{existing.get('built_at'):%m-%d %H:%M}")
+                self.coll.update_one({"property_id": pid}, {"$set": {
+                    "checked_at": now, "kept_reason": "investigation failed",
+                    "last_failure": {"at": now, "reason": str(inv.get("forced_reason"))[:300]}}})
+                return existing
             mem = self._memory(pid)
             doc = {"property_id": pid, "built_at": datetime.now(timezone.utc), "question": QUESTION,
                    "investigation": inv, "memory": mem}
             doc["block"] = self.render(doc)
-            self.coll.update_one({"property_id": pid}, {"$set": doc}, upsert=True)
+            self.coll.update_one({"property_id": pid}, {"$set": doc, "$unset": {"last_failure": "", "kept_reason": ""}}, upsert=True)
             logger.info("dossier %s: done in %.0fs, %d steps, outcome=%s", pid, inv["elapsed_ms"] / 1000, inv["steps"], inv["outcome"])
             return doc
         except Exception:
