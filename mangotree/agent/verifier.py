@@ -139,6 +139,8 @@ class Verifier:
         try:
             r = self._client_().messages.create(model=self.model, max_tokens=1500,
                                                 messages=[{"role": "user", "content": prompt}])
+            from mangotree.core.usage import METER
+            METER.record_anthropic(self.model, r)
             text = "".join(b.text for b in r.content if b.type == "text").strip().strip('"“”')
             return None if not text or text.upper().startswith("NONE") else text
         except Exception as exc:

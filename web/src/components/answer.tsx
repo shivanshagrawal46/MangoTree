@@ -11,7 +11,7 @@ import remarkGfm from "remark-gfm";
 import { ShieldCheck, ShieldAlert, Sparkles, ChevronDown, Eye, Bookmark, ListChecks, Clock, Cpu, AlertOctagon, FileDown } from "lucide-react";
 import { Badge, Button } from "@/components/ui";
 import { Cited } from "@/components/evidence";
-import { cn, URGENCY, fmtDate } from "@/lib/utils";
+import { cn, URGENCY, fmtDate, modelLabel } from "@/lib/utils";
 import type { Answer } from "@/lib/types";
 import type { SSEEvent } from "@/lib/api";
 
@@ -21,6 +21,9 @@ export function AnswerCard({ answer, onSave, onAcceptTasks, compact, pdfHref }: 
   const verdict = answer.verdict?.verdict || "";
   const sr = answer.second_reader || {};
   const srCount = (sr.missed?.length || 0) + (sr.wrong?.length || 0) + (sr.disagree?.length || 0);
+  const srName = modelLabel(sr.model || answer.models?.second_reader);
+  const invName = modelLabel(answer.models?.investigator, "the investigator");
+  const writerName = modelLabel(answer.models?.reconciler, "Opus 5");
   const worst = answer.points.reduce((acc, p) => Math.min(acc, ["critical", "high", "normal", "info", "good"].indexOf(p.urgency)), 9);
   const tone = ["critical", "high", "normal", "info", "good"][worst] || "normal";
 
@@ -34,12 +37,12 @@ export function AnswerCard({ answer, onSave, onAcceptTasks, compact, pdfHref }: 
             <Badge tone={v.verified === v.facts ? "good" : "high"}>{v.verified === v.facts ? <ShieldCheck size={11} /> : <ShieldAlert size={11} />} {v.verified}/{v.facts} facts verified</Badge>
           ) : <Badge tone="neutral"><ShieldAlert size={11} /> no facts list</Badge>}
           {answer.mode === "fast" ? (
-            <Badge tone="info"><Sparkles size={11} /> Fast · GPT-6 Astra alone · no second reader or panel</Badge>
+            <Badge tone="info"><Sparkles size={11} /> Fast · {invName} alone · no second reader or panel</Badge>
           ) : (
             <>
               <Badge tone={verdict === "approve" ? "good" : verdict === "revise" ? "critical" : "high"}>Panel: {verdict.replace(/_/g, " ") || "—"}{answer.verdict?.revised ? " (revised once)" : ""}</Badge>
               <button onClick={() => setTab(tab === "second" ? "none" : "second")}>
-                <Badge tone={sr.error ? "neutral" : srCount ? "info" : "good"}><Sparkles size={11} /> GPT-6 Astra: {sr.error ? "unavailable" : srCount ? `${srCount} note${srCount > 1 ? "s" : ""}` : "agrees"}</Badge>
+                <Badge tone={sr.error ? "neutral" : srCount ? "info" : "good"}><Sparkles size={11} /> {srName}: {sr.error ? "unavailable" : srCount ? `${srCount} note${srCount > 1 ? "s" : ""}` : "agrees"}</Badge>
               </button>
             </>
           )}
@@ -117,8 +120,8 @@ export function AnswerCard({ answer, onSave, onAcceptTasks, compact, pdfHref }: 
                     <div key={k}><div className="text-[11px] uppercase tracking-wide text-faint mb-1">{k === "missed" ? "Points Opus missed" : k === "wrong" ? "Sentences GPT challenged" : "Disagreements"}</div>
                       <ul className="list-disc ml-4 space-y-0.5">{sr[k]!.map((s, i) => <li key={i}><Cited text={s} sources={answer.sources} /></li>)}</ul></div>
                   ) : null)}
-                  {answer.disagreements?.length > 0 && <div className="text-xs"><div className="text-[11px] uppercase tracking-wide text-faint mb-1">What Opus changed after the second read</div><ul className="list-disc ml-4 space-y-0.5">{answer.disagreements.map((d, i) => <li key={i}><Cited text={d} sources={answer.sources} /></li>)}</ul></div>}
-                  {sr.answer && <details className="text-xs"><summary className="cursor-pointer text-muted">GPT-6 Astra's independent answer</summary><div className="prose-mt mt-2"><Cited text={sr.answer} sources={answer.sources} /></div></details>}
+                  {answer.disagreements?.length > 0 && <div className="text-xs"><div className="text-[11px] uppercase tracking-wide text-faint mb-1">What {writerName} changed after the second read</div><ul className="list-disc ml-4 space-y-0.5">{answer.disagreements.map((d, i) => <li key={i}><Cited text={d} sources={answer.sources} /></li>)}</ul></div>}
+                  {sr.answer && <details className="text-xs"><summary className="cursor-pointer text-muted">{srName}'s independent answer</summary><div className="prose-mt mt-2"><Cited text={sr.answer} sources={answer.sources} /></div></details>}
                   {answer.verdict?.notes?.length > 0 && <div className="text-xs"><div className="text-[11px] uppercase tracking-wide text-faint mb-1">Panel notes</div><ul className="list-disc ml-4">{answer.verdict.notes.map((n, i) => <li key={i}>{n}</li>)}</ul></div>}
                   {answer.verdict?.dissent?.length > 0 && <div className="text-xs text-high"><div className="text-[11px] uppercase tracking-wide mb-1">Dissent</div><ul className="list-disc ml-4">{answer.verdict.dissent.map((n, i) => <li key={i}>{n}</li>)}</ul></div>}
                   {(v.unverified?.length ?? 0) > 0 && <div className="text-xs text-critical"><div className="text-[11px] uppercase tracking-wide mb-1">Not verified byte-for-byte</div><ul className="list-disc ml-4">{(v.unverified || []).map((u: any, i: number) => <li key={i}>{u.claim} <span className="text-faint">({u.verdict})</span></li>)}</ul></div>}
@@ -233,8 +236,10 @@ export function LiveTrace({ events }: { events: SSEEvent[] }) {
   const passages = steps.reduce((n, s) => n + (s.new_indices?.length || 0), 0);
   const mm = Math.floor(elapsed / 60), ss = Math.floor(elapsed % 60);
 
+  // The server's phase label names the model doing the work (roles change by directive).
+  const phaseLabel = [...events].reverse().find((e) => e.kind === "phase")?.data?.label as string | undefined;
   const doing = phaseKey !== "investigate"
-    ? PHASES[phaseIdx][1] + (phaseKey === "second_reader" ? ": GPT-6 Astra is reading the same evidence independently" : phaseKey === "reconcile" ? ": Opus 5 is writing the short final answer" : ": verifying every figure, skeptic review, verdict")
+    ? (phaseLabel || PHASES[phaseIdx][1] + (phaseKey === "second_reader" ? ": second reader checking the same evidence" : phaseKey === "reconcile" ? ": writing the short final answer" : ": verifying every figure, skeptic review, verdict"))
     : steps.length === 0 ? "Opening search across every channel — first results in about a minute"
     : sinceLast > 15 ? "Deciding the next step from what it has read so far…" : "Reading results…";
 
@@ -264,7 +269,7 @@ export function LiveTrace({ events }: { events: SSEEvent[] }) {
           ))}
         </div>
       )}
-      {sr && <div className="mt-2 text-xs text-info flex items-center gap-1"><Sparkles size={12} /> GPT-6 Astra read the same evidence: {sr.error ? "unavailable" : `${sr.missed} points missed · ${sr.wrong} challenged · ${sr.disagree} disagree`}</div>}
+      {sr && <div className="mt-2 text-xs text-info flex items-center gap-1"><Sparkles size={12} /> Second reader ({modelLabel(sr.model)}) read the same evidence: {sr.error ? "unavailable" : `${sr.missed} points missed · ${sr.wrong} challenged · ${sr.disagree} disagree`}</div>}
     </div>
   );
 }

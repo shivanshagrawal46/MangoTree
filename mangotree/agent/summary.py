@@ -34,6 +34,8 @@ def update_summary(client, *, previous: str, question: str, answer: Dict[str, An
     try:
         r = client.messages.create(model=cfg.AGENT_PLANNER_MODEL, max_tokens=900, system=_SYSTEM,
                                    messages=[{"role": "user", "content": f"PREVIOUS SUMMARY:\n{previous or '(none yet)'}\n\nLATEST EXCHANGE:\n{latest}"}])
+        from mangotree.core.usage import METER
+        METER.record_anthropic(cfg.AGENT_PLANNER_MODEL, r)
         text = "".join(b.text for b in r.content if b.type == "text").strip()
         return text or None
     except Exception:

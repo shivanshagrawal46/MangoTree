@@ -58,6 +58,21 @@ export function propertyLabel(pid: string) {
   return pid.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+/* Model ids as people say them. The roles (who investigates, who second-reads)
+   are decided server-side and change by directive, so the UI never hardcodes
+   a model name — it reads the one the answer carries. */
+export function modelLabel(id?: string | null, fallback = "the second reader") {
+  const m = (id || "").toLowerCase();
+  if (!m) return fallback;
+  if (m.startsWith("gpt-6-astra")) return "GPT-6 Astra";
+  if (m.startsWith("gpt-5.6")) return "GPT-5.6";
+  if (m.startsWith("claude-opus-5")) return "Opus 5";
+  if (m.startsWith("claude-fable-5-1")) return "Fable 5.1";
+  if (m.startsWith("claude-fable-5")) return "Fable 5";
+  if (m.startsWith("claude-sonnet-5")) return "Sonnet 5";
+  return id!.replace(/ \(.*\)$/, "");
+}
+
 export function initials(name?: string) {
   return (name || "?").split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
 }

@@ -27,6 +27,7 @@ from typing import Any, Dict, List, Optional, Sequence
 
 from mangotree.config.models import MODELS, Seat
 from mangotree.core.logging import logger
+from mangotree.core.usage import METER
 from mangotree.retrieve import config as cfg
 from mangotree.retrieve.hits import Hit
 
@@ -143,6 +144,7 @@ class Hardening:
                     messages=[{"role": "system", "content": _CRITIC_PROMPT}, {"role": "user", "content": user}],
                     max_completion_tokens=3000,
                 )
+                METER.record_openai(critic_model, getattr(r, "usage", None))
                 raw = (r.choices[0].message.content or "").strip()
                 return self._parse_critique(raw, provider="openai", model=critic_model, fallback=False)
             except Exception as exc:
@@ -155,6 +157,7 @@ class Hardening:
                 model=cfg.RERANK_STAGE2_MODEL, max_tokens=3000,
                 system=_CRITIC_PROMPT, messages=[{"role": "user", "content": user}],
             )
+            METER.record_anthropic(cfg.RERANK_STAGE2_MODEL, r)
             raw = "".join(b.text for b in r.content if b.type == "text").strip()
             out = self._parse_critique(raw, provider="anthropic", model=cfg.RERANK_STAGE2_MODEL, fallback=True)
             out.error = err
@@ -191,6 +194,7 @@ class Hardening:
         try:
             r = self._anthropic_().messages.create(model=cfg.AGENT_PLANNER_MODEL, max_tokens=8000,
                                                    messages=[{"role": "user", "content": prompt}])
+            METER.record_anthropic(cfg.AGENT_PLANNER_MODEL, r)
             return "".join(b.text for b in r.content if b.type == "text").strip() or None
         except Exception as exc:
             logger.warning("rewrite-with-critique failed: %s", exc)

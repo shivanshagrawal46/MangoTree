@@ -58,8 +58,12 @@ def json_call(client, *, model: str, system: Any, user: str, tool_name: str, sch
         params = {**common, **extra}
         if stream:
             with client.messages.stream(**params) as s:
-                return s.get_final_message()
-        return client.messages.create(**params)
+                r = s.get_final_message()
+        else:
+            r = client.messages.create(**params)
+        from mangotree.core.usage import METER
+        METER.record_anthropic(model, r)
+        return r
 
     # Two attempts. On a 40-passage rerank the model has been seen to spend its
     # whole turn thinking and end without calling the tool (blocks=['thinking'],

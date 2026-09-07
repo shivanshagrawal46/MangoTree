@@ -203,6 +203,27 @@ ANSWER_URGENCIES = ("critical", "high", "normal", "info", "good")
 CRITIC_MODEL = "gpt-6-astra"
 
 # =============================================================================
+# Who does what in the deep (full) chat run — admin directive 2026-09-07
+# =============================================================================
+#: The investigator and the second reader swap: GPT-6 Astra runs the 30-step
+#: investigation; Opus 5 reads the same evidence independently. Opus 5 still
+#: writes the final answer and chairs the panel; fast mode is unchanged.
+DEEP_INVESTIGATOR_MODEL = "gpt-6-astra"
+DEEP_SECOND_READER_MODEL = model_for(Seat.ANALYST)          # claude-opus-5
+#: OpenAI reprices the WHOLE request (2x input, 1.5x output) once input passes
+#: 272k tokens. An OpenAI planner is finalised before its conversation gets there.
+OPENAI_CONTEXT_CEILING = 250_000
+
+# =============================================================================
+# Morning pass — the per-property investigation behind the issues and ledger
+# =============================================================================
+#: 20 tool calls (admin directive 2026-09-07), down from the chat run's 30. The
+#: morning pass refreshes a picture that already exists; the deep run is for
+#: questions a person is waiting on.
+MORNING_MAX_TOOL_CALLS = 20
+MORNING_MAX_WALL_CLOCK_S = 12 * 60
+
+# =============================================================================
 # Query understanding
 # =============================================================================
 

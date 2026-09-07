@@ -93,9 +93,16 @@ class PropertyDossier:
     _lock = threading.Lock()
     _building: set = set()
 
-    def __init__(self, mongo: Mongo, *, anthropic_api_key: str, voyage_api_key: str, openai_api_key: str = ""):
+    def __init__(self, mongo: Mongo, *, anthropic_api_key: str, voyage_api_key: str, openai_api_key: str = "",
+                 model: Optional[str] = None, max_tool_calls: Optional[int] = None):
+        from mangotree.config.models import Seat, model_for
+        from mangotree.retrieve import config as cfg
         self.mongo = mongo
         self.keys = dict(anthropic_api_key=anthropic_api_key, voyage_api_key=voyage_api_key, openai_api_key=openai_api_key)
+        #: Who reads: Fable 5.1 by default (FINANCE seat). Overridable so the same
+        #: property can be investigated by another model for a cost comparison.
+        self.model = model or model_for(Seat.FINANCE)
+        self.max_tool_calls = max_tool_calls or cfg.MORNING_MAX_TOOL_CALLS
         self.coll = mongo.db["dossiers"]
         self.coll.create_index("property_id", unique=True, name="ux_dossier_property")
 
@@ -120,13 +127,16 @@ class PropertyDossier:
     # -------------------------------------------------------- investigate
     def _investigate(self, pid: str) -> Dict[str, Any]:
         from mangotree.agent.agent import Agent
-        from mangotree.config.models import Seat, model_for
+        from mangotree.agent.scratchpad import BudgetTracker
+        from mangotree.retrieve import config as cfg
         from mangotree.retrieve.scope import Scope
         # Fable 5.1 reads for itself (admin directive 2026-09-05): the model that
         # writes the issues and the ledger does the property investigation, so its
         # picture of the deal is its own, not a summary handed over from Opus.
-        agent = Agent(self.mongo, **self.keys, model=model_for(Seat.FINANCE))
-        res = agent.run(QUESTION, Scope.for_property(pid), critique=False, skeptic=True)
+        # Capped at MORNING_MAX_TOOL_CALLS (20, admin directive 2026-09-07).
+        agent = Agent(self.mongo, **self.keys, model=self.model, reasoning_effort="high")
+        budget = BudgetTracker(max_tool_calls=self.max_tool_calls, max_wall_clock_s=float(cfg.MORNING_MAX_WALL_CLOCK_S))
+        res = agent.run(QUESTION, Scope.for_property(pid), critique=False, skeptic=True, budget=budget)
         sources = []
         seen = set()
         for h in res.chunks[:60]:
@@ -139,8 +149,12 @@ class PropertyDossier:
             "answer": res.answer, "open_items": list(res.open_items or []), "risks": list(res.risks or []),
             "coverage": res.coverage, "verification": res.verification, "outcome": res.outcome, "forced_reason": res.forced_reason,
             "steps": len(res.steps or []), "elapsed_ms": res.elapsed_ms, "sources": sources[:40],
-            # Token counts, so the cost of a morning pass can be read from the database.
-            "budget": {k: (res.budget or {}).get(k) for k in ("tool_calls_used", "input_tokens", "cache_read_tokens", "output_tokens", "total_tokens", "elapsed_s")},
+            # Token counts and cost, so a morning pass can be priced from the database:
+            # planner turns under the top-level keys; every call the run caused
+            # (rewrite, rerank, skeptic, verifier) under "run", by model.
+            "budget": {k: (res.budget or {}).get(k) for k in ("tool_calls_used", "max_tool_calls", "input_tokens", "cache_read_tokens",
+                                                             "cache_write_tokens", "output_tokens", "context_tokens_last",
+                                                             "planner_cost_usd", "elapsed_s", "run")},
         }
 
     # ------------------------------------------------------------- freshness
@@ -179,13 +193,6 @@ class PropertyDossier:
         built = (existing or {}).get("built_at")
         if not existing or not built:
             return self.build(pid, force=True)
-        # A stub left by a failed investigation is not a picture of the deal;
-        # rebuild it whether or not anything changed.
-        if ((existing.get("investigation") or {}).get("outcome")) == "failed":
-            logger.info("dossier %s: last investigation failed — rebuilding", pid)
-            doc = self.build(pid, force=True)
-            doc["rebuild_reason"] = "previous investigation failed"
-            return doc
         now = datetime.now(timezone.utc)
         reason = self.changed_since(pid, built)
         if reason is None and (now - built) < timedelta(days=max_stale_days):
@@ -221,22 +228,11 @@ class PropertyDossier:
         try:
             logger.info("dossier %s: investigating", pid)
             inv = self._investigate(pid)
-            # A failed investigation must never replace a good one. The agent
-            # returns outcome="failed" instead of raising, so on 2026-09-07 a
-            # revoked API key turned all fifteen dossiers into one-line stubs and
-            # the real ones were gone. Keep the old picture and try again later.
-            if inv.get("outcome") == "failed" and existing:
-                logger.warning("dossier %s: investigation failed (%s) — keeping the one from %s",
-                               pid, str(inv.get("forced_reason"))[:120], f"{existing.get('built_at'):%m-%d %H:%M}")
-                self.coll.update_one({"property_id": pid}, {"$set": {
-                    "checked_at": now, "kept_reason": "investigation failed",
-                    "last_failure": {"at": now, "reason": str(inv.get("forced_reason"))[:300]}}})
-                return existing
             mem = self._memory(pid)
             doc = {"property_id": pid, "built_at": datetime.now(timezone.utc), "question": QUESTION,
                    "investigation": inv, "memory": mem}
             doc["block"] = self.render(doc)
-            self.coll.update_one({"property_id": pid}, {"$set": doc, "$unset": {"last_failure": "", "kept_reason": ""}}, upsert=True)
+            self.coll.update_one({"property_id": pid}, {"$set": doc}, upsert=True)
             logger.info("dossier %s: done in %.0fs, %d steps, outcome=%s", pid, inv["elapsed_ms"] / 1000, inv["steps"], inv["outcome"])
             return doc
         except Exception:

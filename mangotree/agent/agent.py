@@ -87,8 +87,9 @@ class _Block:
 
 
 class _Usage:
-    def __init__(self, input_tokens: int = 0, output_tokens: int = 0, cache_read: int = 0):
-        self.input_tokens, self.output_tokens, self.cache_read_input_tokens = input_tokens, output_tokens, cache_read
+    def __init__(self, input_tokens: int = 0, output_tokens: int = 0, cache_read: int = 0, cache_write: int = 0):
+        self.input_tokens, self.output_tokens = input_tokens, output_tokens
+        self.cache_read_input_tokens, self.cache_creation_input_tokens = cache_read, cache_write
 
 
 class _Resp:
@@ -98,15 +99,18 @@ class _Resp:
 
 class Agent:
     def __init__(self, mongo: Mongo, *, anthropic_api_key: str, voyage_api_key: str, openai_api_key: str = "",
-                 hybrid: Optional[HybridSearch] = None, model: Optional[str] = None):
+                 hybrid: Optional[HybridSearch] = None, model: Optional[str] = None, reasoning_effort: str = "high"):
         import anthropic
 
         self.mongo = mongo
         self.client = anthropic.Anthropic(api_key=anthropic_api_key, max_retries=3)
         self.model = model or cfg.AGENT_PLANNER_MODEL
-        # The planner can be an OpenAI model (fast mode runs GPT-6 Astra). The loop,
-        # tools, scratchpad and verifier are shared; only the wire format differs.
+        # The planner can be an OpenAI model (the deep run is GPT-6 Astra, admin
+        # directive 2026-09-07; fast mode too). The loop, tools, scratchpad and
+        # verifier are shared; only the wire format differs.
         self.provider = "openai" if self.model.lower().startswith(("gpt", "o1", "o3", "o4")) else "anthropic"
+        #: OpenAI reasoning depth: "high" for the deep run, "low" for fast mode.
+        self.reasoning_effort = reasoning_effort
         self._openai_key = openai_api_key
         self._openai = None
         self.hs = hybrid or HybridSearch(mongo, voyage_api_key=voyage_api_key, anthropic_api_key=anthropic_api_key)
@@ -157,8 +161,8 @@ class Agent:
         oa_tools = [{"type": "function", "name": t["name"], "description": t["description"], "parameters": t["input_schema"]} for t in tools]
         kwargs: Dict[str, Any] = dict(model=self.model, instructions=system, input=self._to_responses_input(messages),
                                       tools=oa_tools, max_output_tokens=min(max_tokens, 16000),
-                                      # Fast mode is the quick read: light reasoning, not none (unsupported).
-                                      reasoning={"effort": "low"})
+                                      # "none" is unsupported on this model; fast mode uses "low", deep "high".
+                                      reasoning={"effort": self.reasoning_effort})
         if tool_choice and tool_choice.get("type") == "tool":
             kwargs["tool_choice"] = {"type": "function", "name": tool_choice["name"]}
         r = self._openai_client().responses.create(**kwargs)
@@ -180,7 +184,12 @@ class Agent:
             blocks.insert(0, _Block("text", text="\n".join(texts)))
         u = r.usage
         cached = getattr(getattr(u, "input_tokens_details", None), "cached_tokens", 0) or 0
-        return _Resp(blocks, _Usage(getattr(u, "input_tokens", 0) or 0, getattr(u, "output_tokens", 0) or 0, cached),
+        # OpenAI's input_tokens INCLUDES the cached part; Anthropic's excludes it.
+        # Normalise to the Anthropic convention so the budget and cost are right.
+        uncached = max(0, (getattr(u, "input_tokens", 0) or 0) - cached)
+        from mangotree.core.usage import METER
+        METER.record(self.model, input_tokens=uncached, output_tokens=getattr(u, "output_tokens", 0) or 0, cache_read=cached)
+        return _Resp(blocks, _Usage(uncached, getattr(u, "output_tokens", 0) or 0, cached),
                      "tool_use" if any(b.type == "tool_use" for b in blocks) else "end_turn")
 
     # ------------------------------------------------------------------ seed
@@ -291,7 +300,10 @@ class Agent:
         # tokens) tripped that and raised BEFORE sending, so every investigation
         # that ran to its budget ended with "could not produce an answer".
         with self.client.messages.stream(**kwargs) as stream:
-            return stream.get_final_message()
+            r = stream.get_final_message()
+        from mangotree.core.usage import METER
+        METER.record_anthropic(self.model, r)
+        return r
 
     @staticmethod
     def _blocks(response) -> tuple[List[dict], List[Any], str]:
@@ -318,7 +330,8 @@ class Agent:
         if u is not None:
             budget.record(input_tokens=getattr(u, "input_tokens", 0) or 0,
                           output_tokens=getattr(u, "output_tokens", 0) or 0,
-                          cache_read=getattr(u, "cache_read_input_tokens", 0) or 0, was_tool_call=False)
+                          cache_read=getattr(u, "cache_read_input_tokens", 0) or 0,
+                          cache_write=getattr(u, "cache_creation_input_tokens", 0) or 0, was_tool_call=False)
 
     # ----------------------------------------------------------- force final
     def _force_finalize(self, *, system: str, tools: List[dict], messages: List[dict],
@@ -353,6 +366,13 @@ class Agent:
             critique: bool = True, skeptic: bool = True) -> AgentResult:
         started = time.time()
         pad = AgentScratchpad(question, budget=budget, on_event=on_event)
+        pad.budget.model = self.model
+        if self.provider == "openai" and not pad.budget.max_context_tokens:
+            pad.budget.max_context_tokens = cfg.OPENAI_CONTEXT_CEILING
+        # Everything this run causes — planner turns plus the rewrite, rerank,
+        # skeptic and verifier calls made on its behalf — read as a meter delta.
+        from mangotree.core.usage import METER
+        meter_before = METER.snapshot()
         box = ToolBox(self.hs, scope, pad, conversation=conversation, verifier=self.verifier)
         specs = {s.name: s for s in box.specs()}
         tools = [s.as_anthropic() for s in specs.values()]
@@ -474,7 +494,7 @@ class Agent:
             result.outcome = OUTCOME_FAILED
             result.answer = "The investigation could not produce an answer."
             result.coverage = Verifier.coverage_statement(pad, scope, self.mongo)
-            result.budget = pad.budget.as_dict()
+            result.budget = pad.budget.as_dict() | {"run": METER.summarize(METER.diff(meter_before, METER.snapshot()))}
             result.elapsed_ms = int((time.time() - started) * 1000)
             return result
 
@@ -527,7 +547,10 @@ class Agent:
         if unverified:
             result.open_items += [f"unverified: {v.get('claim')} ({v.get('verdict')})" for v in unverified[:8]]
 
-        result.budget = pad.budget.as_dict()
+        # "run" = every model call this investigation caused, by model, with cost
+        # at list price. Attribution is process-wide, so two answers running at
+        # the same instant share it; totals are always right.
+        result.budget = pad.budget.as_dict() | {"run": METER.summarize(METER.diff(meter_before, METER.snapshot()))}
         result.elapsed_ms = int((time.time() - started) * 1000)
         pad.emit("agent_done", {"outcome": result.outcome, "elapsed_ms": result.elapsed_ms})
         return result

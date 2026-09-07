@@ -237,6 +237,8 @@ class QueryRewriter:
             out = deterministic_rewrite(question, understanding, f"call failed: {type(exc).__name__}")
             out.elapsed_ms = int((time.time() - started) * 1000)
             return out
+        from mangotree.core.usage import METER
+        METER.record_anthropic(self.model, response)
 
         raw = "".join(b.text for b in response.content if b.type == "text")
         try:

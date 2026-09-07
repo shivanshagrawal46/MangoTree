@@ -60,8 +60,8 @@ export function ChatPanel({ propertyId, initialQuestion, className }: { property
   }, [q.data?.active?.[0]?.job_id]); // eslint-disable-line react-hooks/exhaustive-deps
   React.useEffect(() => () => { unsubRef.current?.(); }, []);
 
-  /* Full = Opus 5 investigation + GPT-6 Astra second read + panel (5–20 min).
-     Fast = GPT-6 Astra alone, 10 tool calls, ~5 min, labelled as such on the card. */
+  /* Full = GPT-6 Astra investigation + Opus 5 second read + Opus 5 writes + panel (5–20 min)
+     (roles swapped 2026-09-07). Fast = GPT-6 Astra alone, 10 tool calls, ~5 min, labelled on the card. */
   const [mode, setMode] = React.useState<"full" | "fast">(() => (typeof window !== "undefined" && localStorage.getItem("mt-answer-mode") === "fast" ? "fast" : "full"));
   const pickMode = (m: "full" | "fast") => { setMode(m); try { localStorage.setItem("mt-answer-mode", m); } catch {} };
 
@@ -175,13 +175,13 @@ export function ChatPanel({ propertyId, initialQuestion, className }: { property
             onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(); } }} />
           <div className="flex items-center justify-between gap-3 px-3 pb-2">
             <div className="flex items-center gap-2 min-w-0">
-              <div className="flex rounded-lg border border-line overflow-hidden text-[11px] shrink-0" title="Full: Opus 5 + GPT-6 Astra second read + panel. Fast: GPT-6 Astra alone, 10 tool calls.">
+              <div className="flex rounded-lg border border-line overflow-hidden text-[11px] shrink-0" title="Full: GPT-6 Astra investigates (30 tool calls) + Opus 5 second read + Opus 5 writes + panel. Fast: GPT-6 Astra alone, 10 tool calls.">
                 <button onClick={() => pickMode("full")} className={cn("px-2.5 h-6 transition", mode === "full" ? "bg-fg text-bg font-semibold" : "text-muted hover:bg-sunken")}>Full</button>
                 <button onClick={() => pickMode("fast")} className={cn("px-2.5 h-6 transition", mode === "fast" ? "bg-fg text-bg font-semibold" : "text-muted hover:bg-sunken")}>Fast</button>
               </div>
               <span className="text-[11px] text-faint truncate">{live ? "Answering — you can open another property and ask there; this one keeps going and will be here when you return."
                 : mode === "fast" ? "GPT-6 Astra alone · 10 tool calls · ~5 min · no second reader or panel. For quick lookups."
-                : "Opus 5 investigates · GPT-6 Astra second-reads · Opus 5 writes · panel checks. ~5 min narrow, up to 20 broad."}</span>
+                : "GPT-6 Astra investigates · Opus 5 second-reads · Opus 5 writes · panel checks. ~5 min narrow, up to 20 broad."}</span>
             </div>
             <Button size="sm" variant="primary" onClick={ask} disabled={!text.trim() || !!live}><Send size={13} /> {live ? "Working…" : mode === "fast" ? "Ask (fast)" : "Ask"}</Button></div>
         </div>

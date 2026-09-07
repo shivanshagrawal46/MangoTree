@@ -35,20 +35,32 @@ class BudgetTracker:
     max_total_tokens: int = cfg.AGENT_MAX_TOTAL_TOKENS
     max_wall_clock_s: float = float(cfg.AGENT_MAX_WALL_CLOCK_S)
 
+    #: Largest single request allowed (uncached + cached input). OpenAI reprices
+    #: the WHOLE request at 2x input / 1.5x output past 272k tokens, so an
+    #: OpenAI planner is finalised before its conversation reaches that line.
+    max_context_tokens: Optional[int] = None
+
     tool_calls_used: int = 0
-    input_tokens_used: int = 0
+    input_tokens_used: int = 0        # uncached input, both providers
     output_tokens_used: int = 0
     cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+    context_tokens_last: int = 0      # size of the most recent request
+    model: str = ""
     started_at: float = field(default_factory=time.time)
     interrupt_requested: bool = False
 
     def record(self, *, input_tokens: int = 0, output_tokens: int = 0,
-               cache_read: int = 0, was_tool_call: bool = True) -> None:
+               cache_read: int = 0, cache_write: int = 0, was_tool_call: bool = True) -> None:
         if was_tool_call:
             self.tool_calls_used += 1
         self.input_tokens_used += input_tokens
         self.output_tokens_used += output_tokens
         self.cache_read_tokens += cache_read
+        self.cache_write_tokens += cache_write
+        ctx = input_tokens + cache_read + cache_write
+        if ctx:
+            self.context_tokens_last = ctx
 
     @property
     def total_tokens(self) -> int:
@@ -57,6 +69,14 @@ class BudgetTracker:
     @property
     def elapsed_s(self) -> float:
         return time.time() - self.started_at
+
+    def cost_usd(self) -> Optional[float]:
+        """Planner-turn cost at list price; None when the model is unknown."""
+        if not self.model:
+            return None
+        from mangotree.core.usage import cost_usd
+        return round(cost_usd(self.model, input_tokens=self.input_tokens_used, output_tokens=self.output_tokens_used,
+                              cache_read=self.cache_read_tokens, cache_write=self.cache_write_tokens), 4)
 
     def exhausted(self) -> Optional[str]:
         if self.interrupt_requested:
@@ -67,6 +87,8 @@ class BudgetTracker:
             return f"token budget reached ({self.max_total_tokens:,})"
         if self.elapsed_s >= self.max_wall_clock_s:
             return f"time budget reached ({int(self.max_wall_clock_s // 60)} min)"
+        if self.max_context_tokens and self.context_tokens_last >= self.max_context_tokens:
+            return f"context ceiling reached ({self.max_context_tokens:,} tokens)"
         return None
 
     def remaining_calls(self) -> int:
@@ -76,8 +98,9 @@ class BudgetTracker:
         return {
             "tool_calls_used": self.tool_calls_used, "max_tool_calls": self.max_tool_calls,
             "input_tokens": self.input_tokens_used, "output_tokens": self.output_tokens_used,
-            "cache_read_tokens": self.cache_read_tokens, "total_tokens": self.total_tokens,
-            "max_total_tokens": self.max_total_tokens,
+            "cache_read_tokens": self.cache_read_tokens, "cache_write_tokens": self.cache_write_tokens,
+            "context_tokens_last": self.context_tokens_last, "total_tokens": self.total_tokens,
+            "max_total_tokens": self.max_total_tokens, "model": self.model, "planner_cost_usd": self.cost_usd(),
             "elapsed_s": round(self.elapsed_s, 1), "max_wall_clock_s": self.max_wall_clock_s,
             "interrupted": self.interrupt_requested,
         }

@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from mangotree.core.logging import logger
+from mangotree.core.usage import METER
 from mangotree.retrieve import config as cfg
 from mangotree.retrieve.scope import Scope
 from mangotree.storage.mongo import Mongo
@@ -196,6 +197,21 @@ class PanelResult:
         return dict(self.__dict__)
 
 
+def _pretty(model: str) -> str:
+    m = (model or "").lower()
+    if m.startswith("gpt-6-astra"):
+        return "GPT-6 Astra"
+    if m.startswith("claude-opus-5"):
+        return "Opus 5"
+    if m.startswith("claude-fable-5-1"):
+        return "Fable 5.1"
+    if m.startswith("claude-fable-5"):
+        return "Fable 5"
+    if m.startswith("claude-sonnet-5"):
+        return "Sonnet 5"
+    return model or "model"
+
+
 def _json(raw: str) -> dict:
     txt = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw.strip(), flags=re.S)
     m = re.search(r"\{.*\}", txt, re.S)
@@ -223,27 +239,52 @@ class AnswerPanel:
         passages = _passages_block(pad, (idx + extra)[:60], max_chars=2500)
         user = (f"QUESTION:\n{question}\n\nEVIDENCE:\n{passages}\n\n"
                 f"--- Write PART A now. Then read the DRAFT below for PART B. ---\n\nDRAFT:\n{draft}")
+        model = cfg.DEEP_SECOND_READER_MODEL
+        from mangotree.core.usage import METER
+        # Since 2026-09-07 the second reader is Opus 5 (the investigator is GPT-6
+        # Astra), so this must speak either provider. Provider follows the model name.
+        if model.lower().startswith("claude"):
+            try:
+                from mangotree.core.llm_json import json_call
+                data = json_call(self.anthropic, model=model, max_tokens=8000,
+                                 system=_GPT_SYSTEM, user=user, tool_name="second_reading",
+                                 description="Your independent answer and the draft's misses, errors and disagreements.",
+                                 schema={"type": "object", "properties": {
+                                     "answer": {"type": "string"},
+                                     "missed": {"type": "array", "items": {"type": "string"}},
+                                     "wrong": {"type": "array", "items": {"type": "string"}},
+                                     "disagree": {"type": "array", "items": {"type": "string"}}},
+                                     "required": ["answer", "missed", "wrong", "disagree"]},
+                                 **cfg.OPUS_HIGH_KWARGS)
+                return {"provider": "anthropic", "model": model, "answer": str(data.get("answer") or ""),
+                        "missed": [str(x) for x in (data.get("missed") or [])][:12],
+                        "wrong": [str(x) for x in (data.get("wrong") or [])][:12],
+                        "disagree": [str(x) for x in (data.get("disagree") or [])][:8]}
+            except Exception as exc:
+                logger.warning("second reader failed: %s", exc)
+                return {"error": f"{type(exc).__name__}: {exc}"[:200], "provider": "anthropic", "model": model}
         if not self._okey:
-            return {"error": "OPENAI_API_KEY not set", "provider": "none"}
+            return {"error": "OPENAI_API_KEY not set", "provider": "none", "model": model}
         try:
             from openai import OpenAI
             if self._openai is None:
                 self._openai = OpenAI(api_key=self._okey)
             r = self._openai.chat.completions.create(
-                model=cfg.CRITIC_MODEL,
+                model=model,
                 messages=[{"role": "system", "content": _GPT_SYSTEM}, {"role": "user", "content": user}],
                 max_completion_tokens=6000,
             )
+            METER.record_openai(model, getattr(r, "usage", None))
             raw = (r.choices[0].message.content or "").strip()
             data = _json(raw)
-            return {"provider": "openai", "model": cfg.CRITIC_MODEL,
+            return {"provider": "openai", "model": model,
                     "answer": str(data.get("answer") or ""),
                     "missed": [str(x) for x in (data.get("missed") or [])][:12],
                     "wrong": [str(x) for x in (data.get("wrong") or [])][:12],
                     "disagree": [str(x) for x in (data.get("disagree") or [])][:8]}
         except Exception as exc:
             logger.warning("second reader failed: %s", exc)
-            return {"error": f"{type(exc).__name__}: {exc}"[:200], "provider": "openai", "model": cfg.CRITIC_MODEL}
+            return {"error": f"{type(exc).__name__}: {exc}"[:200], "provider": "openai", "model": model}
 
     # --------------------------------------------------------------- reconcile
     def reconcile(self, question: str, draft: str, second: Dict[str, Any], pad: AgentScratchpad,
@@ -275,6 +316,8 @@ class AnswerPanel:
             **cfg.OPUS_HIGH_KWARGS,
         ) as stream:
             r = stream.get_final_message()
+        from mangotree.core.usage import METER
+        METER.record_anthropic(cfg.AGENT_PLANNER_MODEL, r)
         raw = "".join(b.text for b in r.content if b.type == "text")
         data = _json(raw)
         points = []
@@ -310,6 +353,8 @@ class AnswerPanel:
         try:
             r = self.anthropic.messages.create(model=cfg.AGENT_PLANNER_MODEL, max_tokens=2000,
                                                system=_VERDICT_SYSTEM, messages=[{"role": "user", "content": user}])
+            from mangotree.core.usage import METER
+            METER.record_anthropic(cfg.AGENT_PLANNER_MODEL, r)
             data = _json("".join(b.text for b in r.content if b.type == "text"))
             v = str(data.get("verdict") or "approve_with_notes")
             return {"verdict": v if v in ("approve", "approve_with_notes", "revise") else "approve_with_notes",
@@ -322,11 +367,25 @@ class AnswerPanel:
     # ------------------------------------------------------------- fast mode
     @property
     def fast_agent(self) -> Agent:
-        """GPT-6 Astra as the planner, sharing the search stack and verifier."""
+        """GPT-6 Astra as the planner, light reasoning, sharing the search stack and verifier."""
         if getattr(self, "_fast_agent", None) is None:
             self._fast_agent = Agent(self.mongo, anthropic_api_key=self.agent.client.api_key, voyage_api_key="",
-                                     openai_api_key=self._okey, hybrid=self.agent.hs, model=cfg.CRITIC_MODEL)
+                                     openai_api_key=self._okey, hybrid=self.agent.hs, model=cfg.CRITIC_MODEL,
+                                     reasoning_effort="low")
         return self._fast_agent
+
+    @property
+    def deep_agent(self) -> Agent:
+        """The deep-run investigator (GPT-6 Astra, full reasoning) — admin directive 2026-09-07.
+        Falls back to the Opus agent when no OpenAI key is configured."""
+        if getattr(self, "_deep_agent", None) is None:
+            if cfg.DEEP_INVESTIGATOR_MODEL.lower().startswith("claude") or not self._okey:
+                self._deep_agent = self.agent
+            else:
+                self._deep_agent = Agent(self.mongo, anthropic_api_key=self.agent.client.api_key, voyage_api_key="",
+                                         openai_api_key=self._okey, hybrid=self.agent.hs, model=cfg.DEEP_INVESTIGATOR_MODEL,
+                                         reasoning_effort="high")
+        return self._deep_agent
 
     def _reconcile_openai(self, question: str, draft: str, pad: AgentScratchpad, *, shape: str, max_points: Optional[int]) -> Dict[str, Any]:
         """The same writing rules, answered by GPT-6 Astra in JSON mode."""
@@ -341,6 +400,8 @@ class AnswerPanel:
         r = client.chat.completions.create(model=cfg.CRITIC_MODEL, max_completion_tokens=8000, response_format={"type": "json_object"},
                                            messages=[{"role": "system", "content": _RECONCILE_SYSTEM.format(max_points=limit)},
                                                      {"role": "user", "content": user}])
+        from mangotree.core.usage import METER
+        METER.record_openai(cfg.CRITIC_MODEL, getattr(r, "usage", None))
         data = _json(r.choices[0].message.content or "{}")
         points = []
         for p in (data.get("points") or [])[:limit]:
@@ -363,6 +424,7 @@ class AnswerPanel:
         No second reader, no skeptic, no panel verdict. Facts are still checked
         byte-for-byte — that is deterministic and cheap. Labelled as fast in the UI."""
         started = time.time()
+        meter_before = METER.snapshot()
         emit = on_event or (lambda k, p: None)
         result = PanelResult(question=question, scope=scope.describe())
         result.models = {"investigator": cfg.CRITIC_MODEL + " (fast)", "second_reader": "none (fast mode)",
@@ -407,7 +469,8 @@ class AnswerPanel:
         result.verdict = {"verdict": "fast", "confidence": 0, "notes": ["Fast mode: single model, no second reader or panel review."], "dissent": []}
         result.coverage = agent_res.coverage
         result.elapsed_ms = int((time.time() - started) * 1000)
-        emit("done", {"elapsed_ms": result.elapsed_ms, "verdict": "fast"})
+        result.budget = dict(result.budget or {}) | {"answer": METER.summarize(METER.diff(meter_before, METER.snapshot()))}
+        emit("done", {"elapsed_ms": result.elapsed_ms, "verdict": "fast", "cost_usd": result.budget["answer"].get("total_cost_usd")})
         return result
 
     # -------------------------------------------------------------------- run
@@ -419,10 +482,12 @@ class AnswerPanel:
             return self.answer_fast(question, scope, conversation=conversation, on_event=on_event,
                                     remember_notes=remember_notes, budget=budget, max_points=max_points)
         started = time.time()
+        meter_before = METER.snapshot()
         emit = on_event or (lambda k, p: None)
         result = PanelResult(question=question, scope=scope.describe())
         result.mode = "full"
-        result.models = {"investigator": cfg.AGENT_PLANNER_MODEL + " (high)", "second_reader": cfg.CRITIC_MODEL,
+        investigator = self.deep_agent
+        result.models = {"investigator": investigator.model + " (high)", "second_reader": cfg.DEEP_SECOND_READER_MODEL,
                          "reconciler": cfg.AGENT_PLANNER_MODEL, "panel": cfg.AGENT_PLANNER_MODEL}
 
         conv = list(conversation)
@@ -437,9 +502,9 @@ class AnswerPanel:
             block = "\n".join(f"- ({n.get('author', 'admin')}, {str(n.get('created_at', ''))[:10]}): {n.get('text')}" for n in remember_notes)
             conv = [{"role": "user", "content": f"REMEMBER NOTES (verbatim, from the firm — treat as ground truth and attribute when used):\n{block}"}] + conv
 
-        emit("phase", {"phase": "investigate", "label": "Opus 5 investigating"})
-        agent_res: AgentResult = self.agent.run(question, scope, conversation=conv, on_event=on_event,
-                                               critique=False, skeptic=False, budget=budget)
+        emit("phase", {"phase": "investigate", "label": f"{_pretty(investigator.model)} investigating (deep: up to {cfg.AGENT_MAX_TOOL_CALLS} tool calls)"})
+        agent_res: AgentResult = investigator.run(question, scope, conversation=conv, on_event=on_event,
+                                                 critique=False, skeptic=False, budget=budget)
         pad = self._pad_from(agent_res)
         result.draft = agent_res.answer
         result.steps = agent_res.steps
@@ -447,7 +512,7 @@ class AnswerPanel:
         result.outcome = agent_res.outcome
         result.sources = [h.as_dict() | {"index": i} for i, h in enumerate(agent_res.chunks, 1)]
 
-        emit("phase", {"phase": "second_reader", "label": "GPT-6 Astra reading the same evidence"})
+        emit("phase", {"phase": "second_reader", "label": f"{_pretty(cfg.DEEP_SECOND_READER_MODEL)} reading the same evidence independently"})
         second = self.second_reader(question, agent_res.answer, pad)
         result.second_reader = second
         if second.get("error"):
@@ -514,7 +579,10 @@ class AnswerPanel:
         if v.get("facts"):
             result.coverage += f" Final answer facts checked byte-for-byte: {v.get('verified')}/{v.get('facts')}."
         result.elapsed_ms = int((time.time() - started) * 1000)
-        emit("done", {"elapsed_ms": result.elapsed_ms, "verdict": result.verdict.get("verdict")})
+        # Whole-answer cost: investigation + second reader + writer + panel.
+        result.budget = dict(result.budget or {}) | {"answer": METER.summarize(METER.diff(meter_before, METER.snapshot()))}
+        emit("done", {"elapsed_ms": result.elapsed_ms, "verdict": result.verdict.get("verdict"),
+                      "cost_usd": result.budget["answer"].get("total_cost_usd")})
         return result
 
     def _state_block(self, scope: Scope) -> str:
