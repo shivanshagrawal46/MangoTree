@@ -233,11 +233,21 @@ class LedgerStats:
 
 
 class LedgerBuilder:
-    def __init__(self, mongo: Mongo, *, anthropic_api_key: str, model: Optional[str] = None):
+    def __init__(self, mongo: Mongo, *, anthropic_api_key: str, model: Optional[str] = None,
+                 openai_api_key: Optional[str] = None):
         import anthropic
+        from mangotree.config.settings import SETTINGS
         self.mongo = mongo
         self.client = anthropic.Anthropic(api_key=anthropic_api_key, max_retries=4)
-        self.model = model or model_for(Seat.FINANCE)
+        # GPT-6 Astra builds the ledger (admin directive 2026-09-07: the morning
+        # pass is Astra end to end). Fable 5.1 only if no OpenAI key is configured.
+        # Every row is still quote-verified against the document below, whoever writes it.
+        self._okey = openai_api_key if openai_api_key is not None else (SETTINGS.openai_api_key_critic or SETTINGS.openai_api_key or "")
+        self.model = model or cfg.MORNING_WRITER_MODEL
+        if self.model.lower().startswith("gpt") and not self._okey:
+            logger.warning("ledger: %s needs an OpenAI key; falling back to %s", self.model, model_for(Seat.FINANCE))
+            self.model = model_for(Seat.FINANCE)
+        self._openai = None
         self.entries = mongo.db["ledger_entries"]
         self.summaries = mongo.db["ledger_summaries"]
         self.entries.create_index([("property_id", 1), ("date", 1)], name="ix_ledger_prop_date")
@@ -343,6 +353,27 @@ class LedgerBuilder:
         data: Dict[str, Any] = {}
         for attempt in (1, 2):
             try:
+                if self.model.lower().startswith("gpt"):
+                    from openai import OpenAI
+                    from mangotree.core.llm_json import json_call_openai
+                    if self._openai is None:
+                        self._openai = OpenAI(api_key=self._okey, max_retries=3)
+                    data = json_call_openai(self._openai, model=self.model, system=_SYSTEM, user=prompt, tool_name=_TOOL["name"],
+                                            description=_TOOL.get("description", ""), schema=_TOOL["input_schema"],
+                                            max_tokens=48000, reasoning_effort=cfg.OPENAI_REASONING_EFFORT)
+                    with self._lock:
+                        self.stats.calls += 1
+                    if not (data.get("entries") or data.get("balances")):
+                        # No rows but gaps/discrepancies/notes = the model read the file and
+                        # found nothing bookable (a deal still closing). Only a bare empty
+                        # reply is worth a second attempt.
+                        if data.get("gaps") or data.get("discrepancies") or data.get("notes"):
+                            logger.info("ledger %s: %s booked nothing — %s", pid, self.model, str(data.get("notes") or "")[:160])
+                        else:
+                            logger.warning("ledger %s: empty result from %s", pid, self.model)
+                            if attempt == 1:
+                                continue
+                    break
                 # Tool call so the ledger arrives as well-formed data. Fable does not
                 # accept a *forced* tool choice, so the instruction to call it is in
                 # the prompt and the text path below is the fallback.
@@ -356,6 +387,8 @@ class LedgerBuilder:
                                                  messages=[{"role": "user", "content": prompt}],
                                                  tools=[_TOOL], tool_choice={"type": "auto"}, **kwargs) as stream:
                     r = stream.get_final_message()
+                from mangotree.core.usage import METER
+                METER.record_anthropic(self.model, r)
                 with self._lock:
                     self.stats.calls += 1
                 logger.info("ledger %s: stop=%s blocks=%s out_tokens=%s", pid, r.stop_reason,

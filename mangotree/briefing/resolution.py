@@ -99,11 +99,21 @@ def _norm(t: str) -> str:
 
 
 class ResolutionPass:
-    def __init__(self, mongo: Mongo, *, anthropic_api_key: str, model: Optional[str] = None):
+    def __init__(self, mongo: Mongo, *, anthropic_api_key: str, model: Optional[str] = None,
+                 openai_api_key: Optional[str] = None):
         import anthropic
+        from mangotree.config.settings import SETTINGS
+        from mangotree.retrieve import config as cfg
         self.mongo = mongo
         self.client = anthropic.Anthropic(api_key=anthropic_api_key, max_retries=4)
-        self.model = model or model_for(Seat.FINANCE)
+        # GPT-6 Astra rules the open items (admin directive 2026-09-07); Fable is the
+        # fallback when no OpenAI key is configured. Either provider works here.
+        self._okey = openai_api_key if openai_api_key is not None else (SETTINGS.openai_api_key_critic or SETTINGS.openai_api_key or "")
+        self.model = model or cfg.RESOLUTION_MODEL
+        if self.model.lower().startswith("gpt") and not self._okey:
+            logger.warning("resolution pass: %s needs an OpenAI key; falling back to %s", self.model, model_for(Seat.FINANCE))
+            self.model = model_for(Seat.FINANCE)
+        self._openai = None
         self.runs = mongo.db["resolution_runs"]
         self.runs.create_index([("property_id", 1), ("at", -1)], name="ix_res_prop")
         self._lock = threading.Lock()
@@ -183,8 +193,17 @@ class ResolutionPass:
             parts.append(f"\n[sha={d['sha256'][:16]}] {str(d.get('date'))[:10]} {d.get('source_type')} {frm} — {d.get('subject') or d.get('filename')}\n{' '.join(body.split())[:2500]}")
         prompt = "<<<DATA>>>\n" + "\n".join(parts) + "\n<<<END>>>"
 
-        data = json_call(self.client, model=self.model, system=_SYSTEM, user=prompt, tool_name=_TOOL["name"],
-                         description=_TOOL["description"], schema=_TOOL["input_schema"], max_tokens=12000, stream=True)
+        if self.model.lower().startswith("gpt"):
+            from openai import OpenAI
+            from mangotree.core.llm_json import json_call_openai
+            if self._openai is None:
+                self._openai = OpenAI(api_key=self._okey, max_retries=3)
+            data = json_call_openai(self._openai, model=self.model, system=_SYSTEM, user=prompt, tool_name=_TOOL["name"],
+                                    description=_TOOL["description"], schema=_TOOL["input_schema"], max_tokens=12000,
+                                    reasoning_effort="high")
+        else:
+            data = json_call(self.client, model=self.model, system=_SYSTEM, user=prompt, tool_name=_TOOL["name"],
+                             description=_TOOL["description"], schema=_TOOL["input_schema"], max_tokens=12000, stream=True)
 
         by_id = {i["item_id"]: i for i in items}
         rep_by_id = {r["fact_id"]: r for r in reported}

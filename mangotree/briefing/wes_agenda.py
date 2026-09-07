@@ -104,11 +104,20 @@ def _tool_input(response) -> dict:
 
 
 class WesAgenda:
-    def __init__(self, mongo: Mongo, *, anthropic_api_key: str, model: Optional[str] = None):
+    def __init__(self, mongo: Mongo, *, anthropic_api_key: str, model: Optional[str] = None,
+                 openai_api_key: Optional[str] = None):
         import anthropic
+        from mangotree.config.settings import SETTINGS
         self.mongo = mongo
         self.client = anthropic.Anthropic(api_key=anthropic_api_key, max_retries=4)
-        self.model = model or model_for(Seat.FINANCE)
+        # GPT-6 Astra writes the three issues (admin directive 2026-09-07: the
+        # morning pass is Astra end to end). Fable 5.1 only if no OpenAI key.
+        self._okey = openai_api_key if openai_api_key is not None else (SETTINGS.openai_api_key_critic or SETTINGS.openai_api_key or "")
+        self.model = model or cfg.MORNING_WRITER_MODEL
+        if self.model.lower().startswith("gpt") and not self._okey:
+            logger.warning("wes agenda: %s needs an OpenAI key; falling back to %s", self.model, model_for(Seat.FINANCE))
+            self.model = model_for(Seat.FINANCE)
+        self._openai = None
         self.coll = mongo.db["wes_agenda"]
         self.coll.create_index([("property_id", 1), ("day", 1)], unique=True, name="ux_wes_agenda_day")
         self._lock = threading.Lock()
@@ -234,12 +243,23 @@ class WesAgenda:
         data: Dict[str, Any] = {}
         for attempt in (1, 2):
             try:
+                if self.model.lower().startswith("gpt"):
+                    from openai import OpenAI
+                    from mangotree.core.llm_json import json_call_openai
+                    if self._openai is None:
+                        self._openai = OpenAI(api_key=self._okey, max_retries=3)
+                    data = json_call_openai(self._openai, model=self.model, system=_SYSTEM, user=prompt, tool_name=_TOOL["name"],
+                                            description=_TOOL.get("description", ""), schema=_TOOL["input_schema"],
+                                            max_tokens=12000, reasoning_effort=cfg.OPENAI_REASONING_EFFORT)
+                    break
                 kwargs = dict(cfg.OPUS_HIGH_KWARGS) if attempt == 1 else {}
                 with self.client.messages.stream(model=self.model, max_tokens=12000,
                                                  system=[{"type": "text", "text": _SYSTEM, "cache_control": {"type": "ephemeral"}}],
                                                  messages=[{"role": "user", "content": prompt}],
                                                  tools=[_TOOL], tool_choice={"type": "auto"}, **kwargs) as stream:
                     r = stream.get_final_message()
+                from mangotree.core.usage import METER
+                METER.record_anthropic(self.model, r)
                 data = _tool_input(r)
                 break
             except Exception as exc:

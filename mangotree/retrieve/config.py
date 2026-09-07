@@ -205,10 +205,13 @@ CRITIC_MODEL = "gpt-6-astra"
 # =============================================================================
 # Who does what in the deep (full) chat run — admin directive 2026-09-07
 # =============================================================================
-#: The investigator and the second reader swap: GPT-6 Astra runs the 30-step
-#: investigation; Opus 5 reads the same evidence independently. Opus 5 still
-#: writes the final answer and chairs the panel; fast mode is unchanged.
+#: The two jobs swap completely. GPT-6 Astra runs the 30-step investigation and
+#: writes the final answer after seeing the second reading; Opus 5 is the
+#: second reader (its own answer from the same evidence, plus what the draft
+#: missed or got wrong). The panel checks (skeptic, verdict) stay on Opus 5 —
+#: the panel was directed to be all-Opus on 2026-09-04. Fast mode is unchanged.
 DEEP_INVESTIGATOR_MODEL = "gpt-6-astra"
+DEEP_WRITER_MODEL = "gpt-6-astra"
 DEEP_SECOND_READER_MODEL = model_for(Seat.ANALYST)          # claude-opus-5
 #: OpenAI reprices the WHOLE request (2x input, 1.5x output) once input passes
 #: 272k tokens. An OpenAI planner is finalised before its conversation gets there.
@@ -217,11 +220,20 @@ OPENAI_CONTEXT_CEILING = 250_000
 # =============================================================================
 # Morning pass — the per-property investigation behind the issues and ledger
 # =============================================================================
-#: 20 tool calls (admin directive 2026-09-07), down from the chat run's 30. The
-#: morning pass refreshes a picture that already exists; the deep run is for
-#: questions a person is waiting on.
-MORNING_MAX_TOOL_CALLS = 20
-MORNING_MAX_WALL_CLOCK_S = 12 * 60
+#: The morning pass is GPT-6 Astra end to end (admin directive 2026-09-07, after
+#: a measured comparison on Varnum: $2.34 vs Fable's $5.09 at the same cap,
+#: 50/51 vs 29/29 facts verified): it investigates each changed property (30
+#: tool calls, full reasoning), rules the open items, writes the three Wes
+#: issues and builds the ledger. Fable 5.1 is used only when no OpenAI key exists.
+MORNING_INVESTIGATOR_MODEL = "gpt-6-astra"
+MORNING_WRITER_MODEL = "gpt-6-astra"          # Wes issues + ledger
+MORNING_MAX_TOOL_CALLS = 30
+MORNING_MAX_WALL_CLOCK_S = 15 * 60
+#: Who rules yesterday's open issues, cards and tasks against the new records
+#: each morning (and after new mail) so the Wes agenda cannot re-raise what is done.
+RESOLUTION_MODEL = "gpt-6-astra"
+#: Every GPT-6 Astra call — deep, fast, morning, resolution — runs at full reasoning.
+OPENAI_REASONING_EFFORT = "high"
 
 # =============================================================================
 # Query understanding

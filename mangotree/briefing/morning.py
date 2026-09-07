@@ -178,20 +178,28 @@ class Scheduler:
     * mail intake every ``MT_POLL_MINUTES`` (default 10), then the arrival
       chain for anything new; tasks and cards flushed once a property has been
       quiet for the debounce window
-    * nightly at 02:00 local: a 72-hour intake sweep, then the correctness pass
-      (graph rebuild, anything any stage still owes)
-    * change-detection cards hourly; the briefing before 06:00
+    * nightly at NIGHTLY_HOUR (20:00 Eastern): a 72-hour intake sweep, then the
+      correctness pass (graph rebuild, anything any stage still owes)
+    * change-detection cards hourly; the morning pass from two hours before the
+      briefing hour; the briefing at 02:00 Eastern (admin directive 2026-09-07)
+
+    The clock is the firm's — America/New_York — not the server's (UTC), so the
+    brief stays at 2 a.m. Eastern across the daylight-saving change instead of
+    drifting an hour. Override with MT_SCHEDULE_TZ / MT_BRIEFING_HOUR.
 
     In-process on purpose for now: one server, one thread, state in Mongo
     (``scheduled_runs``) so a missed run is visible and a failed one is
     dead-lettered rather than silent.
     """
 
-    def __init__(self, mongo: Mongo, *, anthropic_api_key: str, briefing_hour: int = 6, users=("rakesh", "jp", "manjunath"),
-                 intake: bool = True):
+    NIGHTLY_HOUR = int(os.environ.get("MT_NIGHTLY_HOUR", "20"))
+
+    def __init__(self, mongo: Mongo, *, anthropic_api_key: str, briefing_hour: Optional[int] = None,
+                 users=("rakesh", "jp", "manjunath"), intake: bool = True, tz: Optional[str] = None):
         self.mongo = mongo
         self.key = anthropic_api_key
-        self.hour = briefing_hour
+        self.hour = briefing_hour if briefing_hour is not None else int(os.environ.get("MT_BRIEFING_HOUR", "2"))
+        self.tz = self._zone(tz or os.environ.get("MT_SCHEDULE_TZ", "America/New_York"))
         self.users = users
         self.runs = mongo.db["scheduled_runs"]
         self._stop = threading.Event()
@@ -199,6 +207,19 @@ class Scheduler:
         self._watcher = None
         self._chain = None
         self._last_poll: Optional[datetime] = None
+
+    @staticmethod
+    def _zone(name: str):
+        try:
+            from zoneinfo import ZoneInfo
+            return ZoneInfo(name)
+        except Exception as exc:                        # no tz database on this machine
+            logger.warning("schedule timezone %s unavailable (%s); using UTC", name, exc)
+            return timezone.utc
+
+    def _now_local(self) -> datetime:
+        """Now, on the firm's clock — what every 'hour' in this scheduler means."""
+        return datetime.now(timezone.utc).astimezone(self.tz)
 
     @property
     def watcher(self):
@@ -266,7 +287,7 @@ class Scheduler:
         property that has changed before the ledger and the agenda, and the
         6 a.m. brief must read the finished result. Cheap pre-check; the claim
         below is what actually guarantees a single run."""
-        if datetime.now().hour < max(0, self.hour - 2):
+        if self._now_local().hour < max(0, self.hour - 2):
             return False
         day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         lock = self.locks.find_one({"job": job, "day": day})
@@ -319,8 +340,7 @@ class Scheduler:
         return self._last_poll is None or (datetime.now(timezone.utc) - self._last_poll) >= timedelta(minutes=POLL_MINUTES)
 
     def _due_nightly(self) -> bool:
-        local = datetime.now()
-        if local.hour != 2:
+        if self._now_local().hour != self.NIGHTLY_HOUR:
             return False
         day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         return self.runs.count_documents({"job": "nightly", "day": day}) == 0
@@ -339,8 +359,7 @@ class Scheduler:
                               "at": datetime.now(timezone.utc)})
 
     def _due_briefing(self) -> bool:
-        local = datetime.now()
-        if local.hour < self.hour:
+        if self._now_local().hour < self.hour:
             return False
         day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         return self.mongo.db["briefings"].count_documents({"day": day}) < len(self.users)

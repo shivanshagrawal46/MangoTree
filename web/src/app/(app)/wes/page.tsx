@@ -27,7 +27,7 @@ export default function WesPage() {
       <div className="flex items-start justify-between gap-4 print:hidden">
         <div>
           <h1 className="text-xl font-semibold tracking-tight flex items-center gap-2"><HardHat size={18} className="text-accent" /> Wes — today's agenda</h1>
-          <p className="text-sm text-muted mt-1">{fmtDate(q.data.day, "EEEE d MMMM yyyy")} · <b className="text-fg tnum">{total}</b> issues across <b className="text-fg tnum">{rows.length}</b> properties, freshest money risk first. Written each morning by Fable 5.1 from the records; every point opens its source.</p>
+          <p className="text-sm text-muted mt-1">{fmtDate(q.data.day, "EEEE d MMMM yyyy")} · <b className="text-fg tnum">{total}</b> issues across <b className="text-fg tnum">{rows.length}</b> properties, freshest money risk first. Written each morning by GPT-6 Astra from the records; every point opens its source.</p>
         </div>
         <Button variant="ghost" size="sm" onClick={() => window.print()}><Printer size={13} /> Print</Button>
       </div>

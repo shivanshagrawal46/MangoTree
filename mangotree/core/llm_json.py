@@ -90,6 +90,38 @@ def json_call(client, *, model: str, system: Any, user: str, tool_name: str, sch
         raise ModelReplyError(f"{tool_name}: no structured reply (stop={getattr(r, 'stop_reason', '?')}, text={raw[:120]!r})")
 
 
+def json_call_openai(client, *, model: str, system: str, user: str, tool_name: str, schema: Dict[str, Any],
+                     description: str = "", max_tokens: int = 8000, reasoning_effort: str = "high") -> Dict[str, Any]:
+    """The OpenAI counterpart of json_call: one forced function call through the
+    Responses API (GPT-6 Astra takes function tools only there), full reasoning.
+    Returns the function's arguments as a dict, or the parsed text JSON."""
+    from mangotree.core.usage import METER
+    tool = {"type": "function", "name": tool_name, "description": description or f"Return the {tool_name} result.",
+            "parameters": schema}
+    r = client.responses.create(
+        model=model, instructions=system + f"\n\nRespond by calling the {tool_name} function exactly once. Do not answer in prose.",
+        input=[{"role": "user", "content": user}], tools=[tool], tool_choice={"type": "function", "name": tool_name},
+        max_output_tokens=max_tokens, reasoning={"effort": reasoning_effort},
+    )
+    METER.record_openai(model, getattr(r, "usage", None))
+    texts = []
+    for item in r.output or []:
+        t = getattr(item, "type", None)
+        if t == "function_call" and getattr(item, "name", None) == tool_name:
+            try:
+                return json.loads(getattr(item, "arguments", None) or "{}")
+            except json.JSONDecodeError as exc:
+                raise ModelReplyError(f"{tool_name}: function arguments were not valid JSON ({exc})")
+        if t == "message":
+            for c in getattr(item, "content", None) or []:
+                if getattr(c, "type", None) == "output_text" and getattr(c, "text", None):
+                    texts.append(c.text)
+    parsed = _parse_text("".join(texts))
+    if parsed is not None:
+        return parsed
+    raise ModelReplyError(f"{tool_name}: no function call in the reply (text={''.join(texts)[:120]!r})")
+
+
 def usage_of(r) -> Dict[str, int]:
     u = getattr(r, "usage", None)
     return {"input_tokens": getattr(u, "input_tokens", 0) or 0, "output_tokens": getattr(u, "output_tokens", 0) or 0}

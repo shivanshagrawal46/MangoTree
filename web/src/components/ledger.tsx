@@ -1,6 +1,6 @@
 "use client";
 
-/* Money as a ledger, and the daily Wes agenda. Both from Fable 5.1, both
+/* Money as a ledger, and the daily Wes agenda. Both from GPT-6 Astra, both
    quote-verified. The rule on every figure here: shown only if a document says
    it; otherwise the words "not established" — never 0, never an estimate. */
 
@@ -39,7 +39,7 @@ export function LedgerView({ pid }: { pid: string }) {
   const [busy, setBusy] = React.useState<string | null>(null);
   const [showAlloc, setShowAlloc] = React.useState(false);
   const rebuild = async () => {
-    setBusy("Fable 5.1 is re-reading the money documents…");
+    setBusy("GPT-6 Astra is re-reading the money documents…");
     try {
       const { job_id } = await api.post<{ job_id: string }>(`/ledger/rebuild?property_id=${pid}`);
       await new Promise<void>((r) => subscribeJob(job_id, (ev) => { if (ev.kind === "status") setBusy(ev.data?.text); }, r));
@@ -65,7 +65,7 @@ export function LedgerView({ pid }: { pid: string }) {
             <Figure big value={s?.billed} sub="Billed — interest & fees invoiced, not proof of receipt" />
           </div>
           <div className="flex flex-col items-end gap-2">
-            <Button size="sm" variant="ghost" onClick={rebuild} disabled={!!busy}><RefreshCw size={13} className={busy ? "animate-spin" : ""} /> {busy ? "Working…" : "Rebuild with Fable 5.1"}</Button>
+            <Button size="sm" variant="ghost" onClick={rebuild} disabled={!!busy}><RefreshCw size={13} className={busy ? "animate-spin" : ""} /> {busy ? "Working…" : "Rebuild with GPT-6 Astra"}</Button>
             {s?.built_at && <div className="text-[11px] text-faint">built {ago(s.built_at)} · {s.model}</div>}
           </div>
         </div>
@@ -260,7 +260,7 @@ export function WesAgendaCard({ pid, compact, showHeader = true }: { pid: string
   const q = useQuery({ queryKey: ["wes-agenda", pid], queryFn: () => api.get<WesAgendaDoc>(`/properties/${pid}/wes-agenda`) });
   const [busy, setBusy] = React.useState<string | null>(null);
   const refresh = async () => {
-    setBusy("Fable 5.1 is reading this week's records…");
+    setBusy("GPT-6 Astra is reading this week's records…");
     try {
       const { job_id } = await api.post<{ job_id: string }>(`/properties/${pid}/wes-agenda/refresh`);
       await new Promise<void>((r) => subscribeJob(job_id, (ev) => { if (ev.kind === "status") setBusy(ev.data?.text); }, r));
@@ -277,7 +277,7 @@ export function WesAgendaCard({ pid, compact, showHeader = true }: { pid: string
   return (
     <Card>
       {showHeader && (
-        <CardHeader title={<span className="flex items-center gap-2"><HardHat size={15} className="text-accent" /> To raise with Wes today</span>} sub={d.day ? `Top ${d.issues.length} for ${fmtDate(d.day, "EEEE d MMMM")} · fresh each morning by Fable 5.1 · tick when discussed` : "Not generated yet"}
+        <CardHeader title={<span className="flex items-center gap-2"><HardHat size={15} className="text-accent" /> To raise with Wes today</span>} sub={d.day ? `Top ${d.issues.length} for ${fmtDate(d.day, "EEEE d MMMM")} · fresh each morning by GPT-6 Astra · tick when discussed` : "Not generated yet"}
           right={<Button size="sm" variant="ghost" onClick={refresh} disabled={!!busy}><RefreshCw size={13} className={busy ? "animate-spin" : ""} /> {busy ? "Working…" : "Refresh"}</Button>} />
       )}
       {busy && <div className="px-5 pb-2 text-xs text-accent">{busy}</div>}

@@ -99,9 +99,13 @@ class PropertyDossier:
         from mangotree.retrieve import config as cfg
         self.mongo = mongo
         self.keys = dict(anthropic_api_key=anthropic_api_key, voyage_api_key=voyage_api_key, openai_api_key=openai_api_key)
-        #: Who reads: Fable 5.1 by default (FINANCE seat). Overridable so the same
-        #: property can be investigated by another model for a cost comparison.
-        self.model = model or model_for(Seat.FINANCE)
+        #: Who reads: GPT-6 Astra (MORNING_INVESTIGATOR_MODEL). Overridable so the
+        #: same property can be investigated by another model for a comparison.
+        #: Without an OpenAI key the FINANCE seat (Fable 5.1) reads instead.
+        self.model = model or cfg.MORNING_INVESTIGATOR_MODEL
+        if self.model.lower().startswith("gpt") and not openai_api_key:
+            logger.warning("dossier: %s needs an OpenAI key; falling back to %s", self.model, model_for(Seat.FINANCE))
+            self.model = model_for(Seat.FINANCE)
         self.max_tool_calls = max_tool_calls or cfg.MORNING_MAX_TOOL_CALLS
         self.coll = mongo.db["dossiers"]
         self.coll.create_index("property_id", unique=True, name="ux_dossier_property")
@@ -130,11 +134,11 @@ class PropertyDossier:
         from mangotree.agent.scratchpad import BudgetTracker
         from mangotree.retrieve import config as cfg
         from mangotree.retrieve.scope import Scope
-        # Fable 5.1 reads for itself (admin directive 2026-09-05): the model that
-        # writes the issues and the ledger does the property investigation, so its
-        # picture of the deal is its own, not a summary handed over from Opus.
-        # Capped at MORNING_MAX_TOOL_CALLS (20, admin directive 2026-09-07).
-        agent = Agent(self.mongo, **self.keys, model=self.model, reasoning_effort="high")
+        # GPT-6 Astra investigates (admin directive 2026-09-07, replacing the
+        # 09-05 Fable-reads-for-itself arrangement after the measured comparison);
+        # Fable 5.1 writes the issues and ledger from the stored result. Capped at
+        # MORNING_MAX_TOOL_CALLS (30), full reasoning.
+        agent = Agent(self.mongo, **self.keys, model=self.model, reasoning_effort=cfg.OPENAI_REASONING_EFFORT)
         budget = BudgetTracker(max_tool_calls=self.max_tool_calls, max_wall_clock_s=float(cfg.MORNING_MAX_WALL_CLOCK_S))
         res = agent.run(QUESTION, Scope.for_property(pid), critique=False, skeptic=True, budget=budget)
         sources = []

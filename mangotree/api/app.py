@@ -894,7 +894,7 @@ def _intake_status() -> Dict[str, Any]:
 
 
 # =============================================================================
-# money ledger + Wes agenda (Fable 5.1)
+# money ledger + Wes agenda (GPT-6 Astra)
 # =============================================================================
 
 @app.get("/ledger")
@@ -915,11 +915,11 @@ def ledger_property(pid: str, user=CurrentUser):
 
 @app.post("/ledger/rebuild")
 def ledger_rebuild(property_id: Optional[str] = Query(None), user=CurrentUser):
-    """Rebuild the ledger for one property (or all) with Fable 5.1; streamed as a job."""
+    """Rebuild the ledger for one property (or all) with GPT-6 Astra; streamed as a job."""
     from mangotree.ledger.builder import LedgerBuilder
     ids = [_pid(property_id)] if property_id else None
     def run(job):
-        job.emit("status", {"text": f"Fable 5.1 reading money documents for {property_id or 'all properties'}…"})
+        job.emit("status", {"text": f"GPT-6 Astra reading money documents for {property_id or 'all properties'}…"})
         st = LedgerBuilder(mongo, anthropic_api_key=SETTINGS.anthropic_api_key).run(ids, concurrency=4)
         for k in ("ledger_portfolio",):
             _SMALL_CACHE.pop(k, None)
@@ -967,7 +967,7 @@ def wes_agenda_property(pid: str, user=CurrentUser):
 def wes_agenda_refresh(pid: str, user=CurrentUser):
     _pid(pid)
     def run(job):
-        job.emit("status", {"text": "Fable 5.1 reading this week's records, Wes's items and the ledger…"})
+        job.emit("status", {"text": "GPT-6 Astra reading this week's records, Wes's items and the ledger…"})
         return data.clean(_scheduler.wes.generate(pid, force=True))
     job = jobs.start("wes_agenda", {"property_id": pid, "by": user["user_id"]}, run)
     return {"job_id": job.job_id}
@@ -981,7 +981,7 @@ def resolve_open_items(pid: str, user=CurrentUser):
     from mangotree.briefing.resolution import ResolutionPass
     _pid(pid)
     def run(job):
-        job.emit("status", {"text": "Fable 5.1 checking open items against the latest records…"})
+        job.emit("status", {"text": "GPT-6 Astra checking open items against the latest records…"})
         out = ResolutionPass(mongo, anthropic_api_key=SETTINGS.anthropic_api_key).run_for(pid)
         for k in ("task_counts", "handled"):
             _SMALL_CACHE.pop(k, None)

@@ -77,7 +77,7 @@ export function BriefingHero({ userName }: { userName: string }) {
         </div>
         <div className="hairline mt-3" />
 
-        {!b && <div className="serif mt-4 text-[15px] text-muted">No briefing yet for {userName}. It is written automatically before 6 a.m.; press "Write my brief" for one now (about a minute).</div>}
+        {!b && <div className="serif mt-4 text-[15px] text-muted">No briefing yet for {userName}. It is written automatically at 2 a.m. Eastern; press "Write my brief" for one now (about a minute).</div>}
 
         {b && (
           <>

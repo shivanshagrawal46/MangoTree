@@ -308,17 +308,31 @@ class AnswerPanel:
                      f"Panel notes:\n" + "\n".join(f"- {n}" for n in revision.get("notes", [])) +
                      ("\nDissent:\n" + "\n".join(f"- {d}" for d in revision.get("dissent", [])) if revision.get("dissent") else "") +
                      "\nWrite the corrected final answer, addressing each note that the evidence supports.")
-        with self.anthropic.messages.stream(
-            model=cfg.AGENT_PLANNER_MODEL, max_tokens=12000,
-            system=[{"type": "text", "text": _RECONCILE_SYSTEM.format(max_points=limit),
-                     "cache_control": {"type": "ephemeral"}}],
-            messages=[{"role": "user", "content": user}],
-            **cfg.OPUS_HIGH_KWARGS,
-        ) as stream:
-            r = stream.get_final_message()
-        from mangotree.core.usage import METER
-        METER.record_anthropic(cfg.AGENT_PLANNER_MODEL, r)
-        raw = "".join(b.text for b in r.content if b.type == "text")
+        system_text = _RECONCILE_SYSTEM.format(max_points=limit)
+        writer = cfg.DEEP_WRITER_MODEL
+        if writer.lower().startswith(("gpt", "o1", "o3", "o4")):
+            # The final answer is written by GPT-6 Astra (admin directive 2026-09-07:
+            # the investigator writes; Opus 5 is the second reader). Same rules,
+            # same JSON shape, OpenAI JSON mode.
+            from openai import OpenAI
+            if self._openai is None:
+                self._openai = OpenAI(api_key=self._okey, max_retries=3)
+            r = self._openai.chat.completions.create(
+                model=writer, max_completion_tokens=12000, response_format={"type": "json_object"},
+                reasoning_effort=cfg.OPENAI_REASONING_EFFORT,
+                messages=[{"role": "system", "content": system_text}, {"role": "user", "content": user}])
+            METER.record_openai(writer, getattr(r, "usage", None))
+            raw = r.choices[0].message.content or "{}"
+        else:
+            with self.anthropic.messages.stream(
+                model=writer, max_tokens=12000,
+                system=[{"type": "text", "text": system_text, "cache_control": {"type": "ephemeral"}}],
+                messages=[{"role": "user", "content": user}],
+                **cfg.OPUS_HIGH_KWARGS,
+            ) as stream:
+                r = stream.get_final_message()
+            METER.record_anthropic(writer, r)
+            raw = "".join(b.text for b in r.content if b.type == "text")
         data = _json(raw)
         points = []
         for p in (data.get("points") or [])[:limit]:
@@ -367,11 +381,12 @@ class AnswerPanel:
     # ------------------------------------------------------------- fast mode
     @property
     def fast_agent(self) -> Agent:
-        """GPT-6 Astra as the planner, light reasoning, sharing the search stack and verifier."""
+        """GPT-6 Astra as the planner — full reasoning (admin directive 2026-09-07),
+        fewer tool calls — sharing the search stack and verifier."""
         if getattr(self, "_fast_agent", None) is None:
             self._fast_agent = Agent(self.mongo, anthropic_api_key=self.agent.client.api_key, voyage_api_key="",
                                      openai_api_key=self._okey, hybrid=self.agent.hs, model=cfg.CRITIC_MODEL,
-                                     reasoning_effort="low")
+                                     reasoning_effort=cfg.OPENAI_REASONING_EFFORT)
         return self._fast_agent
 
     @property
@@ -384,7 +399,7 @@ class AnswerPanel:
             else:
                 self._deep_agent = Agent(self.mongo, anthropic_api_key=self.agent.client.api_key, voyage_api_key="",
                                          openai_api_key=self._okey, hybrid=self.agent.hs, model=cfg.DEEP_INVESTIGATOR_MODEL,
-                                         reasoning_effort="high")
+                                         reasoning_effort=cfg.OPENAI_REASONING_EFFORT)
         return self._deep_agent
 
     def _reconcile_openai(self, question: str, draft: str, pad: AgentScratchpad, *, shape: str, max_points: Optional[int]) -> Dict[str, Any]:
@@ -398,6 +413,7 @@ class AnswerPanel:
             user += f"\n\nCOUNT: the asker asked for exactly {max_points}. Return exactly {max_points} points."
         client = OpenAI(api_key=self._okey, max_retries=3)
         r = client.chat.completions.create(model=cfg.CRITIC_MODEL, max_completion_tokens=8000, response_format={"type": "json_object"},
+                                           reasoning_effort=cfg.OPENAI_REASONING_EFFORT,
                                            messages=[{"role": "system", "content": _RECONCILE_SYSTEM.format(max_points=limit)},
                                                      {"role": "user", "content": user}])
         from mangotree.core.usage import METER
@@ -488,7 +504,7 @@ class AnswerPanel:
         result.mode = "full"
         investigator = self.deep_agent
         result.models = {"investigator": investigator.model + " (high)", "second_reader": cfg.DEEP_SECOND_READER_MODEL,
-                         "reconciler": cfg.AGENT_PLANNER_MODEL, "panel": cfg.AGENT_PLANNER_MODEL}
+                         "reconciler": cfg.DEEP_WRITER_MODEL, "panel": cfg.AGENT_PLANNER_MODEL}
 
         conv = list(conversation)
         # The board's state, not just the documents. Without this the agent
@@ -521,7 +537,7 @@ class AnswerPanel:
                                "disagree": len(second.get("disagree") or []), "error": second.get("error")})
 
         shape = detect_shape(question)
-        emit("phase", {"phase": "reconcile", "label": f"Opus 5 writing the final answer ({shape})"})
+        emit("phase", {"phase": "reconcile", "label": f"{_pretty(cfg.DEEP_WRITER_MODEL)} writing the final answer ({shape}), with {_pretty(cfg.DEEP_SECOND_READER_MODEL)}'s reading in hand"})
         try:
             final = self.reconcile(question, agent_res.answer, second, pad, max_points=max_points, shape=shape)
         except Exception as exc:

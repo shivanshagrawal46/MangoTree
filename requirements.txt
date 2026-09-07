@@ -57,3 +57,4 @@ boto3==1.42.97            # DigitalOcean Spaces (S3-compatible); unused when OBJ
 
 # --- Utils ---
 tenacity==9.1.2
+tzdata>=2024.1
