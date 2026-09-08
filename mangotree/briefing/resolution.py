@@ -143,7 +143,7 @@ class ResolutionPass:
     def _records_since(self, pid: str, since: datetime, limit: int = 40) -> List[dict]:
         docs = list(self.mongo.artifacts.find(
             {"property_ids": pid, "is_inline_image": {"$ne": True},
-             "$or": [{"date": {"$gte": since}}, {"created_at": {"$gte": since}}]},
+             "$or": [{"date": {"$gte": since}}, {"created_at": {"$gte": since}}, {"placed_at": {"$gte": since}}]},
             {"sha256": 1, "subject": 1, "filename": 1, "date": 1, "source_type": 1, "participants.from": 1, "body_clean": 1, "text": 1}
         ).sort("date", -1).limit(limit))
         return docs

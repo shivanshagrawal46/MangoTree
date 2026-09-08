@@ -317,10 +317,16 @@ class SegregationRunner:
                 if pid not in properties:
                     properties.append(pid)
 
+        # placed_at: when the document became attributed to its properties. The
+        # "what's new" cards, the morning change check and the resolution pass
+        # judge newness by this as well as by the document's own date, so a
+        # document placed late (a failed call retried hours later) is still new
+        # to the property when it finally lands there.
         self.mongo.artifacts.update_one(
             {"sha256": sha},
             {"$set": {
                 "property_ids": properties,
+                "placed_at": datetime.now(timezone.utc) if properties else None,
                 "scope": "property" if properties else "common",
                 "segregation": record,
                 "resolution_status": (

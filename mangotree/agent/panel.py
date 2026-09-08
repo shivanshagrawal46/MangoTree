@@ -77,6 +77,24 @@ Produce ONE final answer. Rules:
   Sir, side with him and say the document differs. If it contradicts another
   team member, say both and lean to the person. Never present as open something
   the team has said is done.
+* "summary" — TALK TO THE READER FIRST. Before any list, write three to six
+  plain sentences that answer the question the way you would say it to a
+  colleague across the desk: what you found, what it means, and your honest
+  read of it. This is the part the reader actually reads; the lists below it
+  are support. Cite [#N] on facts. For example: "Yes — Wes replied on 7
+  September with a Word file rather than in the thread. He answers 13 of the
+  14 properties, commits to two dates (the Lane Pl and Varnum certificates by
+  the 11th), refuses four requests outright, and pushes back on the process
+  itself. Three of his claims do not match our records: … He attached none of
+  the documents you asked for." Never skip this. Never make it a list. At most
+  two [#N] per sentence here — the details and points carry the rest.
+* WHEN ASKED TO READ, ANALYSE, REVIEW OR CHECK SOMEONE'S REPLY, that is the
+  job — not a to-do list. Go claim by claim against the records: what he
+  answered, what he did not answer that was asked, what he committed to (with
+  dates), what he refused, and where his statements conflict with or are not
+  supported by the documents. Put that in "summary" and "details" (shape
+  explain, sections "What he answered", "What he did not answer", "What
+  conflicts with the records"). Next steps go in "next_actions" only.
 * ANSWER WHAT WAS ASKED, FIRST. Read the question and decide what the reader
   wants to know; the headline answers exactly that. A yes/no question ("did
   Wes reply?", "has the certificate arrived?") gets a headline that begins
@@ -160,6 +178,7 @@ Produce ONE final answer. Rules:
 
 Return JSON only:
 {{"headline": "...",
+  "summary": "three to six plain sentences, the spoken answer, with [#N] citations",
   "shape": "brief|actions|draft|list|figure|explain|followup",
   "points": [{{"text": "...", "urgency": "critical|high|normal|info|good", "sources": [3, 7]}}],
   "draft": "the full text, or null",
@@ -199,6 +218,12 @@ _REFERENCE = re.compile(
 _QUOTED = re.compile(r"[\"“”'‘’][^\"“”'‘’]{3,120}[\"“”'‘’]")
 #: A question whose first words ask whether something happened is a factual
 #: question whatever else it contains. Answer it; do not turn it into steps.
+#: The reader wants someone's reply, document or claims examined against the
+#: records. That is an analysis, whatever else the sentence asks for.
+_ANALYSIS = re.compile(
+    r"\b(read|analy[sz]e|review|assess|evaluate|examine|go through|look (at|into|through)|check|verify|compare|scrutini[sz]e|"
+    r"is (he|she|wes|it|this|that) (telling|right|correct|honest|accurate|true)|what (did|does|has) (he|she|wes|they) (say|said|answer|claim|reply|replied|respond)|"
+    r"tell(ing)? (us |me )?(everything|the truth))\b", re.I)
 _YES_NO = re.compile(r"^\s*(did|has|have|had|is|was|are|were|does|do|can you (confirm|check|tell me)|confirm (whether|if|that)|check (whether|if))\b", re.I)
 
 
@@ -214,6 +239,10 @@ def detect_shape(question: str) -> str:
         if rx.search(unquoted):
             return name
     ask = _REFERENCE.sub(" ", unquoted)
+    if _ANALYSIS.search(ask):
+        # "Read and analyse his reply and give next steps" — the job is the
+        # analysis; the steps go in next_actions.
+        return "explain"
     if _YES_NO.search(ask):
         # "Did he reply, and what should we do?" — still answer first; the
         # writer puts any steps in next_actions, never as the points.
@@ -242,6 +271,7 @@ class PanelResult:
     question: str
     scope: str
     headline: str = ""
+    summary: str = ""                                                # the spoken answer, a few plain sentences
     points: List[Dict[str, Any]] = field(default_factory=list)
     details: str = ""
     disagreements: List[str] = field(default_factory=list)
@@ -315,6 +345,7 @@ def _parse_final(data: dict, *, shape: str, limit: int, second_opinion: Optional
     draft = data.get("draft")
     return {
         "headline": str(data.get("headline") or "").strip(),
+        "summary": str(data.get("summary") or "").strip()[:3000],
         "shape": data.get("shape") if data.get("shape") in SHAPES else shape,
         "draft": (str(draft).strip() if draft and str(draft).lower() != "null" else None),
         "points": points, "details": str(data.get("details") or "").strip(),
@@ -330,6 +361,7 @@ _FINAL_SCHEMA = {
     "type": "object",
     "properties": {
         "headline": {"type": "string"},
+        "summary": {"type": "string"},
         "shape": {"type": "string", "enum": list(SHAPES)},
         "points": {"type": "array", "items": {"type": "object", "properties": {
             "text": {"type": "string"}, "urgency": {"type": "string", "enum": list(cfg.ANSWER_URGENCIES)},
@@ -347,7 +379,7 @@ _FINAL_SCHEMA = {
         "facts": {"type": "array", "items": {"type": "object", "properties": {
             "claim": {"type": "string"}, "quote": {"type": "string"}, "sources": {"type": "array", "items": {"type": "integer"}}}, "required": ["claim", "quote"]}},
     },
-    "required": ["headline", "shape", "points", "details", "next_actions", "facts"],
+    "required": ["headline", "summary", "shape", "points", "details", "next_actions", "facts"],
 }
 
 
@@ -631,6 +663,7 @@ class AnswerPanel:
             final = {"headline": agent_res.answer.split("\n")[0][:200], "shape": shape, "draft": None, "points": [], "details": agent_res.answer,
                      "disagreements": [], "next_actions": [], "second_opinion": "", "facts": agent_res.facts}
         result.headline, result.points, result.details = final["headline"], final["points"], final["details"]
+        result.summary = final.get("summary") or ""
         result.disagreements, result.next_actions, result.second_opinion = final["disagreements"], final["next_actions"], final["second_opinion"]
         result.shape, result.composed, result.emails = final.get("shape", shape), final.get("draft"), list(final.get("emails") or [])
         if final.get("degrade"):
@@ -704,6 +737,7 @@ class AnswerPanel:
             final = {"headline": agent_res.answer.split("\n")[0][:200], "shape": shape, "draft": None, "points": [], "details": agent_res.answer,
                      "disagreements": [], "next_actions": [], "second_opinion": "", "facts": agent_res.facts}
         result.headline, result.points, result.details = final["headline"], final["points"], final["details"]
+        result.summary = final.get("summary") or ""
         result.disagreements, result.next_actions, result.second_opinion = final["disagreements"], final["next_actions"], final["second_opinion"]
         result.shape, result.composed, result.emails = final.get("shape", shape), final.get("draft"), list(final.get("emails") or [])
         if final.get("degrade"):
@@ -732,6 +766,7 @@ class AnswerPanel:
                 first_verdict = result.verdict
                 final = revised
                 result.headline, result.points, result.details = final["headline"], final["points"], final["details"]
+                result.summary = final.get("summary") or ""
                 result.disagreements, result.next_actions, result.second_opinion = final["disagreements"], final["next_actions"], final["second_opinion"]
                 result.shape, result.composed, result.emails = final.get("shape", shape), final.get("draft"), list(final.get("emails") or [])
                 if final.get("degrade"):

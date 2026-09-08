@@ -172,7 +172,7 @@ class PropertyDossier:
         db = self.mongo.db
         if self.mongo.artifacts.count_documents(
                 {"property_ids": pid, "is_inline_image": {"$ne": True},
-                 "$or": [{"created_at": {"$gt": since}}, {"date": {"$gt": since}}]}, limit=1):
+                 "$or": [{"created_at": {"$gt": since}}, {"date": {"$gt": since}}, {"placed_at": {"$gt": since}}]}, limit=1):
             return "new documents"
         if db["chats"].count_documents({"kind": "property", "property_id": pid, "messages": {"$elemMatch": {"at": {"$gt": since}}}}, limit=1):
             return "new chat"

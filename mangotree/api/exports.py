@@ -169,6 +169,11 @@ def answer_pdf(answer: Dict[str, Any], *, question: str, scope: str, saved_by: s
     story.append(P(f"<b>Question.</b> {_esc(question)}", st["p"]))
     story.append(Spacer(1, 6))
     story.append(P(_cite_to_sup(answer.get("headline", "")), st["h2"]))
+    if answer.get("summary"):
+        for para in str(answer["summary"]).split("\n\n"):
+            if para.strip():
+                story.append(P(_cite_to_sup(para.strip()), st["p"]))
+        story.append(Spacer(1, 4))
     for pt in answer.get("points", []):
         color = _URG_COLOR.get(pt.get("urgency"), "#1f2937")
         story.append(P(f"<font color='{color}'>■</font> {_cite_to_sup(pt.get('text', ''))} "

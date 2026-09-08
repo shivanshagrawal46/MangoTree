@@ -16,6 +16,39 @@ import { EmailDrafts } from "@/components/email-draft";
 import type { Answer } from "@/lib/types";
 import type { SSEEvent } from "@/lib/api";
 
+/* Light markdown for the writer's prose: paragraphs, bold headings ("**What he
+   answered**" or "### …"), bullets, inline bold — with [#N] citations kept
+   clickable. Enough for an analysis to read like a note, not a JSON dump. */
+function Inline({ text, sources }: { text: string; sources: Answer["sources"] }) {
+  const parts = text.split(/(\*\*[^*]+\*\*)/g);
+  return <>{parts.map((p, i) => { const m = p.match(/^\*\*([^*]+)\*\*$/); return m ? <strong key={i} className="font-semibold text-fg"><Cited text={m[1]} sources={sources} /></strong> : <Cited key={i} text={p} sources={sources} />; })}</>;
+}
+
+export function RichText({ text, sources, className }: { text: string; sources: Answer["sources"]; className?: string }) {
+  const blocks = (text || "").replace(/\r/g, "").split(/\n{2,}/);
+  return (
+    <div className={cn("space-y-2", className)}>
+      {blocks.map((b, i) => {
+        const lines = b.split("\n").filter((l) => l.trim());
+        if (!lines.length) return null;
+        const heading = lines[0].match(/^(?:#{1,4}\s+(.+)|\*\*([^*]+)\*\*:?)$/);
+        const body = heading ? lines.slice(1) : lines;
+        const bullets = body.length > 0 && body.every((l) => /^\s*([-•*]|\d+[.)])\s+/.test(l));
+        return (
+          <div key={i}>
+            {heading && <div className="text-[11px] font-semibold uppercase tracking-wide text-muted mb-1">{heading[1] || heading[2]}</div>}
+            {bullets ? (
+              <ul className="list-disc ml-4 space-y-1">{body.map((l, j) => <li key={j}><Inline text={l.replace(/^\s*([-•*]|\d+[.)])\s+/, "")} sources={sources} /></li>)}</ul>
+            ) : body.length > 0 ? (
+              <p className="leading-relaxed"><Inline text={body.join(" ")} sources={sources} /></p>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export function AnswerCard({ answer, onSave, onAcceptTasks, compact, pdfHref }: { answer: Answer; onSave?: () => void; onAcceptTasks?: () => void; compact?: boolean; pdfHref?: string }) {
   const [tab, setTab] = React.useState<"none" | "details" | "second" | "trace" | "sources">("none");
   const v = answer.verification || {};
@@ -51,28 +84,47 @@ export function AnswerCard({ answer, onSave, onAcceptTasks, compact, pdfHref }: 
         </div>
       </div>
 
+      {/* The spoken answer: a few plain sentences, the way a colleague would say
+          it. This is what the reader reads; everything below is support. */}
+      {answer.summary && (
+        <div className="px-5 pb-3 text-[14.5px] leading-[1.65] text-fg/95">
+          <RichText text={answer.summary} sources={answer.sources} />
+        </div>
+      )}
+
       {/* A ready-to-send draft, when that is what was asked for. */}
       {answer.composed && <DraftBlock text={answer.composed} />}
 
-      {/* Points are numbered so the reader can answer back with "point 2". List
-          answers hide the urgency pill: an inventory of invoices is not a list of
-          alarms. */}
-      <ol className="px-5 pb-3 space-y-2">
-        {answer.points.map((p, i) => {
-          const u = URGENCY[p.urgency] || URGENCY.normal;
-          const listy = answer.shape === "list" || answer.shape === "figure";
-          return (
-            <motion.li key={i} initial={{ opacity: 0, x: -4 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.04 }}
-              className={cn("flex gap-3 rounded-xl border border-l-[3px] bg-bg border-line px-3.5 py-2.5", listy ? "border-l-line-strong" : u.edge)}>
-              <span className="shrink-0 tnum text-[12px] font-semibold text-faint w-5 pt-0.5 text-right">{i + 1}.</span>
-              <div className="min-w-0 flex-1 text-[13.5px] leading-relaxed">
-                <Cited text={p.text + (p.sources.length && !/\[#\d+\]/.test(p.text) ? " " + p.sources.map((s) => `[#${s}]`).join("") : "")} sources={answer.sources} />
-              </div>
-              {!listy && <span className={cn("shrink-0 mt-0.5 h-5 px-2 rounded-full text-[10px] font-semibold uppercase tracking-wide grid place-items-center", u.pill)}>{u.label}</span>}
-            </motion.li>
-          );
-        })}
-      </ol>
+      {/* Points are numbered so the reader can answer back with "point 2". Only
+          actions carry the full urgency pill; on a factual answer a coloured pill
+          appears only for genuine urgency (critical, this week, resolved), so
+          five facts do not read as five alarms. */}
+      {answer.points.length > 0 && (
+        <ol className="px-5 pb-3 space-y-2">
+          {answer.points.map((p, i) => {
+            const u = URGENCY[p.urgency] || URGENCY.normal;
+            const listy = answer.shape === "list" || answer.shape === "figure";
+            const showPill = !listy && (answer.shape === "actions" || ["critical", "high", "good"].includes(p.urgency));
+            const edge = showPill || answer.shape === "actions" ? u.edge : "border-l-line-strong";
+            return (
+              <motion.li key={i} initial={{ opacity: 0, x: -4 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.04 }}
+                className={cn("flex gap-3 rounded-xl border border-l-[3px] bg-bg border-line px-3.5 py-2.5", edge)}>
+                <span className="shrink-0 tnum text-[12px] font-semibold text-faint w-5 pt-0.5 text-right">{i + 1}.</span>
+                <div className="min-w-0 flex-1 text-[13.5px] leading-relaxed">
+                  <Cited text={p.text + (p.sources.length && !/\[#\d+\]/.test(p.text) ? " " + p.sources.map((s) => `[#${s}]`).join("") : "")} sources={answer.sources} />
+                </div>
+                {showPill && <span className={cn("shrink-0 mt-0.5 h-5 px-2 rounded-full text-[10px] font-semibold uppercase tracking-wide grid place-items-center", u.pill)}>{u.label}</span>}
+              </motion.li>
+            );
+          })}
+        </ol>
+      )}
+
+      {/* An analysis ("explain") carries its substance in details — show it in
+          full, right here, not behind a tab. */}
+      {answer.shape === "explain" && answer.details && (
+        <div className="px-5 pb-3"><div className="rounded-xl border border-line bg-bg px-4 py-3 text-[13.5px]"><RichText text={answer.details} sources={answer.sources} /></div></div>
+      )}
 
       {/* Reconciliation notes ("I dropped my line that…") are review detail, not the
           answer; they live under the Second opinion tab. */}
@@ -110,7 +162,7 @@ export function AnswerCard({ answer, onSave, onAcceptTasks, compact, pdfHref }: 
             <div className="px-5 py-4 text-[13px]">
               {tab === "details" && (
                 <div>
-                  <div className="prose-mt"><Cited text={answer.details || "(no further detail)"} sources={answer.sources} /></div>
+                  <RichText text={answer.details || "(no further detail)"} sources={answer.sources} />
                   <div className="mt-4 text-xs text-muted border-t border-line pt-3"><span className="font-semibold">Coverage.</span> {answer.coverage}</div>
                   {answer.degrades?.length > 0 && <div className="mt-2 text-xs text-high">Degraded: {answer.degrades.join("; ")}</div>}
                   <div className="mt-2 text-[11px] text-faint flex items-center gap-1"><Cpu size={11} /> {Object.entries(answer.models || {}).map(([k, v]) => `${k}: ${v}`).join(" · ")}</div>

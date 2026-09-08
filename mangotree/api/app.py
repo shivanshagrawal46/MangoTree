@@ -492,6 +492,8 @@ def chat_ask(body: AskBody, pid: Optional[str] = None, user=CurrentUser):
         # Headline plus the numbered points, so a follow-up like "do point 2
         # differently" refers to something the model can see.
         lines = [a.get("headline") or ""]
+        if a.get("summary"):
+            lines.append(str(a["summary"])[:2000])
         for i, p in enumerate(a.get("points") or [], 1):
             lines.append(f"{i}. {p.get('text')}")
         if a.get("composed"):

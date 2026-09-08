@@ -35,7 +35,7 @@ export type Source = { index: number; chunk_id: string; artifact_sha: string; ci
   property_ids: string[]; placement: string; label: string; date: string; text: string; context: string; origin: string };
 
 export type Answer = {
-  question: string; scope: string; headline: string; points: AnswerPoint[]; details: string;
+  question: string; scope: string; headline: string; summary?: string; points: AnswerPoint[]; details: string;
   shape?: "brief" | "actions" | "draft" | "list" | "figure" | "explain" | "followup"; composed?: string | null;
   mode?: "full" | "fast";
   disagreements: string[]; next_actions: NextAction[]; emails?: EmailDraft[]; second_opinion: string;

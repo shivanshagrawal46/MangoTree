@@ -21,6 +21,11 @@ from mangotree.core.logging import logger
 from mangotree.retrieve import config as cfg
 from mangotree.storage.mongo import Mongo
 
+#: How much of each new document the card writer reads, and the total across a
+#: run. Long enough for a multi-property status reply to be read to the end.
+DOC_CHARS = 16_000
+DOC_TOTAL_CHARS = 120_000
+
 _SYSTEM = """You watch a renovation lender's records and write short "what's new" cards for
 one property. You see the NEW documents (since the last look), the property's
 recent TIMELINE, its OPEN TASKS, and past DISMISSALS (things the readers said
@@ -73,7 +78,8 @@ class CardDetector:
         since = self._since(pid)
         now = datetime.now(timezone.utc)
         new_docs = list(self.mongo.artifacts.find(
-            {"property_ids": pid, "is_inline_image": {"$ne": True}, "$or": [{"date": {"$gt": since}}, {"created_at": {"$gt": since}}]},
+            {"property_ids": pid, "is_inline_image": {"$ne": True},
+             "$or": [{"date": {"$gt": since}}, {"created_at": {"$gt": since}}, {"placed_at": {"$gt": since}}]},
             {"sha256": 1, "subject": 1, "filename": 1, "date": 1, "source_type": 1, "participants.from": 1, "body_clean": 1, "text": 1, "attachment_names": 1},
         ).sort("date", -1).limit(40))
         if not new_docs:
@@ -86,8 +92,15 @@ class CardDetector:
                  # is raised only for what is genuinely new against that history.
                  "\n" + context_for(self.mongo, pid),
                  f"\n=== NEW DOCUMENTS since {since:%Y-%m-%d} ({len(new_docs)}) ==="]
+        # Whole documents, within a total budget. At 1,500 characters each, a
+        # fourteen-property reply from Wes was read as far as property two and
+        # cards said he had "skipped" properties he had answered (2026-09-08).
+        remaining = DOC_TOTAL_CHARS
         for d in new_docs:
-            body = " ".join(((d.get("body_clean") if d.get("source_type") == "email" else d.get("text")) or "").split())[:1500]
+            text = " ".join(((d.get("body_clean") if d.get("source_type") == "email" else d.get("text")) or "").split())
+            take = min(len(text), DOC_CHARS, max(0, remaining))
+            body = text[:take] + (" …[truncated]" if take < len(text) else "")
+            remaining -= take
             frm = ((d.get("participants") or {}).get("from") or [""])[0]
             parts.append(f"\n[sha={d['sha256'][:16]}] {d.get('date'):%Y-%m-%d} {d.get('source_type')} from {frm}\n{d.get('subject') or d.get('filename')}\n{body}")
         events = list(self.mongo.db["timeline_events"].find({"property_id": pid}, {"occurred_at": 1, "event_type": 1, "title": 1, "amount": 1}).sort("occurred_at", -1).limit(40))

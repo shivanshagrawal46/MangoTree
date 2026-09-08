@@ -206,6 +206,7 @@ def inherit_properties(
                 {"sha256": d.sha},
                 {"$set": {
                     "property_ids": d.property_ids,
+                    "placed_at": now,
                     # Provenance is not optional here: an inherited property is a
                     # weaker claim than a resolved one, and an analyst reading a
                     # citation is entitled to know which they are looking at.
