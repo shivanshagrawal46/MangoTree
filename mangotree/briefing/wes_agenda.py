@@ -250,10 +250,10 @@ class WesAgenda:
                         self._openai = OpenAI(api_key=self._okey, max_retries=3)
                     data = json_call_openai(self._openai, model=self.model, system=_SYSTEM, user=prompt, tool_name=_TOOL["name"],
                                             description=_TOOL.get("description", ""), schema=_TOOL["input_schema"],
-                                            max_tokens=12000, reasoning_effort=cfg.OPENAI_REASONING_EFFORT)
+                                            max_tokens=cfg.WES_MAX_OUTPUT_TOKENS, reasoning_effort=cfg.OPENAI_REASONING_EFFORT)
                     break
                 kwargs = dict(cfg.OPUS_HIGH_KWARGS) if attempt == 1 else {}
-                with self.client.messages.stream(model=self.model, max_tokens=12000,
+                with self.client.messages.stream(model=self.model, max_tokens=cfg.WES_MAX_OUTPUT_TOKENS,
                                                  system=[{"type": "text", "text": _SYSTEM, "cache_control": {"type": "ephemeral"}}],
                                                  messages=[{"role": "user", "content": prompt}],
                                                  tools=[_TOOL], tool_choice={"type": "auto"}, **kwargs) as stream:

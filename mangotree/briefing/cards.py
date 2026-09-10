@@ -118,7 +118,7 @@ class CardDetector:
         data: Dict[str, Any] = {}
         for attempt in (1, 2):
             try:
-                r = self.client.messages.create(model=self.model, max_tokens=6000,
+                r = self.client.messages.create(model=self.model, max_tokens=cfg.CARDS_MAX_OUTPUT_TOKENS,
                                                 system=[{"type": "text", "text": _SYSTEM, "cache_control": {"type": "ephemeral"}}],
                                                 messages=[{"role": "user", "content": prompt}], **cfg.OPUS_HIGH_KWARGS)
                 data = _json("".join(b.text for b in r.content if b.type == "text"))

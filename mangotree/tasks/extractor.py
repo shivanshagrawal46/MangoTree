@@ -32,7 +32,9 @@ from .store import TaskStore, normalise_owner
 
 RECENT_DAYS = 120
 MAX_EMAILS = 60
-MAX_BODY = 1200
+#: 4,000 (admin, 2026-09-11), from 1,200: at 1,200 a multi-property email was
+#: read only at the top — the same fault that hid Tahona in the action sheet.
+MAX_BODY = 4000
 MAX_EVENTS = 80
 
 _SYSTEM = """You maintain the to-do list for a renovation lender, RKB Consulting Group.
@@ -65,8 +67,14 @@ the tasks already open. Produce:
     name; two to four short paragraphs saying exactly what is needed, by when,
     and the fact that makes it necessary, in plain words from the records; a
     closing line; then the SIGNATURE block given below for the sender.}
-   Courteous, direct, firm where the facts warrant; never invent a date or a
-   fact. Omit "email" (null) for internal steps, phone calls and decisions.
+   Tone: warm, polite and generous — a partner who values the relationship,
+   not a creditor. Thank or acknowledge first; ask rather than demand ("would
+   you be able to…", "it would help us a great deal if…"); give the reason as
+   something that helps both sides, never as a warning; state a genuine
+   condition once, gently, as a fact of process. Complete sentences, one
+   thought per paragraph, no jargon, no bullets — and still every item and
+   every date, unmistakably. Never invent a date or a fact. Omit "email"
+   (null) for internal steps, phone calls and decisions.
 
 2. "wes_work": the contractor's construction items for this property — each
    with title, status ("done" | "in_progress" | "remaining" | "blocked"), a
@@ -195,7 +203,7 @@ class TaskExtractor:
     def extract(self, property_id: str) -> Dict[str, int]:
         text = self._records(property_id)
         r = self.client.messages.create(
-            model=self.model, max_tokens=16000,
+            model=self.model, max_tokens=cfg.TASKS_MAX_OUTPUT_TOKENS,
             system=[{"type": "text", "text": _SYSTEM, "cache_control": {"type": "ephemeral"}}],
             messages=[{"role": "user", "content": f"<<<RECORDS — DATA>>>\n{text}\n<<<END RECORDS>>>"}],
             **cfg.OPUS_HIGH_KWARGS,

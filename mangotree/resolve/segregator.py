@@ -58,13 +58,15 @@ from mangotree.core.logging import logger
 #: (salutation, address, subject restatement) and the tail (signature block), so
 #: a long thread is truncated from the middle rather than the end.
 MAX_BODY_TOKENS = 6000
-#: Per attachment. A title policy runs to 40k tokens, but the address that
-#: identifies it is on page one — paying for all 40 pages to learn what the first
-#: names would be waste at 1,083 messages.
-MAX_ATTACHMENT_TOKENS = 2500
+#: Per attachment. A title policy runs to 40k tokens and names its address on
+#: page one — but a portfolio action sheet names a property per page, and at
+#: 2,500 tokens the fourteenth property (Tahona, 2026-09-09) was cut off and the
+#: sheet filed under thirteen. 8k tokens covers a 30-page sheet in full; longer
+#: documents are read head-and-tail (see _middle_out), so the last pages count.
+MAX_ATTACHMENT_TOKENS = 8000
 #: Ceiling across all attachments on one email, so a 30-attachment message cannot
-#: cost thirty times a normal one.
-MAX_ATTACHMENTS_TOKENS = 15000
+#: cost thirty times a normal one. A lone attachment may use the whole ceiling.
+MAX_ATTACHMENTS_TOKENS = 30000
 #: Per sibling message shown as thread context. Enough to see what the
 #: conversation is about; the earlier message's own decision carries most of the
 #: signal, so paying for its full body would buy little.
@@ -316,10 +318,12 @@ class PropertySegregator:
         if attachments:
             parts.append(f"\n--- {len(attachments)} attachment(s) ---")
             budget = MAX_ATTACHMENTS_TOKENS
-            per = min(MAX_ATTACHMENT_TOKENS, max(400, budget // max(1, len(attachments))))
+            per = min(MAX_ATTACHMENT_TOKENS if len(attachments) > 1 else budget, max(400, budget // max(1, len(attachments))))
             for index, attachment in enumerate(attachments):
                 text = attachment.get("text") or ""
-                shown = truncate_to_tokens(text, per)
+                # Head and tail, not head only: a multi-property document names
+                # its later properties on its later pages.
+                shown = _middle_out(text, per)
                 parts.append(
                     f"\n[attachment {index}] filename: {attachment.get('filename') or '(unnamed)'}"
                     f"  type: {attachment.get('content_type') or '?'}"

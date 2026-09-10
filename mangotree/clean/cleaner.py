@@ -192,7 +192,25 @@ class CleanedBody:
         return "\n\n".join(parts)
 
 
-def clean_body(raw_text: str = "", raw_html: str = "") -> CleanedBody:
+#: A forward's subject, in the common mail clients' languages.
+_FORWARD_SUBJECT = re.compile(r"^\s*(fw|fwd|tr|wg|vs|doorst)\s*:", re.I)
+#: The quoted block opens with a forwarded-message header rather than a reply's
+#: "On … wrote:" — i.e. the sender is passing something on, not answering it.
+_FORWARD_HEAD = re.compile(
+    r"^\s*(-{2,}\s*Forwarded message\s*-{2,}|Begin forwarded message:|From:\s*.+\n\s*(Sent|Date):)", re.I)
+
+
+def is_forward(subject: Optional[str], new_content: str, quoted: str) -> bool:
+    if not quoted:
+        return False
+    if subject and _FORWARD_SUBJECT.match(subject):
+        return True
+    # No FW: in the subject, but a one-line cover note over a forwarded header:
+    # "Please see the comps for Allison." — the forwarded part is the message.
+    return len(new_content.strip()) < 600 and bool(_FORWARD_HEAD.match(quoted))
+
+
+def clean_body(raw_text: str = "", raw_html: str = "", subject: Optional[str] = None) -> CleanedBody:
     was_html = bool(raw_html and not raw_text)
     source = raw_text or ""
     if was_html:
@@ -201,6 +219,15 @@ def clean_body(raw_text: str = "", raw_html: str = "") -> CleanedBody:
     source = repair_mojibake(source)
     new_content, quoted = split_quoted(source)
     body, signature = strip_signature(new_content)
+
+    # In a REPLY the quoted thread is history already ingested as its own
+    # emails, so it stays out of body_clean. In a FORWARD the quoted part IS the
+    # message — comps a broker sent, a payment confirmation, an invoice — and
+    # usually exists nowhere else in our records. Found 2026-09-08: 211 forwards
+    # carried a one-line cover note in body_clean and their substance in a field
+    # nothing read; the AI called them "empty".
+    if is_forward(subject, new_content, quoted):
+        body = (body + "\n\n[Forwarded message]\n" + quoted).strip() if body else "[Forwarded message]\n" + quoted
 
     return CleanedBody(
         body_clean=normalize_whitespace(body),

@@ -360,7 +360,7 @@ class LedgerBuilder:
                         self._openai = OpenAI(api_key=self._okey, max_retries=3)
                     data = json_call_openai(self._openai, model=self.model, system=_SYSTEM, user=prompt, tool_name=_TOOL["name"],
                                             description=_TOOL.get("description", ""), schema=_TOOL["input_schema"],
-                                            max_tokens=48000, reasoning_effort=cfg.OPENAI_REASONING_EFFORT)
+                                            max_tokens=cfg.LEDGER_MAX_OUTPUT_TOKENS, reasoning_effort=cfg.OPENAI_REASONING_EFFORT)
                     with self._lock:
                         self.stats.calls += 1
                     if not (data.get("entries") or data.get("balances")):
@@ -382,7 +382,7 @@ class LedgerBuilder:
                 # property with 30 draws plus balances, gaps and risks was cut off at 16k.
                 # Streamed: the SDK refuses a non-streaming call whose budget could
                 # run past ten minutes, and a 30-row ledger with thinking can.
-                with self.client.messages.stream(model=self.model, max_tokens=48000,
+                with self.client.messages.stream(model=self.model, max_tokens=cfg.LEDGER_MAX_OUTPUT_TOKENS,
                                                  system=[{"type": "text", "text": _SYSTEM, "cache_control": {"type": "ephemeral"}}],
                                                  messages=[{"role": "user", "content": prompt}],
                                                  tools=[_TOOL], tool_choice={"type": "auto"}, **kwargs) as stream:

@@ -140,7 +140,7 @@ class EmailPipeline:
         source_path: Optional[str],
     ) -> str:
         sha = parsed.raw_sha256
-        cleaned = clean_body(parsed.body_text, parsed.body_html)
+        cleaned = clean_body(parsed.body_text, parsed.body_html, subject=parsed.subject)
 
         direction = resolve_direction(
             mailbox=mailbox,
@@ -254,7 +254,10 @@ class EmailPipeline:
             "signature": cleaned.signature,
             "was_html": cleaned.was_html,
             "raw_size": parsed.raw_size,
-            "attachment_count": len(parsed.attachments),
+            # Real attachments only: a signature logo counted as "1 attachment" on
+            # an email with no file made the screen say one thing and show another.
+            "attachment_count": sum(1 for a in parsed.attachments if not getattr(a, "likely_logo", False)),
+            "inline_image_count": sum(1 for a in parsed.attachments if getattr(a, "likely_logo", False)),
             "attachment_names": attachment_names,
             "property_ids": resolution.property_ids if not resolution.needs_review else [],
             "property_candidates": [

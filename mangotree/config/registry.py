@@ -261,6 +261,20 @@ PEOPLE: List[Person] = [
     # payoff statement, construction accounting, permit history and project
     # summary as one package.
     Person(
+        person_id="jerome_sanders",
+        display_name="Jerome (Jerry) Sanders",
+        side=Side.EXTERNAL,
+        org=Org.FINANCE,
+        role="1 Shield Financial (Florida) — referral/advisory contact for 910 Bayshore Dr (Terra Ceia)",
+        addresses=("jerry@1shieldfinancial.com",),
+        notes=(
+            "Registered 2026-09-09 (admin directive): his mail was passing the intake rule as "
+            "'no signal'. Tied to 910 Bayshore — the Sep 2026 'Florida Property Emergency — Terra "
+            "Ceia' thread. Earlier threads with him (note investing, mortgage guidance, 2025) are "
+            "general advisory and file as business material."
+        ),
+    ),
+    Person(
         person_id="bill_leroy",
         display_name="Bill Leroy",
         side=Side.EXTERNAL,
@@ -697,6 +711,11 @@ PROPERTY_CONTACTS: Dict[str, List[str]] = {
     "narrow_guage": ["jason_tennstedt", "rob_smith", "endy_diaz"],
     "ridge_road": ["charlene_fields", "meki_cross", "ali_parva", "david_gonzalez"],
     "lane_pl": ["tisha_elliott", "david_gonzalez"],
+    # Not Jerome Sanders: a general adviser with ONE thread about 910 Bayshore.
+    # Listed here on 2026-09-09 his hint plus thread inheritance pushed all 62
+    # of his emails (IRA, note investing) onto the property over Opus's
+    # correct "not a registered property" reading. The registry entry alone
+    # gets his mail ingested; Opus places each email on its own content.
 }
 
 

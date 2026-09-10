@@ -15,7 +15,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Sequence
 
 from mangotree.core.logging import logger
 from mangotree.resolve.segregator import (
@@ -44,6 +44,25 @@ CONCURRENCY = 30
 #: to keep every worker busy across a window boundary, shallow enough that a
 #: crash costs seconds of billed work rather than the whole submission phase.
 WINDOW = CONCURRENCY * 4
+
+
+def _multi_property_extra(text: str, found: Sequence[str], *, min_found: int = 3) -> List[str]:
+    """Registered properties named in ``text`` that the model did not return —
+    only for a document the model already reads as multi-property (>= min_found),
+    where a missed name means it stopped reading, not that the mention is
+    incidental. Ambiguous single words (a bare "Bayshore") never qualify."""
+    if len(found) < min_found or not text:
+        return []
+    from mangotree.resolve.property_resolver import _match_aliases
+    hits = _match_aliases(text, "alias_body")
+    extra = []
+    for pid, hit in hits.items():
+        if pid in found:
+            continue
+        if any("(ambiguous)" in s for s in hit.signals) and not any(k in s for s in hit.signals for k in ("(numbered)", "(multi)", "(single)")):
+            continue
+        extra.append(pid)
+    return sorted(extra)
 
 
 @dataclass
@@ -279,6 +298,7 @@ class SegregationRunner:
         )
         self._write_decision(email["sha256"], decision, result, is_email=True)
 
+        multi_extra: List[str] = []
         for attachment in attachments:
             sha = attachment["sha256"]
             att_decision = result.attachments.get(sha) or ItemDecision(
@@ -290,7 +310,22 @@ class SegregationRunner:
             if not att_decision.properties and decision.properties:
                 att_decision.properties = list(decision.properties)
                 att_decision.fallback_used = "inherited_from_email"
+            # A document the model already reads as covering several properties
+            # is a portfolio sheet; make sure it did not stop reading early. Scan
+            # the FULL text for registered property names it left out.
+            extra = _multi_property_extra(attachment.get("text") or "", att_decision.properties)
+            if extra:
+                att_decision.properties = list(att_decision.properties) + extra
+                att_decision.reasoning = (att_decision.reasoning or "") + f" [full-text scan added {', '.join(extra)}]"
+                multi_extra += [p for p in extra if p not in multi_extra]
             self._write_decision(sha, att_decision, result, is_email=False)
+        # The covering email of a portfolio sheet carries the same properties.
+        if multi_extra and len(decision.properties) >= 3:
+            missing = [p for p in multi_extra if p not in decision.properties]
+            if missing:
+                decision.properties = list(decision.properties) + missing
+                decision.reasoning = (decision.reasoning or "") + f" [from attachment full-text scan: {', '.join(missing)}]"
+                self._write_decision(email["sha256"], decision, result, is_email=True)
 
     def _write_decision(
         self, sha: str, decision: ItemDecision, result: SegregationResult, *, is_email: bool
