@@ -110,14 +110,22 @@ export function TaskBoard({ propertyId, ownerFilter, statusFilter, showAdd = tru
           <div className="text-xs font-semibold text-accent flex items-center gap-1.5 mb-2"><Sparkles size={13} /> Suggested by Opus 5 — accept to make real, dismiss to drop</div>
           <ul className="space-y-1.5">
             <AnimatePresence initial={false}>
-              {suggested.map((t) => (
+              {dateGroups(suggested).map(([day, dayList, sub]) => (
+                <React.Fragment key={day}>
+                  <li className="flex items-baseline gap-2 px-1 pt-1.5">
+                    <span className={cn("text-[11.5px] font-semibold", day === "Previous" ? "text-critical" : day === "Today" ? "text-accent" : "text-fg")}>{day}</span>
+                    {sub && <span className={cn("text-[11px]", day === "Previous" ? "text-critical/80" : "text-muted")}>{sub}</span>}
+                    <span className="text-[10.5px] text-faint tnum ml-auto">{dayList.length}</span>
+                  </li>
+              {dayList.map((t) => (
                 <motion.li key={t.task_id} layout initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, height: 0 }} className="flex items-start gap-2 rounded-xl bg-elev border border-line px-3 py-2">
                   <div className="flex-1 min-w-0">
                     <div className="text-[13px] font-medium">{t.title}</div>
                     <div className="text-xs text-muted mt-0.5 flex flex-wrap items-center gap-x-2">
                       <span className={cn("px-1.5 rounded-md text-[10px] font-semibold", OWNER_TONE[t.owner] || "bg-sunken")}>{t.owner}</span>
                       {t.property_id && !propertyId && <span>{propertyLabel(t.property_id)}</span>}
-                      {t.due && <span className="flex items-center gap-1"><Clock size={11} /> {fmtDate(t.due)}</span>}
+                      {t.due && <span className={cn("flex items-center gap-1", new Date(t.due) < new Date() && "text-critical font-medium")}><Clock size={11} /> {fmtDate(t.due, "EEE d MMM")}</span>}
+                      {!t.due && (t.priority === "critical" || t.priority === "high") && <span className="text-faint italic">no date — placed by urgency</span>}
                       <span className={cn("capitalize", PRIO[t.priority])}>{t.priority}</span>
                       {t.why && <span className="text-faint">— {t.why}</span>}
                     </div>
@@ -127,6 +135,8 @@ export function TaskBoard({ propertyId, ownerFilter, statusFilter, showAdd = tru
                   <Button size="sm" variant="soft" onClick={() => mutate(t.task_id, "open")}><Check size={13} /> Accept</Button>
                   <Button size="icon" variant="ghost" onClick={() => mutate(t.task_id, "dismissed")}><X size={14} /></Button>
                 </motion.li>
+              ))}
+                </React.Fragment>
               ))}
             </AnimatePresence>
           </ul>
