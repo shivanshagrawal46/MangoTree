@@ -35,7 +35,7 @@ export default function TasksPage() {
           <Card key={o} className="p-4"><Stat label={o} value={by[o]?.open || 0} sub={`${by[o]?.suggested || 0} suggested · ${by[o]?.done || 0} done`} /></Card>
         ))}
       </div>
-      <TaskBoard propertyId={sp.get("property") || undefined} statusFilter={sp.get("status") || undefined} ownerFilter={sp.get("owner") || undefined} groupBy="owner" />
+      <TaskBoard propertyId={sp.get("property") || undefined} statusFilter={sp.get("status") || undefined} ownerFilter={sp.get("owner") || undefined} groupBy="date" />
     </div>
   );
 }

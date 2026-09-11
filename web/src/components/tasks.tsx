@@ -18,13 +18,52 @@ import type { Task } from "@/lib/types";
 const OWNER_TONE: Record<string, string> = { Rakesh: "bg-accent-soft text-accent", JP: "bg-info-soft text-info", Manjunath: "bg-normal-soft text-normal", Wes: "bg-high-soft text-high" };
 const PRIO: Record<string, string> = { critical: "text-critical", high: "text-high", normal: "text-muted", low: "text-faint" };
 
-export function TaskBoard({ propertyId, ownerFilter, statusFilter, showAdd = true, groupBy = "owner", compact }: {
-  propertyId?: string; ownerFilter?: string; statusFilter?: string; showAdd?: boolean; groupBy?: "owner" | "property" | "none"; compact?: boolean;
+type GroupBy = "date" | "owner" | "property" | "none";
+const PRIO_ORDER: Record<string, number> = { critical: 0, high: 1, normal: 2, low: 3 };
+
+/* The board by WHEN (admin directive 2026-09-11): Today, Tomorrow, each coming
+   date, then Previous (overdue, each with its date), then anything undated that
+   is not urgent. An undated CRITICAL task belongs to today and an undated HIGH
+   ("this week") task to tomorrow — urgency without a date still has to land on
+   a day, or it hides at the bottom. */
+function dateGroups(active: Task[]): [string, Task[], string][] {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const dayMs = 86_400_000;
+  const dayIndex = (d: Date) => Math.round((new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() - today.getTime()) / dayMs);
+  const buckets = new Map<string, { label: string; sub: string; order: number; items: Task[] }>();
+  const put = (key: string, label: string, sub: string, order: number, t: Task) => {
+    const b = buckets.get(key) || { label, sub, order, items: [] };
+    b.items.push(t); buckets.set(key, b);
+  };
+  const dayLabel = (n: number, d: Date) => n === 0 ? "Today" : n === 1 ? "Tomorrow" : n === 2 ? "Day after tomorrow" : fmtDate(d.toISOString(), "EEEE");
+  for (const t of active) {
+    if (t.due) {
+      const d = new Date(t.due); const n = dayIndex(d);
+      if (n < 0) put("previous", "Previous", "overdue — each shows its date", 10_000, t);
+      else put(`d${n}`, dayLabel(n, d), fmtDate(d.toISOString(), "EEE d MMM"), n, t);
+    } else if (t.priority === "critical") put("d0", "Today", fmtDate(today.toISOString(), "EEE d MMM"), 0, t);
+    else if (t.priority === "high") put("d1", "Tomorrow", fmtDate(new Date(today.getTime() + dayMs).toISOString(), "EEE d MMM"), 1, t);
+    else put("nodate", "No date yet", "normal and low priority, undated", 20_000, t);
+  }
+  return [...buckets.entries()]
+    .sort((a, b) => a[1].order - b[1].order)
+    .map(([key, b]) => {
+      const items = [...b.items].sort((x, y) => {
+        if (key === "previous") { const dx = x.due ? new Date(x.due).getTime() : 0, dy = y.due ? new Date(y.due).getTime() : 0; if (dx !== dy) return dy - dx; }
+        return (PRIO_ORDER[x.priority] ?? 2) - (PRIO_ORDER[y.priority] ?? 2) || (x.due ? 0 : 1) - (y.due ? 0 : 1);
+      });
+      return [b.label, items, b.sub] as [string, Task[], string];
+    });
+}
+
+export function TaskBoard({ propertyId, ownerFilter, statusFilter, showAdd = true, groupBy: groupByDefault = "date", compact }: {
+  propertyId?: string; ownerFilter?: string; statusFilter?: string; showAdd?: boolean; groupBy?: GroupBy; compact?: boolean;
 }) {
   const qc = useQueryClient();
   const { open } = useEvidence();
   const [status, setStatus] = React.useState(statusFilter || "suggested,open");
   const [owner, setOwner] = React.useState(ownerFilter || "");
+  const [groupBy, setGroupBy] = React.useState<GroupBy>(groupByDefault);
   const params = new URLSearchParams();
   if (propertyId) params.set("property_id", propertyId);
   if (owner) params.set("owner", owner);
@@ -41,9 +80,11 @@ export function TaskBoard({ propertyId, ownerFilter, statusFilter, showAdd = tru
   const items = q.data?.items || [];
   const suggested = items.filter((t) => t.status === "suggested");
   const active = items.filter((t) => t.status !== "suggested");
-  const groups = groupBy === "none" ? [["", active]] as [string, Task[]][] :
+  const groups: [string, Task[], string?][] = groupBy === "none" ? [["", active]] :
+    groupBy === "date" ? dateGroups(active) :
     Object.entries(active.reduce((acc, t) => { const k = groupBy === "owner" ? t.owner : (t.property_id || "Portfolio"); (acc[k] ||= []).push(t); return acc; }, {} as Record<string, Task[]>))
-      .sort((a, b) => (groupBy === "owner" ? ["Rakesh", "JP", "Manjunath", "Wes"].indexOf(a[0]) - ["Rakesh", "JP", "Manjunath", "Wes"].indexOf(b[0]) : a[0].localeCompare(b[0])));
+      .sort((a, b) => (groupBy === "owner" ? ["Rakesh", "JP", "Manjunath", "Wes"].indexOf(a[0]) - ["Rakesh", "JP", "Manjunath", "Wes"].indexOf(b[0]) : a[0].localeCompare(b[0])))
+      .map(([k, v]) => [k, v] as [string, Task[]]);
 
   return (
     <div className="space-y-4">
@@ -52,6 +93,13 @@ export function TaskBoard({ propertyId, ownerFilter, statusFilter, showAdd = tru
         <Select value={status} onChange={(e) => setStatus(e.target.value)}>
           <option value="suggested,open">Open + suggested</option><option value="open">Open</option><option value="suggested">Suggested by AI</option><option value="done">Done</option><option value="dismissed">Dismissed</option>
         </Select>
+        {groupByDefault !== "none" && (
+          <div className="flex rounded-lg border border-line overflow-hidden text-[11px]" title="How the list is grouped">
+            {(["date", "owner", "property"] as GroupBy[]).filter((g) => g !== "property" || !propertyId).map((g) => (
+              <button key={g} onClick={() => setGroupBy(g)} className={cn("px-2.5 h-7 capitalize transition", groupBy === g ? "bg-fg text-bg font-semibold" : "text-muted hover:bg-sunken")}>{g === "date" ? "By day" : g === "owner" ? "By owner" : "By property"}</button>
+            ))}
+          </div>
+        )}
         <span className="flex-1" />
         {showAdd && <Button variant="primary" size="sm" onClick={() => setAdd(true)}><Plus size={14} /> Add task</Button>}
       </div>
@@ -86,9 +134,16 @@ export function TaskBoard({ propertyId, ownerFilter, statusFilter, showAdd = tru
 
       {active.length === 0 && suggested.length === 0 && !q.isLoading && <Empty title="No tasks here." sub="Add one, or ask the AI a question — it suggests next steps with evidence." />}
 
-      {groups.map(([g, list]) => (
+      {groups.map(([g, list, sub]) => (
         <div key={g}>
-          {g && <div className="flex items-center gap-2 mb-1.5"><span className={cn("px-2 h-5 rounded-md text-[11px] font-semibold grid place-items-center", OWNER_TONE[g] || "bg-sunken text-muted")}>{groupBy === "owner" ? g : propertyLabel(g)}</span><span className="text-[11px] text-faint">{list.length}</span></div>}
+          {g && groupBy === "date" && (
+            <div className="flex items-baseline gap-2 mb-1.5 mt-1">
+              <span className={cn("text-[13px] font-semibold", g === "Previous" ? "text-critical" : g === "Today" ? "text-accent" : "text-fg")}>{g}</span>
+              {sub && <span className={cn("text-[11.5px]", g === "Previous" ? "text-critical/80" : "text-muted")}>{sub}</span>}
+              <span className="text-[11px] text-faint tnum">· {list.length}</span>
+            </div>
+          )}
+          {g && groupBy !== "date" && <div className="flex items-center gap-2 mb-1.5"><span className={cn("px-2 h-5 rounded-md text-[11px] font-semibold grid place-items-center", OWNER_TONE[g] || "bg-sunken text-muted")}>{groupBy === "owner" ? g : propertyLabel(g)}</span><span className="text-[11px] text-faint">{list.length}</span></div>}
           <ul className={cn("rounded-2xl border border-line bg-elev divide-y divide-line overflow-hidden")}>
             <AnimatePresence initial={false}>
               {list.map((t) => (
@@ -102,7 +157,8 @@ export function TaskBoard({ propertyId, ownerFilter, statusFilter, showAdd = tru
                     <div className="text-xs text-muted mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5">
                       {groupBy !== "owner" && <span className={cn("px-1.5 rounded-md text-[10px] font-semibold", OWNER_TONE[t.owner] || "bg-sunken")}>{t.owner}</span>}
                       {t.property_id && !propertyId && groupBy !== "property" && <span>{propertyLabel(t.property_id)}</span>}
-                      {t.due && <span className={cn("flex items-center gap-1", t.status !== "done" && new Date(t.due) < new Date() && "text-critical font-medium")}><Clock size={11} /> {fmtDate(t.due)}</span>}
+                      {t.due && <span className={cn("flex items-center gap-1", t.status !== "done" && new Date(t.due) < new Date() && "text-critical font-medium")}><Clock size={11} /> {fmtDate(t.due, "EEE d MMM")}</span>}
+                      {!t.due && groupBy === "date" && (t.priority === "critical" || t.priority === "high") && <span className="text-faint italic">no date — placed by urgency</span>}
                       <span className={cn("capitalize", PRIO[t.priority])}>{t.priority}</span>
                       {t.source !== "manual" && <Badge tone="accent"><Sparkles size={9} /> AI</Badge>}
                       {t.status === "done" && t.done_by && <span className="text-faint">done by {t.done_by} · {fmtDate(t.done_at)}</span>}
