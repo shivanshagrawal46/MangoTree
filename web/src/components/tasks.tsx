@@ -40,9 +40,9 @@ function dateGroups(active: Task[]): [string, Task[], string][] {
     if (t.due) {
       const d = new Date(t.due); const n = dayIndex(d);
       if (n < 0) put("previous", "Previous", "overdue — each shows its date", 10_000, t);
-      else put(`d${n}`, dayLabel(n, d), fmtDate(d.toISOString(), "EEE d MMM"), n, t);
-    } else if (t.priority === "critical") put("d0", "Today", fmtDate(today.toISOString(), "EEE d MMM"), 0, t);
-    else if (t.priority === "high") put("d1", "Tomorrow", fmtDate(new Date(today.getTime() + dayMs).toISOString(), "EEE d MMM"), 1, t);
+      else put(`d${n}`, dayLabel(n, d), fmtDate(d.toISOString(), "EEEE, d MMMM"), n, t);
+    } else if (t.priority === "critical") put("d0", "Today", fmtDate(today.toISOString(), "EEEE, d MMMM"), 0, t);
+    else if (t.priority === "high") put("d1", "Tomorrow", fmtDate(new Date(today.getTime() + dayMs).toISOString(), "EEEE, d MMMM"), 1, t);
     else put("nodate", "No date yet", "normal and low priority, undated", 20_000, t);
   }
   return [...buckets.entries()]
@@ -112,9 +112,9 @@ export function TaskBoard({ propertyId, ownerFilter, statusFilter, showAdd = tru
             <AnimatePresence initial={false}>
               {dateGroups(suggested).map(([day, dayList, sub]) => (
                 <React.Fragment key={day}>
-                  <li className="flex items-baseline gap-2 px-1 pt-1.5">
-                    <span className={cn("text-[11.5px] font-semibold", day === "Previous" ? "text-critical" : day === "Today" ? "text-accent" : "text-fg")}>{day}</span>
-                    {sub && <span className={cn("text-[11px]", day === "Previous" ? "text-critical/80" : "text-muted")}>{sub}</span>}
+                  <li className={cn("flex items-baseline gap-2.5 px-3 py-1.5 rounded-lg border-l-[3px]", day === "Previous" ? "bg-critical-soft/60 border-l-critical" : day === "Today" ? "bg-accent-soft/70 border-l-accent" : "bg-elev/70 border-l-line-strong")}>
+                    <span className={cn("text-[13px] font-bold tracking-tight", day === "Previous" ? "text-critical" : day === "Today" ? "text-accent" : "text-fg")}>{day}</span>
+                    {sub && <span className={cn("text-[12.5px] font-semibold tnum", day === "Previous" ? "text-critical/85" : day === "Today" ? "text-accent/90" : "text-fg/80")}>{sub}</span>}
                     <span className="text-[10.5px] text-faint tnum ml-auto">{dayList.length}</span>
                   </li>
               {dayList.map((t) => (
@@ -152,9 +152,9 @@ export function TaskBoard({ propertyId, ownerFilter, statusFilter, showAdd = tru
             <AnimatePresence initial={false}>
               {dateGroups(list).map(([day, dayList, sub]) => (
                 <React.Fragment key={day}>
-                  <li className={cn("flex items-baseline gap-2 px-3 py-1.5 bg-sunken/70", day === "Previous" && "bg-critical-soft/60")}>
-                    <span className={cn("text-[11.5px] font-semibold", day === "Previous" ? "text-critical" : day === "Today" ? "text-accent" : "text-fg")}>{day}</span>
-                    {sub && <span className={cn("text-[11px]", day === "Previous" ? "text-critical/80" : "text-muted")}>{sub}</span>}
+                  <li className={cn("flex items-baseline gap-2.5 px-3 py-2 border-l-[3px]", day === "Previous" ? "bg-critical-soft/60 border-l-critical" : day === "Today" ? "bg-accent-soft/60 border-l-accent" : "bg-sunken/70 border-l-line-strong")}>
+                    <span className={cn("text-[13px] font-bold tracking-tight", day === "Previous" ? "text-critical" : day === "Today" ? "text-accent" : "text-fg")}>{day}</span>
+                    {sub && <span className={cn("text-[12.5px] font-semibold tnum", day === "Previous" ? "text-critical/85" : day === "Today" ? "text-accent/90" : "text-fg/80")}>{sub}</span>}
                     <span className="text-[10.5px] text-faint tnum ml-auto">{dayList.length}</span>
                   </li>
               {dayList.map((t) => (
