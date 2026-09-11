@@ -81,15 +81,15 @@ class Briefing:
         suggested = store.list(owner=owner, statuses=("suggested",))[:10]
         deadlines = list(self.mongo.db["timeline_events"].find(
             {"occurred_at": {"$gte": now, "$lte": now + timedelta(days=14)}},
-            {"_id": 0, "property_id": 1, "occurred_at": 1, "event_type": 1, "title": 1, "source_sha": 1, "amount": 1}).sort("occurred_at", 1).limit(20))
+            {"_id": 0, "property_id": 1, "occurred_at": 1, "event_type": 1, "title": 1, "source_sha": 1, "amount": 1}).sort("occurred_at", 1).limit(40))
         risk = list(self.mongo.db["timeline_events"].find(
             {"event_type": {"$in": ["default", "legal", "payoff", "extension"]}, "occurred_at": {"$gte": now - timedelta(days=14)}},
-            {"_id": 0, "property_id": 1, "occurred_at": 1, "event_type": 1, "title": 1, "source_sha": 1, "amount": 1}).sort("occurred_at", -1).limit(20))
+            {"_id": 0, "property_id": 1, "occurred_at": 1, "event_type": 1, "title": 1, "source_sha": 1, "amount": 1}).sort("occurred_at", -1).limit(40))
         intake = list(self.mongo.artifacts.aggregate([
             {"$match": {"created_at": {"$gte": since}, "is_inline_image": {"$ne": True}}},
             {"$unwind": {"path": "$property_ids", "preserveNullAndEmptyArrays": True}},
             {"$group": {"_id": "$property_ids", "n": {"$sum": 1}}}]))
-        cards = list(self.mongo.db["cards"].find({"status": "new", "significance": {"$gte": 3}}, {"_id": 0}).sort([("significance", -1), ("created_at", -1)]).limit(12))
+        cards = list(self.mongo.db["cards"].find({"status": "new", "significance": {"$gte": 3}}, {"_id": 0}).sort([("significance", -1), ("created_at", -1)]).limit(20))
         handled = data.handled_overnight(self.mongo)
         return {
             "generated_at": now, "user_id": user_id, "owner": owner,
@@ -125,7 +125,7 @@ class Briefing:
         # still gets a brief rather than an error at 6 a.m.
         for attempt in (1, 2):
             try:
-                r = self.client.messages.create(model=self.model, max_tokens=5000,
+                r = self.client.messages.create(model=self.model, max_tokens=cfg.BRIEFING_MAX_OUTPUT_TOKENS,
                                                 system=[{"type": "text", "text": _SYSTEM, "cache_control": {"type": "ephemeral"}}],
                                                 messages=[{"role": "user", "content": f"READER: {f['owner']} ({user_id})\n\nFACTS:\n{payload}"}],
                                                 **cfg.OPUS_HIGH_KWARGS)
@@ -180,8 +180,10 @@ class Scheduler:
       quiet for the debounce window
     * nightly at NIGHTLY_HOUR (20:00 Eastern): a 72-hour intake sweep, then the
       correctness pass (graph rebuild, anything any stage still owes)
-    * change-detection cards hourly; the morning pass from two hours before the
-      briefing hour; the briefing at 02:00 Eastern (admin directive 2026-09-07)
+    * the morning pass from two hours before the briefing hour — investigation of
+      changed properties, resolution, tasks, cards, ledger, Wes issues — then the
+      briefing at 02:00 Eastern. Nothing is analysed during the day (2026-09-12);
+      mail is ingested and made searchable as it arrives, and read at night.
 
     The clock is the firm's — America/New_York — not the server's (UTC), so the
     brief stays at 2 a.m. Eastern across the daylight-saving change instead of
@@ -303,8 +305,10 @@ class Scheduler:
         return lock is None or lock.get("status") == "failed"
 
     def run_money_and_wes(self) -> Dict[str, Any]:
-        """Morning pass: investigate every property, then the ledger, then the Wes
-        agenda. The agenda reads both; the brief that follows reads all three."""
+        """The morning cycle, in order: investigate the properties that changed;
+        rule every open item against the new records; extract tasks for the
+        changed properties; write the "what's new" cards; rebuild the ledger;
+        write the Wes issues. The brief that follows reads all of it."""
         from concurrent.futures import ThreadPoolExecutor
         from mangotree.briefing.dossier import PropertyDossier
         from mangotree.config.registry import PROPERTIES
@@ -325,6 +329,7 @@ class Scheduler:
         with ThreadPoolExecutor(max_workers=3) as pool:
             results = list(pool.map(refresh, PROPERTIES))
         rebuilt = sum(1 for r in results if r not in ("kept",) and not r.startswith("error"))
+        changed = [p.property_id for p, r in zip(PROPERTIES, results) if r not in ("kept",) and not r.startswith("error")]
         out["dossiers"] = f"{rebuilt}/{len(results)} rebuilt, {sum(1 for r in results if r == 'kept')} unchanged, {sum(1 for r in results if r.startswith('error'))} failed"
         # Resolution before generation: yesterday's items are checked against
         # overnight records, so today's agenda cannot re-raise what is done.
@@ -333,6 +338,26 @@ class Scheduler:
         with ThreadPoolExecutor(max_workers=4) as pool:
             res = list(pool.map(lambda p: rp.run_for(p.property_id), PROPERTIES))
         out["resolution"] = {k: sum(r.get(k, 0) for r in res if isinstance(r, dict)) for k in ("items", "resolved", "superseded", "reported")}
+        # Tasks and "what's new" cards moved here from the after-mail refresh
+        # (admin directive 2026-09-12: analysis once a day). Tasks for the
+        # properties that changed; cards for all — the detector itself costs
+        # nothing on a property with no new documents.
+        if changed:
+            try:
+                from mangotree.tasks.extractor import TaskExtractor
+                te = TaskExtractor(self.mongo, anthropic_api_key=self.key).run(changed, concurrency=3)
+                out["tasks"] = {k: v for k, v in te.as_dict().items() if k in ("properties", "tasks_written", "tasks_done", "wes_items", "errors")}
+            except Exception as exc:
+                logger.exception("morning task extraction failed")
+                out["tasks"] = f"error: {type(exc).__name__}"
+        else:
+            out["tasks"] = "no property changed"
+        try:
+            from .cards import CardDetector
+            out["cards"] = CardDetector(self.mongo, anthropic_api_key=self.key).run()
+        except Exception as exc:
+            logger.exception("morning card detection failed")
+            out["cards"] = f"error: {type(exc).__name__}"
         out["ledger"] = LedgerBuilder(self.mongo, anthropic_api_key=self.key).run(concurrency=4).as_dict()
         out["wes"] = self.wes.run(force=True, concurrency=4)
         # Every model call failed (invalid key, outage): say so, so the day is not
@@ -417,14 +442,8 @@ class Scheduler:
                 logger.exception("nightly sweep failed")
                 self.runs.insert_one({"job": "nightly", "day": day, "ok": False, "detail": str(exc)[:400], "at": datetime.now(timezone.utc)})
                 self._release_daily("nightly", False)
-        if self._due_cards():
-            try:
-                from .cards import CardDetector
-                out = CardDetector(self.mongo, anthropic_api_key=self.key).run()
-                self._record("cards", True, out)
-            except Exception as exc:
-                logger.exception("card detection run failed")
-                self._record("cards", False, str(exc)[:400])
+        # Hourly "what's new" cards were retired 2026-09-12 (admin directive):
+        # cards are written once a day inside the morning cycle, with the tasks.
         # Money and the Wes agenda run BEFORE the briefing so the brief reads the
         # morning's ledger, not yesterday's. Recorded per day; a failure retries on
         # the next tick rather than waiting for tomorrow.

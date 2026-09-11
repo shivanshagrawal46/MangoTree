@@ -37,6 +37,10 @@ from mangotree.core.logging import logger
 from mangotree.storage.mongo import Mongo
 
 DEBOUNCE_MINUTES = int(os.environ.get("MT_DEBOUNCE_MINUTES", "10"))
+#: Same-day analysis after new mail. Off (admin directive 2026-09-12): the
+#: analysis — investigation, resolution, tasks, cards, Wes issues — runs once,
+#: in the morning cycle. Ingestion itself is unaffected.
+REFRESH_ON_MAIL = os.environ.get("MT_REFRESH_ON_MAIL", "0").strip().lower() in ("1", "true", "yes")
 
 
 class ArrivalChain:
@@ -262,13 +266,24 @@ class ArrivalChain:
         return trace
 
     def flush_debounced(self, *, force: bool = False) -> Dict[str, Any]:
-        """Run tasks + cards for properties quiet for DEBOUNCE_MINUTES."""
+        """Run the property refresh (investigation, resolution, tasks, cards, Wes
+        issues) for properties quiet for DEBOUNCE_MINUTES.
+
+        OFF by default since 2026-09-12 (admin directive): analysis runs once a
+        day, in the 2 a.m. Eastern cycle, not after every email. Mail is still
+        ingested, filed and made searchable the moment it arrives. The pending
+        list is simply cleared; the morning pass finds the new documents by
+        their placed_at. Set MT_REFRESH_ON_MAIL=1 to restore the same-day refresh."""
         now = datetime.now(timezone.utc)
         with self._lock:
             due = [p for p, t in self._pending_props.items() if force or (now - t) >= timedelta(minutes=DEBOUNCE_MINUTES)]
             for p in due:
                 self._pending_props.pop(p, None)
         if not due:
+            return {}
+        if not force and not REFRESH_ON_MAIL:
+            logger.info("after-mail refresh is off; %d propert%s will be analysed in the morning cycle: %s",
+                        len(due), "y" if len(due) == 1 else "ies", ", ".join(due))
             return {}
         trace: Dict[str, Any] = {"properties": due, "started_at": now}
         try:

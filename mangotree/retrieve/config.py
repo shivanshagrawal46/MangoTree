@@ -239,16 +239,19 @@ MORNING_WRITER_MODEL = "gpt-6-astra"          # Wes issues + ledger
 #: 10 tool calls / 10 minutes (admin directive 2026-09-11, down from 30/15):
 #: the morning and after-mail investigations refresh a picture that already
 #: exists; the deep 30-step read is for chat questions a person is waiting on.
-MORNING_MAX_TOOL_CALLS = 10
-MORNING_MAX_WALL_CLOCK_S = 10 * 60
+MORNING_MAX_TOOL_CALLS = 20
+MORNING_MAX_WALL_CLOCK_S = 15 * 60
 #: Output caps for the two Astra writers of the morning pass (admin directive 2026-09-11).
-LEDGER_MAX_OUTPUT_TOKENS = 21_000
-WES_MAX_OUTPUT_TOKENS = 10_000
+LEDGER_MAX_OUTPUT_TOKENS = 30_000
+WES_MAX_OUTPUT_TOKENS = 12_000
 #: Output caps for the two Opus 5 writers that run after new mail (admin
 #: directive 2026-09-11): the task extractor (tasks + Wes's work list + drafted
 #: emails) and the "what's new" cards.
 TASKS_MAX_OUTPUT_TOKENS = 8_000
 CARDS_MAX_OUTPUT_TOKENS = 5_000
+#: The resolution pass (ruling every open item) and the three morning briefs (admin, 2026-09-12).
+RESOLUTION_MAX_OUTPUT_TOKENS = 15_000
+BRIEFING_MAX_OUTPUT_TOKENS = 7_000
 #: Who rules yesterday's open issues, cards and tasks against the new records
 #: each morning (and after new mail) so the Wes agenda cannot re-raise what is done.
 RESOLUTION_MODEL = "gpt-6-astra"

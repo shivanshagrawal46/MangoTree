@@ -41,6 +41,7 @@ from mangotree.config.models import Seat, model_for
 from mangotree.config.registry import PROPERTY_INDEX
 from mangotree.core.llm_json import json_call
 from mangotree.core.logging import logger
+from mangotree.retrieve import config as cfg
 from mangotree.storage.mongo import Mongo
 
 _SYSTEM = """You keep the open-items lists honest for RKB Consulting Group, a renovation
@@ -140,7 +141,7 @@ class ResolutionPass:
                           "reported_done": t.get("reported_done")})
         return items
 
-    def _records_since(self, pid: str, since: datetime, limit: int = 40) -> List[dict]:
+    def _records_since(self, pid: str, since: datetime, limit: int = 60) -> List[dict]:
         docs = list(self.mongo.artifacts.find(
             {"property_ids": pid, "is_inline_image": {"$ne": True},
              "$or": [{"date": {"$gte": since}}, {"created_at": {"$gte": since}}, {"placed_at": {"$gte": since}}]},
@@ -190,7 +191,7 @@ class ResolutionPass:
             full[d["sha256"][:16]] = d["sha256"]
             texts[d["sha256"]] = _norm(body)
             frm = ((d.get("participants") or {}).get("from") or [""])[0]
-            parts.append(f"\n[sha={d['sha256'][:16]}] {str(d.get('date'))[:10]} {d.get('source_type')} {frm} — {d.get('subject') or d.get('filename')}\n{' '.join(body.split())[:2500]}")
+            parts.append(f"\n[sha={d['sha256'][:16]}] {str(d.get('date'))[:10]} {d.get('source_type')} {frm} — {d.get('subject') or d.get('filename')}\n{' '.join(body.split())[:6000]}")
         prompt = "<<<DATA>>>\n" + "\n".join(parts) + "\n<<<END>>>"
 
         if self.model.lower().startswith("gpt"):
@@ -199,11 +200,11 @@ class ResolutionPass:
             if self._openai is None:
                 self._openai = OpenAI(api_key=self._okey, max_retries=3)
             data = json_call_openai(self._openai, model=self.model, system=_SYSTEM, user=prompt, tool_name=_TOOL["name"],
-                                    description=_TOOL["description"], schema=_TOOL["input_schema"], max_tokens=12000,
+                                    description=_TOOL["description"], schema=_TOOL["input_schema"], max_tokens=cfg.RESOLUTION_MAX_OUTPUT_TOKENS,
                                     reasoning_effort="high")
         else:
             data = json_call(self.client, model=self.model, system=_SYSTEM, user=prompt, tool_name=_TOOL["name"],
-                             description=_TOOL["description"], schema=_TOOL["input_schema"], max_tokens=12000, stream=True)
+                             description=_TOOL["description"], schema=_TOOL["input_schema"], max_tokens=cfg.RESOLUTION_MAX_OUTPUT_TOKENS, stream=True)
 
         by_id = {i["item_id"]: i for i in items}
         rep_by_id = {r["fact_id"]: r for r in reported}

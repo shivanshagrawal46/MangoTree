@@ -989,7 +989,7 @@ def wes_agenda_refresh(pid: str, user=CurrentUser):
 @app.post("/properties/{pid}/resolve")
 def resolve_open_items(pid: str, user=CurrentUser):
     """Re-read recent records against every open issue, card and task for this
-    property and close what they settle. Runs automatically after new mail and
+    property and close what they settle. Runs automatically in the morning cycle and
     each morning; this is the on-demand version."""
     from mangotree.briefing.resolution import ResolutionPass
     _pid(pid)

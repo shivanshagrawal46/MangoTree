@@ -168,11 +168,11 @@ class WesAgenda:
         parts.append("\n=== NEW THIS WEEK ===")
         for d in self.mongo.artifacts.find({"property_ids": pid, "is_inline_image": {"$ne": True},
                                             "$or": [{"date": {"$gte": week}}, {"created_at": {"$gte": week}}]},
-                                           {"sha256": 1, "subject": 1, "filename": 1, "date": 1, "source_type": 1, "participants.from": 1, "body_clean": 1, "text": 1}).sort("date", -1).limit(25):
+                                           {"sha256": 1, "subject": 1, "filename": 1, "date": 1, "source_type": 1, "participants.from": 1, "body_clean": 1, "text": 1}).sort("date", -1).limit(40):
             body = (d.get("body_clean") if d.get("source_type") == "email" else d.get("text")) or ""
             s16 = add_doc(d, body)
             frm = ((d.get("participants") or {}).get("from") or [""])[0]
-            parts.append(f"[sha={s16}] {str(d.get('date'))[:10]} {d.get('source_type')} {frm} — {d.get('subject') or d.get('filename')}\n{' '.join(body.split())[:1200]}")
+            parts.append(f"[sha={s16}] {str(d.get('date'))[:10]} {d.get('source_type')} {frm} — {d.get('subject') or d.get('filename')}\n{' '.join(body.split())[:4000]}")
 
         parts.append("\n=== WES'S WORK ITEMS NOT DONE (quotes from records) ===")
         for w in self.mongo.db["wes_work"].find({"property_id": pid, "status": {"$ne": "done"}}, {"_id": 0}).limit(40):

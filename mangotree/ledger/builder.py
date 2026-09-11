@@ -57,7 +57,7 @@ AUTHORITATIVE = re.compile(
 #: Filenames that are context only — shown to the model as such, never a row source.
 CONTEXT_ONLY = re.compile(r"term sheet|draw schedule|proposal|appraisal|insurance|listing|loan agreement|promissory|deed of trust", re.I)
 
-DOC_CHAR_CAP = 28_000       # per document; the long draw-schedule workbook is 105k
+DOC_CHAR_CAP = 60_000       # per document (admin 2026-09-12, from 28k); the long draw-schedule workbook is 105k
 TOTAL_CHAR_CAP = 220_000    # per property prompt
 
 ENTRY_KINDS = ("closing_funding", "closing_allocation", "draw", "interest_billed", "interest_received", "principal_received",
