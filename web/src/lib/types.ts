@@ -31,12 +31,14 @@ export type AnswerPoint = { text: string; urgency: "critical" | "high" | "normal
 export type NextAction = { title: string; owner: string; due?: string | null; why?: string; sources: number[] };
 /* An email the AI wrote for a next step, on the team's behalf. */
 export type EmailDraft = { to: string; to_email?: string | null; from: string; subject: string; body: string; for_action?: string };
+/* A flow chart the writer produced when a process is the answer (Mermaid code, rendered client-side). */
+export type Diagram = { kind: "mermaid"; title?: string; code: string };
 export type Source = { index: number; chunk_id: string; artifact_sha: string; citation: string; display_name: string;
   property_ids: string[]; placement: string; label: string; date: string; text: string; context: string; origin: string };
 
 export type Answer = {
   question: string; scope: string; headline: string; summary?: string; points: AnswerPoint[]; details: string;
-  shape?: "brief" | "actions" | "draft" | "list" | "figure" | "explain" | "followup"; composed?: string | null;
+  shape?: "brief" | "actions" | "draft" | "list" | "figure" | "explain" | "followup" | "process"; composed?: string | null; diagram?: Diagram | null;
   mode?: "full" | "fast";
   disagreements: string[]; next_actions: NextAction[]; emails?: EmailDraft[]; second_opinion: string;
   second_reader: { provider?: string; model?: string; answer?: string; missed?: string[]; wrong?: string[]; disagree?: string[]; error?: string };

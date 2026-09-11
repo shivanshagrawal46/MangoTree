@@ -166,6 +166,15 @@ FINALIST_FULL_READ_MAX_DOCS = 6
 FINALIST_FULL_READ_TOKEN_BUDGET = 120_000
 
 # =============================================================================
+# Portfolio fan-out (global "Ask anything" comparison questions)
+# =============================================================================
+#: Property sub-searches run in parallel, this many at a time, and the whole
+#: fan-out is dropped at the time budget (2026-09-11: sequential, it took 20
+#: minutes under a busy server and starved a fast answer).
+FANOUT_WORKERS = 5
+FANOUT_TIME_BUDGET_S = 180.0
+
+# =============================================================================
 # Agent budget — one profile
 # =============================================================================
 
@@ -233,7 +242,7 @@ MORNING_WRITER_MODEL = "gpt-6-astra"          # Wes issues + ledger
 MORNING_MAX_TOOL_CALLS = 10
 MORNING_MAX_WALL_CLOCK_S = 10 * 60
 #: Output caps for the two Astra writers of the morning pass (admin directive 2026-09-11).
-LEDGER_MAX_OUTPUT_TOKENS = 15_000
+LEDGER_MAX_OUTPUT_TOKENS = 21_000
 WES_MAX_OUTPUT_TOKENS = 10_000
 #: Output caps for the two Opus 5 writers that run after new mail (admin
 #: directive 2026-09-11): the task extractor (tasks + Wes's work list + drafted

@@ -196,7 +196,10 @@ class Agent:
     def _seed(self, question: str, scope: Scope, pad: AgentScratchpad, box: ToolBox,
               conversation: Sequence[dict]) -> str:
         t0 = time.time()
-        res = self.hs.search(question, scope, conversation=conversation, keep=cfg.RERANK_STAGE2_KEEP)
+        # The opening search may not eat the whole run: at most half the wall
+        # clock (fast: 150s, morning: 300s), capped by the fan-out budget.
+        res = self.hs.search(question, scope, conversation=conversation, keep=cfg.RERANK_STAGE2_KEEP,
+                             time_budget_s=min(cfg.FANOUT_TIME_BUDGET_S, max(60.0, pad.budget.max_wall_clock_s * 0.5)))
         box._absorb_trace(res)
         new = pad.add_chunks(res.hits)
 

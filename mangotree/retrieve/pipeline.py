@@ -19,7 +19,8 @@ from __future__ import annotations
 
 import re
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import TimeoutError as FuturesTimeout
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Sequence, Set
@@ -278,6 +279,7 @@ class HybridSearch:
         use_stage2: bool = True,
         with_enumeration: bool = True,
         extra_filter: Optional[Dict[str, Any]] = None,
+        time_budget_s: float = cfg.FANOUT_TIME_BUDGET_S,
     ) -> SearchResult:
         started = time.time()
         seen = set(seen or ())
@@ -312,21 +314,45 @@ class HybridSearch:
             retrieved_all: List[Hit] = []
             final_all: List[Hit] = []
             per: Dict[str, Any] = {}
-            for pid in props:
+
+            # In parallel, under a time budget. Sequentially, fifteen property
+            # sub-searches — each with its own Opus rerank — took twenty minutes
+            # on 2026-09-10 while a background refresh held the same rate limit,
+            # and a "fast" answer was forced to finish on its opening search.
+            # Sub-searches still running at the deadline are dropped (recorded
+            # in the trace), not waited for.
+            def one(pid: str):
                 sub = Scope(mode="global", property_ids=[pid], include_privileged=scope.include_privileged,
                             role_filter=scope.role_filter)
                 sub_trace: Dict[str, Any] = {}
-                try:
-                    ret, fin = self._search_scope(question, sub, u, rw, seen=seen, depth=depth,
-                                                  keep=quota, use_stage2=use_stage2, trace=sub_trace,
-                                                  extra_filter=extra_filter)
-                except Exception as exc:
-                    logger.error("fan-out search failed for %s: %s", pid, exc)
-                    per[pid] = {"error": str(exc)[:200]}
-                    continue
-                per[pid] = {"retrieved": len(ret), "final": len(fin)}
-                retrieved_all += ret
-                final_all += fin
+                ret, fin = self._search_scope(question, sub, u, rw, seen=set(seen), depth=depth,
+                                              keep=quota, use_stage2=use_stage2, trace=sub_trace,
+                                              extra_filter=extra_filter)
+                return pid, ret, fin
+
+            deadline = started + max(30.0, float(time_budget_s))
+            pool = ThreadPoolExecutor(max_workers=cfg.FANOUT_WORKERS, thread_name_prefix="fanout")
+            futures = {pool.submit(one, pid): pid for pid in props}
+            try:
+                for fut in as_completed(futures, timeout=max(1.0, deadline - time.time())):
+                    pid = futures[fut]
+                    try:
+                        _, ret, fin = fut.result()
+                    except Exception as exc:
+                        logger.error("fan-out search failed for %s: %s", pid, exc)
+                        per[pid] = {"error": str(exc)[:200]}
+                        continue
+                    per[pid] = {"retrieved": len(ret), "final": len(fin)}
+                    retrieved_all += ret
+                    final_all += fin
+            except FuturesTimeout:
+                late = [pid for fut, pid in futures.items() if not fut.done()]
+                for pid in late:
+                    per[pid] = {"timeout": True}
+                logger.warning("fan-out: %d of %d property searches dropped at the %.0fs budget: %s",
+                               len(late), len(props), time_budget_s, ", ".join(late))
+            finally:
+                pool.shutdown(wait=False)
             trace["fan_out"] = per
             retrieved_all.sort(key=lambda h: (-(h.rerank2_score or 0), -(h.rerank1_score or 0)))
             final = self.expander.cap_tokens(final_all)

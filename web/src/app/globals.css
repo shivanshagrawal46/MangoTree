@@ -136,3 +136,16 @@ body {
   transition: transform 120ms ease, background 120ms ease;
 }
 .cite:hover { transform: translateY(-1px); background: color-mix(in srgb, var(--accent) 18%, var(--bg-elev)); }
+
+/* Print - the answer page saved as PDF looks like the screen, on paper. */
+@page { size: A4; margin: 14mm 14mm 16mm; }
+@media print {
+  html, body { background: #ffffff !important; color: #16161a !important; }
+  .no-print { display: none !important; }
+  .print-page { max-width: none !important; padding: 0 !important; }
+  .avoid-break, li, .rounded-2xl > ol > li { break-inside: avoid; page-break-inside: avoid; }
+  a { color: inherit; text-decoration: none; }
+  .cite { border-color: #cfd8d4 !important; background: #eef5f2 !important; color: #1f6f5f !important; }
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .mermaid-host svg { max-height: 240mm; }
+}

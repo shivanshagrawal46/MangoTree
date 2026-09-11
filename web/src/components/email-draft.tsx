@@ -13,6 +13,26 @@ import { Button } from "@/components/ui";
 import { cn } from "@/lib/utils";
 import type { EmailDraft } from "@/lib/types";
 
+/* The clipboard API exists only on HTTPS or localhost. The app is reached over
+   plain HTTP on the droplet's address, so it silently failed there (2026-09-11).
+   Fall back to the old selection-based copy, which works on any origin. */
+export async function copyText(text: string): Promise<boolean> {
+  try {
+    if (typeof navigator !== "undefined" && navigator.clipboard && (window as any).isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch { /* fall through */ }
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text; ta.setAttribute("readonly", ""); ta.style.position = "fixed"; ta.style.left = "-9999px";
+    document.body.appendChild(ta); ta.select(); ta.setSelectionRange(0, text.length);
+    const ok = document.execCommand("copy");
+    document.body.removeChild(ta);
+    return ok;
+  } catch { return false; }
+}
+
 export function EmailDraftCard({ draft, defaultOpen = false, compact }: { draft: EmailDraft; defaultOpen?: boolean; compact?: boolean }) {
   const [open, setOpen] = React.useState(defaultOpen);
   const [subject, setSubject] = React.useState(draft.subject || "");
@@ -21,11 +41,19 @@ export function EmailDraftCard({ draft, defaultOpen = false, compact }: { draft:
   const to = draft.to_email ? `${draft.to} <${draft.to_email}>` : draft.to;
 
   const copy = async () => {
-    await navigator.clipboard.writeText(`To: ${to}\nSubject: ${subject}\n\n${body}`);
-    setCopied(true); setTimeout(() => setCopied(false), 1500);
-    toast.success("Email copied — paste it into your mail app");
+    const ok = await copyText(`To: ${to}\nSubject: ${subject}\n\n${body}`);
+    if (ok) { setCopied(true); setTimeout(() => setCopied(false), 1500); toast.success("Email copied — paste it into your mail app"); }
+    else toast.error("Could not copy automatically — select the text and press Ctrl+C");
   };
-  const mailto = `mailto:${encodeURIComponent(draft.to_email || "")}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  /* mailto links break past ~2,000 characters in most mail apps. For a long body,
+     copy it and open the mail app with the address and subject only. */
+  const openMail = async () => {
+    const full = `mailto:${encodeURIComponent(draft.to_email || "")}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    if (full.length <= 1900) { window.location.href = full; return; }
+    const ok = await copyText(body);
+    window.location.href = `mailto:${encodeURIComponent(draft.to_email || "")}?subject=${encodeURIComponent(subject)}`;
+    toast.message(ok ? "Body copied — paste it into the email that opens" : "Long email — copy the text and paste it into the email that opens");
+  };
 
   return (
     <div className={cn("rounded-xl border border-line bg-elev overflow-hidden", compact ? "text-xs" : "text-[13px]")}>
@@ -51,7 +79,7 @@ export function EmailDraftCard({ draft, defaultOpen = false, compact }: { draft:
             className="w-full rounded-lg border border-line bg-elev px-3 py-2 text-[13px] leading-relaxed focus:border-accent outline-none resize-y font-[inherit]" />
           <div className="flex items-center gap-2">
             <Button size="sm" variant="primary" onClick={copy}>{copied ? <Check size={13} /> : <Copy size={13} />} {copied ? "Copied" : "Copy email"}</Button>
-            <a href={mailto}><Button size="sm" variant="soft"><Mail size={13} /> Open in mail app</Button></a>
+            <Button size="sm" variant="soft" onClick={openMail}><Mail size={13} /> Open in mail app</Button>
             <span className="text-[11px] text-faint ml-auto">Written by the AI from the records — read once before sending.</span>
           </div>
         </div>
@@ -60,8 +88,22 @@ export function EmailDraftCard({ draft, defaultOpen = false, compact }: { draft:
   );
 }
 
-export function EmailDrafts({ drafts, title = "Emails ready to send", compact }: { drafts?: EmailDraft[] | null; title?: string; compact?: boolean }) {
+export function EmailDrafts({ drafts, title = "Emails ready to send", compact, print }: { drafts?: EmailDraft[] | null; title?: string; compact?: boolean; print?: boolean }) {
   if (!drafts || drafts.length === 0) return null;
+  if (print) {
+    return (
+      <div className="mx-5 mb-3">
+        <div className="text-[11px] font-semibold uppercase tracking-wide text-muted mb-1.5">{title} · {drafts.length}</div>
+        <div className="space-y-3">{drafts.map((d, i) => (
+          <div key={i} className="rounded-xl border border-line bg-bg px-4 py-3 text-[13px] avoid-break">
+            <div className="text-xs text-muted">To <span className="text-fg">{d.to}{d.to_email ? ` <${d.to_email}>` : ""}</span> · from {d.from}</div>
+            <div className="font-semibold mt-0.5">{d.subject}</div>
+            <div className="mt-2 whitespace-pre-line leading-relaxed">{d.body}</div>
+          </div>
+        ))}</div>
+      </div>
+    );
+  }
   return (
     <div className="mx-5 mb-3 rounded-xl border border-accent/25 bg-accent-soft/40 px-3 py-2">
       <div className="text-xs font-semibold text-accent flex items-center gap-1 mb-1.5"><Mail size={12} /> {title} <span className="text-faint font-normal">· {drafts.length}</span></div>

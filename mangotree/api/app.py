@@ -84,7 +84,8 @@ from mangotree.briefing.cards import CardDetector  # noqa: E402
 from mangotree.briefing.morning import Briefing, Scheduler  # noqa: E402
 from . import exports  # noqa: E402
 
-_scheduler = Scheduler(mongo, anthropic_api_key=SETTINGS.anthropic_api_key)
+_scheduler = Scheduler(mongo, anthropic_api_key=SETTINGS.anthropic_api_key,
+                       busy=lambda: bool(_active_answers()))   # heavy passes yield while someone waits for an answer
 # The standing jobs run in exactly one place: the server, whose service file sets
 # MT_SCHEDULER=1. A developer's laptop running the API against the same database
 # must never start them — on 2026-09-06 a local API left running overnight ran
@@ -686,7 +687,6 @@ class SaveAnswerBody(BaseModel):
     title: Optional[str] = None
 
 
-@app.post("/saved")
 def _answer_message(chat_id: str, job_id: str):
     """The assistant message for a job, plus the question that produced it.
 
@@ -703,6 +703,7 @@ def _answer_message(chat_id: str, job_id: str):
     return chat, msg, question or ""
 
 
+@app.post("/saved")
 def save_answer(body: SaveAnswerBody, user=CurrentUser):
     chat, msg, _ = _answer_message(body.chat_id, body.job_id)
     doc = {"saved_id": body.job_id, "chat_id": body.chat_id, "property_id": chat.get("property_id"),
@@ -1150,6 +1151,15 @@ def export_tasks(property_id: Optional[str] = None, owner: Optional[str] = None,
 @app.get("/export/portfolio.xlsx")
 def export_portfolio(user=CurrentUser):
     return _xlsx(exports.portfolio_xlsx(data.portfolio(mongo)), "mangotree-portfolio.xlsx")
+
+
+@app.get("/answer/{chat_id:path}/{job_id}")
+def get_answer(chat_id: str, job_id: str, user=CurrentUser):
+    """One answer with its question — for the print view, which renders the
+    answer exactly as the chat does and lets the browser save it as a PDF."""
+    chat, msg, q = _answer_message(chat_id, job_id)
+    return data.clean({"chat_id": chat_id, "job_id": job_id, "question": q, "asked_by": msg.get("by"),
+                       "at": msg.get("at"), "property_id": chat.get("property_id"), "answer": msg["answer"]})
 
 
 @app.get("/export/answer/{chat_id:path}/{job_id}.pdf")

@@ -149,7 +149,7 @@ export function ChatPanel({ propertyId, initialQuestion, className }: { property
           </div>
         ) : (
           <div key={i} className="flex gap-3 group"><div className="h-7 w-7 rounded-full bg-sunken grid place-items-center text-[10px] font-semibold text-muted shrink-0 mt-1">AI</div>
-            <div className="flex-1 min-w-0"><AnswerCard answer={m.answer} onSave={() => save(m.job_id)} pdfHref={`/api/export/answer/${encodeURIComponent(q.data!.chat_id)}/${m.job_id}.pdf`} onAcceptTasks={() => router.push(propertyId ? `/tasks?property=${propertyId}&status=suggested` : "/tasks?status=suggested")} />
+            <div className="flex-1 min-w-0"><AnswerCard answer={m.answer} onSave={() => save(m.job_id)} pdfHref={`/print/answer/${encodeURIComponent(q.data!.chat_id)}/${m.job_id}`} onAcceptTasks={() => router.push(propertyId ? `/tasks?property=${propertyId}&status=suggested` : "/tasks?status=suggested")} />
               <button onClick={() => remove(m.job_id)} className="mt-1 text-[11px] text-faint hover:text-critical opacity-0 group-hover:opacity-100 transition flex items-center gap-1"><Trash2 size={11} /> Delete this question and answer</button></div></div>
         ))}
         {live && (

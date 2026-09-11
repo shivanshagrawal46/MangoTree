@@ -15,7 +15,7 @@ import socket
 import threading
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from mangotree.config.registry import PROPERTY_INDEX
 from mangotree.core.logging import logger
@@ -195,9 +195,18 @@ class Scheduler:
     NIGHTLY_HOUR = int(os.environ.get("MT_NIGHTLY_HOUR", "20"))
 
     def __init__(self, mongo: Mongo, *, anthropic_api_key: str, briefing_hour: Optional[int] = None,
-                 users=("rakesh", "jp", "manjunath"), intake: bool = True, tz: Optional[str] = None):
+                 users=("rakesh", "jp", "manjunath"), intake: bool = True, tz: Optional[str] = None,
+                 busy: Optional[Callable[[], bool]] = None):
         self.mongo = mongo
         self.key = anthropic_api_key
+        #: "Is a person waiting for an answer right now?" The heavy background
+        #: work (after-mail refresh, cards, the daily pass) yields while this is
+        #: true and picks up on a later tick. On 2026-09-10 five investigations
+        #: and five resolution passes ran alongside a chat question in the same
+        #: process and the same rate limit; its opening search took 20 minutes.
+        #: Mail polling itself never yields — arriving mail is always taken in.
+        self._busy = busy or (lambda: False)
+        self._yield_logged = False
         self.hour = briefing_hour if briefing_hour is not None else int(os.environ.get("MT_BRIEFING_HOUR", "2"))
         self.tz = self._zone(tz or os.environ.get("MT_SCHEDULE_TZ", "America/New_York"))
         self.users = users
@@ -377,6 +386,18 @@ class Scheduler:
                 logger.exception("mail intake failed")
                 self._record("intake", False, str(exc)[:400])
                 self._last_poll = datetime.now(timezone.utc)
+        # A person's question outranks everything below. Heavy passes wait for
+        # the next tick (60s) until no answer is in flight.
+        try:
+            busy = bool(self._busy())
+        except Exception:
+            busy = False
+        if busy:
+            if not self._yield_logged:
+                logger.info("scheduler: an answer is in progress — background refresh, cards and daily pass are waiting")
+                self._yield_logged = True
+            return
+        self._yield_logged = False
         if self.intake_enabled:
             try:
                 flushed = self.chain.flush_debounced()

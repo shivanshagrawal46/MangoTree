@@ -12,7 +12,8 @@ import { ShieldCheck, ShieldAlert, Sparkles, ChevronDown, Eye, Bookmark, ListChe
 import { Badge, Button } from "@/components/ui";
 import { Cited } from "@/components/evidence";
 import { cn, URGENCY, fmtDate, modelLabel } from "@/lib/utils";
-import { EmailDrafts } from "@/components/email-draft";
+import { EmailDrafts, copyText } from "@/components/email-draft";
+import { FlowDiagram } from "@/components/diagram";
 import type { Answer } from "@/lib/types";
 import type { SSEEvent } from "@/lib/api";
 
@@ -49,7 +50,7 @@ export function RichText({ text, sources, className }: { text: string; sources: 
   );
 }
 
-export function AnswerCard({ answer, onSave, onAcceptTasks, compact, pdfHref }: { answer: Answer; onSave?: () => void; onAcceptTasks?: () => void; compact?: boolean; pdfHref?: string }) {
+export function AnswerCard({ answer, onSave, onAcceptTasks, compact, pdfHref, print }: { answer: Answer; onSave?: () => void; onAcceptTasks?: () => void; compact?: boolean; pdfHref?: string; print?: boolean }) {
   const [tab, setTab] = React.useState<"none" | "details" | "second" | "trace" | "sources">("none");
   const v = answer.verification || {};
   const verdict = answer.verdict?.verdict || "";
@@ -92,6 +93,11 @@ export function AnswerCard({ answer, onSave, onAcceptTasks, compact, pdfHref }: 
         </div>
       )}
 
+      {/* A process answer carries a real flow chart, given room. */}
+      {answer.diagram?.code && (
+        <div className="px-5 pb-3 avoid-break"><FlowDiagram diagram={answer.diagram} /></div>
+      )}
+
       {/* A ready-to-send draft, when that is what was asked for. */}
       {answer.composed && <DraftBlock text={answer.composed} />}
 
@@ -120,9 +126,9 @@ export function AnswerCard({ answer, onSave, onAcceptTasks, compact, pdfHref }: 
         </ol>
       )}
 
-      {/* An analysis ("explain") carries its substance in details — show it in
-          full, right here, not behind a tab. */}
-      {answer.shape === "explain" && answer.details && (
+      {/* An analysis or a process carries its substance in details — show it in
+          full, right here, not behind a tab. In print, every answer does. */}
+      {((answer.shape === "explain" || answer.shape === "process") || print) && answer.details && (
         <div className="px-5 pb-3"><div className="rounded-xl border border-line bg-bg px-4 py-3 text-[13.5px]"><RichText text={answer.details} sources={answer.sources} /></div></div>
       )}
 
@@ -145,19 +151,29 @@ export function AnswerCard({ answer, onSave, onAcceptTasks, compact, pdfHref }: 
         </div>
       )}
 
-      {!compact && <EmailDrafts drafts={answer.emails} />}
+      {!compact && <EmailDrafts drafts={answer.emails} print={print} />}
 
-      <div className="px-5 py-2.5 border-t border-line flex flex-wrap items-center gap-1 text-xs">
+      {/* Print: the sources the answer cites, numbered as in the text, so the
+          PDF stands on its own. Then stop — no tabs, no buttons. */}
+      {print && (
+        <div className="px-5 pb-4">
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-muted mb-1.5">Sources cited</div>
+          <SourceList answer={answer} citedOnly />
+          <div className="mt-3 text-[11px] text-faint">Verified {v.verified ?? 0}/{v.facts ?? 0} facts against source text · {answer.mode === "fast" ? `Fast · ${invName}` : `${invName} investigated · ${srName} second read · ${writerName} wrote`} · {Math.round((answer.elapsed_ms || 0) / 1000)}s</div>
+        </div>
+      )}
+
+      {!print && <div className="px-5 py-2.5 border-t border-line flex flex-wrap items-center gap-1 text-xs">
         {[["details", "Details"], ["sources", `Sources (${answer.sources?.length || 0})`], ["second", "Second opinion"], ["trace", `How it worked (${answer.steps?.length || 0} steps)`]].map(([k, label]) => (
           <button key={k} onClick={() => setTab(tab === k ? "none" : (k as any))} className={cn("h-7 px-2.5 rounded-lg flex items-center gap-1 transition", tab === k ? "bg-sunken text-fg" : "text-muted hover:text-fg")}>{label}<ChevronDown size={12} className={cn("transition", tab === k && "rotate-180")} /></button>
         ))}
         <span className="flex-1" />
         {pdfHref && <a href={pdfHref} target="_blank" rel="noreferrer"><Button size="sm" variant="ghost"><FileDown size={13} /> PDF</Button></a>}
         {onSave && <Button size="sm" variant="ghost" onClick={onSave}><Bookmark size={13} /> Save</Button>}
-      </div>
+      </div>}
 
       <AnimatePresence initial={false}>
-        {tab !== "none" && (
+        {!print && tab !== "none" && (
           <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden border-t border-line bg-sunken/40">
             <div className="px-5 py-4 text-[13px]">
               {tab === "details" && (
@@ -192,14 +208,16 @@ export function AnswerCard({ answer, onSave, onAcceptTasks, compact, pdfHref }: 
   );
 }
 
-function SourceList({ answer }: { answer: Answer }) {
+function SourceList({ answer, citedOnly }: { answer: Answer; citedOnly?: boolean }) {
   const cited = new Set<number>();
-  const all = [answer.headline, answer.details, ...answer.points.map((p) => p.text), ...answer.points.flatMap((p) => p.sources.map((s) => `[#${s}]`))].join(" ");
+  const all = [answer.headline, answer.summary || "", answer.details, ...answer.points.map((p) => p.text), ...answer.points.flatMap((p) => p.sources.map((s) => `[#${s}]`)),
+               ...(answer.risks || []), ...(answer.next_actions || []).flatMap((a) => a.sources.map((s) => `[#${s}]`))].join(" ");
   for (const m of all.matchAll(/\[#(\d+)\]/g)) cited.add(Number(m[1]));
-  const rows = [...answer.sources].sort((a, b) => Number(cited.has(b.index)) - Number(cited.has(a.index)) || a.index - b.index);
+  let rows = [...answer.sources].sort((a, b) => Number(cited.has(b.index)) - Number(cited.has(a.index)) || a.index - b.index);
+  if (citedOnly) rows = rows.filter((s) => cited.has(s.index));
   return (
     <ul className="divide-y divide-line text-xs">
-      {rows.slice(0, 80).map((s) => <li key={s.chunk_id} className="py-1.5 flex items-center gap-2"><Cited text={`[#${s.index}]`} sources={answer.sources} /><span className="text-faint tnum w-20">{fmtDate(s.date, "yyyy-MM-dd")}</span><span className="truncate flex-1">{s.citation}</span>{cited.has(s.index) && <Badge tone="accent">cited</Badge>}{s.placement !== "property" && <Badge tone={s.placement === "unplaced" ? "high" : "info"}>{s.placement}</Badge>}</li>)}
+      {rows.slice(0, 80).map((s) => <li key={s.chunk_id} className="py-1.5 flex items-center gap-2"><Cited text={`[#${s.index}]`} sources={answer.sources} /><span className="text-faint tnum w-20">{fmtDate(s.date, "yyyy-MM-dd")}</span><span className="truncate flex-1">{s.citation}</span>{!citedOnly && cited.has(s.index) && <Badge tone="accent">cited</Badge>}{s.placement !== "property" && <Badge tone={s.placement === "unplaced" ? "high" : "info"}>{s.placement}</Badge>}</li>)}
     </ul>
   );
 }
@@ -222,7 +240,7 @@ export function Trace({ steps }: { steps: any[] }) {
 /* A composed email / letter: monospace-free, readable, one click to copy. */
 function DraftBlock({ text }: { text: string }) {
   const [copied, setCopied] = React.useState(false);
-  const copy = async () => { try { await navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch {} };
+  const copy = async () => { if (await copyText(text)) { setCopied(true); setTimeout(() => setCopied(false), 1500); } };
   const lines = text.split("\n");
   const subject = lines.find((l) => /^subject\s*:/i.test(l));
   return (
