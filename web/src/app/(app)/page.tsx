@@ -136,7 +136,7 @@ export default function DashboardPage() {
       {/* my tasks */}
       <Card>
         <CardHeader title={`Tasks for ${owner}`} sub="Yours first. Tick to mark done — saved with your name." right={<div className="flex items-center gap-1"><a href={`/api/export/tasks.xlsx?owner=${owner}`}><Button size="sm" variant="ghost"><FileDown size={13} /> Excel</Button></a><Link href="/tasks"><Button size="sm" variant="ghost">All tasks <ArrowRight size={13} /></Button></Link></div>} />
-        <div className="px-5 pb-5"><TaskBoard ownerFilter={owner} statusFilter="open" groupBy="date" compact showAdd /></div>
+        <div className="px-5 pb-5"><TaskBoard ownerFilter={owner} statusFilter="open" groupBy="property" compact showAdd /></div>
       </Card>
     </div>
   );

@@ -56,7 +56,7 @@ function dateGroups(active: Task[]): [string, Task[], string][] {
     });
 }
 
-export function TaskBoard({ propertyId, ownerFilter, statusFilter, showAdd = true, groupBy: groupByDefault = "date", compact }: {
+export function TaskBoard({ propertyId, ownerFilter, statusFilter, showAdd = true, groupBy: groupByDefault = "owner", compact }: {
   propertyId?: string; ownerFilter?: string; statusFilter?: string; showAdd?: boolean; groupBy?: GroupBy; compact?: boolean;
 }) {
   const qc = useQueryClient();
@@ -80,8 +80,9 @@ export function TaskBoard({ propertyId, ownerFilter, statusFilter, showAdd = tru
   const items = q.data?.items || [];
   const suggested = items.filter((t) => t.status === "suggested");
   const active = items.filter((t) => t.status !== "suggested");
-  const groups: [string, Task[], string?][] = groupBy === "none" ? [["", active]] :
-    groupBy === "date" ? dateGroups(active) :
+  // Main groups by owner (or property); inside each, the tasks sit under the
+  // day they are to be done — Today, Tomorrow, each coming date, Previous.
+  const groups: [string, Task[]][] = groupBy === "none" ? [["", active]] :
     Object.entries(active.reduce((acc, t) => { const k = groupBy === "owner" ? t.owner : (t.property_id || "Portfolio"); (acc[k] ||= []).push(t); return acc; }, {} as Record<string, Task[]>))
       .sort((a, b) => (groupBy === "owner" ? ["Rakesh", "JP", "Manjunath", "Wes"].indexOf(a[0]) - ["Rakesh", "JP", "Manjunath", "Wes"].indexOf(b[0]) : a[0].localeCompare(b[0])))
       .map(([k, v]) => [k, v] as [string, Task[]]);
@@ -93,10 +94,10 @@ export function TaskBoard({ propertyId, ownerFilter, statusFilter, showAdd = tru
         <Select value={status} onChange={(e) => setStatus(e.target.value)}>
           <option value="suggested,open">Open + suggested</option><option value="open">Open</option><option value="suggested">Suggested by AI</option><option value="done">Done</option><option value="dismissed">Dismissed</option>
         </Select>
-        {groupByDefault !== "none" && (
+        {groupByDefault !== "none" && !propertyId && (
           <div className="flex rounded-lg border border-line overflow-hidden text-[11px]" title="How the list is grouped">
-            {(["date", "owner", "property"] as GroupBy[]).filter((g) => g !== "property" || !propertyId).map((g) => (
-              <button key={g} onClick={() => setGroupBy(g)} className={cn("px-2.5 h-7 capitalize transition", groupBy === g ? "bg-fg text-bg font-semibold" : "text-muted hover:bg-sunken")}>{g === "date" ? "By day" : g === "owner" ? "By owner" : "By property"}</button>
+            {(["owner", "property"] as GroupBy[]).map((g) => (
+              <button key={g} onClick={() => setGroupBy(g)} className={cn("px-2.5 h-7 transition", groupBy === g ? "bg-fg text-bg font-semibold" : "text-muted hover:bg-sunken")}>{g === "owner" ? "By owner" : "By property"}</button>
             ))}
           </div>
         )}
@@ -134,19 +135,19 @@ export function TaskBoard({ propertyId, ownerFilter, statusFilter, showAdd = tru
 
       {active.length === 0 && suggested.length === 0 && !q.isLoading && <Empty title="No tasks here." sub="Add one, or ask the AI a question — it suggests next steps with evidence." />}
 
-      {groups.map(([g, list, sub]) => (
+      {groups.map(([g, list]) => (
         <div key={g}>
-          {g && groupBy === "date" && (
-            <div className="flex items-baseline gap-2 mb-1.5 mt-1">
-              <span className={cn("text-[13px] font-semibold", g === "Previous" ? "text-critical" : g === "Today" ? "text-accent" : "text-fg")}>{g}</span>
-              {sub && <span className={cn("text-[11.5px]", g === "Previous" ? "text-critical/80" : "text-muted")}>{sub}</span>}
-              <span className="text-[11px] text-faint tnum">· {list.length}</span>
-            </div>
-          )}
-          {g && groupBy !== "date" && <div className="flex items-center gap-2 mb-1.5"><span className={cn("px-2 h-5 rounded-md text-[11px] font-semibold grid place-items-center", OWNER_TONE[g] || "bg-sunken text-muted")}>{groupBy === "owner" ? g : propertyLabel(g)}</span><span className="text-[11px] text-faint">{list.length}</span></div>}
+          {g && <div className="flex items-center gap-2 mb-1.5"><span className={cn("px-2 h-5 rounded-md text-[11px] font-semibold grid place-items-center", OWNER_TONE[g] || "bg-sunken text-muted")}>{groupBy === "owner" ? g : propertyLabel(g)}</span><span className="text-[11px] text-faint">{list.length}</span></div>}
           <ul className={cn("rounded-2xl border border-line bg-elev divide-y divide-line overflow-hidden")}>
             <AnimatePresence initial={false}>
-              {list.map((t) => (
+              {dateGroups(list).map(([day, dayList, sub]) => (
+                <React.Fragment key={day}>
+                  <li className={cn("flex items-baseline gap-2 px-3 py-1.5 bg-sunken/70", day === "Previous" && "bg-critical-soft/60")}>
+                    <span className={cn("text-[11.5px] font-semibold", day === "Previous" ? "text-critical" : day === "Today" ? "text-accent" : "text-fg")}>{day}</span>
+                    {sub && <span className={cn("text-[11px]", day === "Previous" ? "text-critical/80" : "text-muted")}>{sub}</span>}
+                    <span className="text-[10.5px] text-faint tnum ml-auto">{dayList.length}</span>
+                  </li>
+              {dayList.map((t) => (
                 <motion.li key={t.task_id} layout initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className={cn("flex items-start gap-3 px-3 py-3 group hover:bg-sunken/60 transition", t.status === "done" && "opacity-60")}>
                   <label className="flex items-center gap-2 cursor-pointer select-none shrink-0 mt-0.5" title={t.status === "done" ? "Mark not done" : "Mark done"}>
                     <Checkbox checked={t.status === "done"} onCheckedChange={(v) => mutate(t.task_id, v ? "done" : "open")} />
@@ -158,7 +159,7 @@ export function TaskBoard({ propertyId, ownerFilter, statusFilter, showAdd = tru
                       {groupBy !== "owner" && <span className={cn("px-1.5 rounded-md text-[10px] font-semibold", OWNER_TONE[t.owner] || "bg-sunken")}>{t.owner}</span>}
                       {t.property_id && !propertyId && groupBy !== "property" && <span>{propertyLabel(t.property_id)}</span>}
                       {t.due && <span className={cn("flex items-center gap-1", t.status !== "done" && new Date(t.due) < new Date() && "text-critical font-medium")}><Clock size={11} /> {fmtDate(t.due, "EEE d MMM")}</span>}
-                      {!t.due && groupBy === "date" && (t.priority === "critical" || t.priority === "high") && <span className="text-faint italic">no date — placed by urgency</span>}
+                      {!t.due && (t.priority === "critical" || t.priority === "high") && <span className="text-faint italic">no date — placed by urgency</span>}
                       <span className={cn("capitalize", PRIO[t.priority])}>{t.priority}</span>
                       {t.source !== "manual" && <Badge tone="accent"><Sparkles size={9} /> AI</Badge>}
                       {t.status === "done" && t.done_by && <span className="text-faint">done by {t.done_by} · {fmtDate(t.done_at)}</span>}
@@ -170,6 +171,8 @@ export function TaskBoard({ propertyId, ownerFilter, statusFilter, showAdd = tru
                   <Tip content="History"><button className="opacity-0 group-hover:opacity-100 h-7 w-7 grid place-items-center rounded-lg text-faint hover:bg-sunken" onClick={async () => { const h = await api.get<any[]>(`/tasks/${t.task_id}/history`); toast.message("History", { description: h.map((x) => `${fmtDate(x.at, "MMM d HH:mm")} · ${x.action} · ${x.by}`).join("\n") }); }}><History size={13} /></button></Tip>
                   {t.status === "open" && <button className="opacity-0 group-hover:opacity-100 h-7 w-7 grid place-items-center rounded-lg text-faint hover:bg-sunken" onClick={() => mutate(t.task_id, "dismissed")} title="Dismiss"><X size={13} /></button>}
                 </motion.li>
+              ))}
+                </React.Fragment>
               ))}
             </AnimatePresence>
           </ul>
