@@ -115,7 +115,9 @@ class QuestionAugmenter:
 
         self.mongo = mongo
         self.client = anthropic.Anthropic(api_key=anthropic_api_key, max_retries=4)
-        self.model = model or model_for(Seat.ANALYST)
+        # Sonnet 5 (admin directive 2026-09-12, from Opus 5): the questions are
+        # short and formulaic, and this runs on every new chunk.
+        self.model = model or model_for(Seat.WORKHORSE)
         self.embedder = Embedder(voyage_api_key)
         self.stats = QuestionStats()
         self._lock = threading.Lock()

@@ -275,5 +275,9 @@ EMAIL_DEFAULT_SENDER = "Rakesh"
 # Query understanding
 # =============================================================================
 
-QUERY_REWRITE_MODEL = model_for(Seat.ANALYST)
+#: Sonnet 5 (admin directive 2026-09-12, from Opus 5). Structured extraction —
+#: standalone question, alternates, HyDE passage, filters — with a
+#: deterministic fallback if the reply is unusable. The judgement call in
+#: retrieval is the stage-2 rerank, which stays on Opus.
+QUERY_REWRITE_MODEL = model_for(Seat.WORKHORSE)
 QUERY_REWRITE_MAX_OUTPUT = 3000
