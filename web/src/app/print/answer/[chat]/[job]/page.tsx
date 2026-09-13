@@ -19,9 +19,18 @@ import type { Answer } from "@/lib/types";
 
 type Payload = { chat_id: string; job_id: string; question: string; asked_by?: string; at?: string; property_id?: string | null; answer: Answer };
 
+function safeDecode(v: string): string {
+  try { return decodeURIComponent(v); } catch { return v; }
+}
+
 export default function PrintAnswerPage() {
-  const { chat, job } = useParams<{ chat: string; job: string }>();
-  const q = useQuery({ queryKey: ["print-answer", chat, job], queryFn: () => api.get<Payload>(`/answer/${encodeURIComponent(chat)}/${job}`) });
+  const params = useParams<{ chat: string; job: string }>();
+  // Next hands dynamic segments back still URL-encoded ("property%3Avarnum").
+  // Decode first, then encode once for the API — encoding twice made every
+  // property chat's PDF fail with "answer not found" (2026-09-13).
+  const chat = safeDecode(params.chat);
+  const job = safeDecode(params.job);
+  const q = useQuery({ queryKey: ["print-answer", chat, job], queryFn: () => api.get<Payload>(`/answer/${encodeURIComponent(chat)}/${encodeURIComponent(job)}`) });
   const printed = React.useRef(false);
 
   // Print once the content is on the page. A chart needs a moment to draw.
