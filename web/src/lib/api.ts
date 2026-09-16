@@ -12,11 +12,22 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
   });
   if (!res.ok) {
-    let msg = res.statusText;
-    try { const j = await res.json(); msg = j.detail || msg; } catch {}
-    throw new ApiError(res.status, msg);
+    throw new ApiError(res.status, await errorMessage(res));
   }
   return res.json();
+}
+
+/** FastAPI puts a string in `detail` for HTTPException and a list of
+ *  {loc,msg} objects for validation errors; both become readable text. */
+async function errorMessage(res: Response): Promise<string> {
+  try {
+    const j = await res.json();
+    const d = j?.detail;
+    if (typeof d === "string") return d;
+    if (Array.isArray(d)) return d.map((e: any) => `${(e.loc || []).slice(1).join(".") || "request"}: ${e.msg}`).join("; ");
+    if (d && typeof d === "object") return JSON.stringify(d);
+  } catch {}
+  return res.statusText || `HTTP ${res.status}`;
 }
 
 export const api = {
@@ -27,11 +38,7 @@ export const api = {
   /** Multipart upload. No Content-Type header: the browser sets the boundary. */
   upload: async <T,>(path: string, form: FormData): Promise<T> => {
     const res = await fetch(`/api${path}`, { method: "POST", credentials: "include", body: form });
-    if (!res.ok) {
-      let msg = res.statusText;
-      try { const j = await res.json(); msg = j.detail || msg; } catch {}
-      throw new ApiError(res.status, msg);
-    }
+    if (!res.ok) throw new ApiError(res.status, await errorMessage(res));
     return res.json();
   },
 };

@@ -50,6 +50,16 @@ class ExternalSend(BaseModel):
     body: Optional[str] = None
 
 
+class WesSend(BaseModel):
+    subject: Optional[str] = None
+    body: Optional[str] = None
+    confirm: bool = False
+
+
+class AutoSend(BaseModel):
+    enabled: bool
+
+
 def install(app, mongo, jobs) -> None:
     from mangotree.followup.tracker import FollowupTracker
     from mangotree.mail.outbox import Outbox
@@ -176,11 +186,9 @@ def install(app, mongo, jobs) -> None:
         out = dispatch.send_to_team(mongo, run, by=user["user_id"], outbox=outbox, persons=persons)
         return data.clean({"result": out, "send_status": outbox.send_status()})
 
-    class WesSend(BaseModel):
-        subject: Optional[str] = None
-        body: Optional[str] = None
-        confirm: bool = False
-
+    # Request models live at module level: with ``from __future__ import
+    # annotations`` FastAPI cannot resolve a class defined inside this function
+    # and silently treats the parameter as a query string (seen 2026-09-16).
     @app.get("/next-steps/{run_id}/wes-preview")
     def next_steps_wes_preview(run_id: str, user=CurrentUser):
         ceo(user)
@@ -202,9 +210,6 @@ def install(app, mongo, jobs) -> None:
             raise HTTPException(400, "confirm=true required")
         out = dispatch.send_to_wes(mongo, run_or_404(run_id), by=user["user_id"], outbox=outbox, subject=body.subject, body=body.body)
         return data.clean({"result": out, "send_status": outbox.send_status()})
-
-    class AutoSend(BaseModel):
-        enabled: bool
 
     @app.get("/next-steps/auto-send")
     def next_steps_auto_send_get(user=CurrentUser):
