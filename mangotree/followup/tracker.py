@@ -90,10 +90,11 @@ def business_days_after(start: datetime, days: int) -> datetime:
 
 
 def reminder_send_time() -> datetime:
-    """When a reminder composed now may go out: FOLLOWUP_REMINDER_HOUR_LOCAL
-    today (Eastern) if that is still ahead, otherwise now."""
+    """When an email to our own people may go out: now, unless it is before
+    FOLLOWUP_REMINDER_HOUR_LOCAL in India (TEAM_TZ) — then 9 a.m. IST. The
+    morning cycle ends in the Indian afternoon, so normally this is "now"."""
     from mangotree.briefing.morning import _zone
-    local = datetime.now(_zone())
+    local = datetime.now(_zone(cfg.TEAM_TZ))
     at = local.replace(hour=cfg.FOLLOWUP_REMINDER_HOUR_LOCAL, minute=0, second=0, microsecond=0)
     return (at if local < at else local).astimezone(timezone.utc)
 
@@ -351,6 +352,12 @@ class FollowupTracker:
         # sheet has had its chance first.
         carried = self._carried_steps()
         owners = (set(due_by_owner) | {o for o, steps in carried.items() if steps}) - {"rakesh"}   # his desk shows his; no email to himself
+        # One email a day: whoever got today's sheet (its cover note carries the
+        # replies owed and the carried steps) gets no digest as well.
+        from mangotree.briefing.morning import local_day
+        got_sheet = {ob.get("meta", {}).get("person") for ob in outbox.coll.find(
+            {"kind": "next_steps", "meta.day": local_day(), "status": {"$in": ["queued", "sent", "replied", "needs_consent"]}}, {"_id": 0, "meta.person": 1})}
+        owners -= got_sheet
         for owner in owners:
             items = due_by_owner.get(owner, [])
             steps = carried.get(owner, [])
@@ -420,12 +427,27 @@ class FollowupTracker:
 
     # --------------------------------------------------------------- tick
     def morning(self, outbox) -> Dict[str, Any]:
-        """The once-a-day follow-up pass (admin directive 2026-09-16): the batch
-        read of new mail, replies to system mail, reminders composed and held
-        for the civil hour, outbox flushed. Also what "Check now" runs."""
-        return self.tick(outbox)
+        """The once-a-day follow-up batch (admin directive 2026-09-16): new mail
+        read for asks, replies to system mail recorded. Reminders are composed
+        separately at the END of the cycle (``reminders``), after the sheets have
+        gone, so a person gets one email, not two. Also what "Check now" runs."""
+        return self.tick(outbox, reminders=False)
 
-    def tick(self, outbox) -> Dict[str, Any]:
+    def reminders(self, outbox) -> Dict[str, Any]:
+        """End of the cycle: the digest for anyone who did not get a sheet email
+        today, escalations, outbox flush."""
+        out: Dict[str, Any] = {}
+        try:
+            out["reminders"] = self.remind_and_escalate(outbox)
+        except Exception as exc:
+            out["reminders_error"] = str(exc)[:200]
+        try:
+            out["outbox"] = outbox.flush()
+        except Exception as exc:
+            out["outbox_error"] = str(exc)[:200]
+        return out
+
+    def tick(self, outbox, *, reminders: bool = True) -> Dict[str, Any]:
         out: Dict[str, Any] = {}
         try:
             out["emails"] = self.process_new_emails()
@@ -457,18 +479,7 @@ class FollowupTracker:
                 outbox.coll.update_one({"outbox_id": ob["outbox_id"]}, {"$set": {"ack_closed": True}})
         except Exception as exc:
             out["replies_error"] = str(exc)[:200]
-        try:
-            out["reminders"] = self.remind_and_escalate(outbox)
-        except Exception as exc:
-            out["reminders_error"] = str(exc)[:200]
-        try:
-            from mangotree.nextsteps.dispatch import remind_unacknowledged
-            out["report_reminders"] = remind_unacknowledged(self.mongo, outbox)
-        except Exception as exc:
-            out["report_reminders_error"] = str(exc)[:200]
-        try:
-            out["outbox"] = outbox.flush()
-        except Exception as exc:
-            out["outbox_error"] = str(exc)[:200]
+        if reminders:
+            out.update(self.reminders(outbox))
         self.state.update_one({"_id": "tick"}, {"$set": {"at": datetime.now(timezone.utc), "result": {k: str(v)[:300] for k, v in out.items()}}}, upsert=True)
         return out

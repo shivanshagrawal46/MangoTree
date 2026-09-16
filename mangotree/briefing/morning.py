@@ -429,9 +429,27 @@ class Scheduler:
                            openai_api_key=SETTINGS.openai_api_key_critic or "")
             r = ns.generate(by="morning")
             out["next_steps"] = {"run_id": r.get("run_id"), "status": r.get("status"), "counts": r.get("counts"), "errors": r.get("errors")}
+            # JP Sir's and Manjunath Sir's sheets go now — it is early afternoon
+            # in India when the cycle ends (admin directive 2026-09-16). Guarded;
+            # Rakesh's switch on the dashboard turns it off.
+            from mangotree.nextsteps.dispatch import auto_send_after_run
+            from mangotree.mail.outbox import Outbox
+            if self._outbox is None:
+                self._outbox = Outbox(self.mongo)
+            sent = auto_send_after_run(self.mongo, r, self._outbox)
+            out["next_steps_sent"] = {k: (v if isinstance(v, (str, dict)) else str(v)) for k, v in (sent or {}).items()}
         except Exception as exc:
             logger.exception("morning next-steps generation failed")
             out["next_steps"] = f"error: {type(exc).__name__}"
+        # Reminders last, after the sheets: whoever got a sheet needs no digest.
+        try:
+            from mangotree.followup.tracker import FollowupTracker
+            if self._followups is None:
+                self._followups = FollowupTracker(self.mongo, anthropic_api_key=self.key)
+            out["reminders"] = self._followups.reminders(self._outbox)
+        except Exception as exc:
+            logger.exception("morning reminders failed")
+            out["reminders"] = f"error: {type(exc).__name__}"
         # Every model call failed (invalid key, outage): say so, so the day is not
         # recorded as done with nothing built.
         wes_vals = list((out["wes"] or {}).values()) if isinstance(out["wes"], dict) else []

@@ -48,10 +48,13 @@ def _wrap(paragraphs: List[str], bullets: Dict[str, List[str]] | None = None, cl
 
 # ----------------------------------------------------------------- next steps
 def next_steps_cover(person: str, *, day_label: str, top: List[Dict[str, Any]], followups: List[Dict[str, Any]],
-                     new_since_last: List[Dict[str, Any]], is_reminder: bool = False) -> Tuple[str, str, str]:
-    """Subject, html, text for the sheet email to JP Sir / Manjunath Sir."""
+                     new_since_last: List[Dict[str, Any]], carried: List[Dict[str, Any]] | None = None,
+                     unacknowledged_since: Any = None, is_reminder: bool = False) -> Tuple[str, str, str]:
+    """Subject, html, text for the one daily email to JP Sir / Manjunath Sir —
+    the sheet attached, and a cover note that is the whole message for the day."""
     who = LABEL[person]
     tag = cfg.SYSTEM_MAIL_TAG
+    carried = carried or []
     subject = f"{tag} Next steps for you — {day_label}" + (" (gentle reminder)" if is_reminder else "")
     opening = [f"Dear {who},"]
     if is_reminder:
@@ -60,17 +63,25 @@ def next_steps_cover(person: str, *, day_label: str, top: List[Dict[str, Any]], 
     else:
         opening.append(f"Please find attached today's next steps for your properties, prepared from the {day_label} reviews — a Word file and a PDF of the same sheet. "
                        "It is short by design: only the one or two things per property that truly need you.")
+        if unacknowledged_since:
+            opening.append(f"I did not see a reply to yesterday's sheet (sent {_date(unacknowledged_since)}), Sir — no trouble at all, today's replaces it; "
+                           "a one-line acknowledgement to this one would be a great help.")
     bullets: Dict[str, List[str]] = {}
     if top:
         bullets["Most important today"] = [f"{s.get('address')}: {s.get('title')}" + (f" — by {_date(s.get('due'))}" if s.get("due") else "") for s in top[:3]]
+    if carried:
+        bullets["Still open from earlier sheets"] = [
+            f"{s.get('address')}: {s.get('title')} — on the sheet since {_date_str(s.get('first_seen'))}, day {int(s.get('carried_days') or 0) + 1}"
+            + (f", due {_date(s.get('due'))}" if s.get("due") else "") for s in carried[:3]]
     if followups:
         bullets["Still awaiting your reply — most important"] = [
             f"{(f.get('counterparty') or {}).get('name') or 'A counterparty'} on {_addr(f.get('property_ids') or [])}: {f.get('what')} (since {_date(f.get('asked_at'))}"
             f"{', escalated' if f.get('status') == 'escalated' else ''})" for f in followups[:3]]
     if new_since_last and not is_reminder:
         bullets["New since yesterday's sheet"] = [f"{s.get('address')}: {s.get('title')}" for s in new_since_last[:5]]
-    closing = ("Kindly reply to this email once you have gone through it, Sir — a single line is enough. The system notes the reply, so I will not trouble you again for it. "
-               "And if anything here looks wrong or already done, please just say so in your reply and it will be corrected.")
+    closing = ("Kindly reply to this email once you have gone through it, Sir — a single line is enough. "
+               + ("If a step listed as still open is already done, please tick it on your desk or tell me here, so it does not come back tomorrow. " if carried else "")
+               + "And if anything here looks wrong, please just say so in your reply and it will be corrected.")
     html, text = _wrap(opening, bullets, closing)
     return subject, html, text
 

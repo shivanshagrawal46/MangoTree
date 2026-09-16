@@ -144,7 +144,7 @@ export type OutboxItem = {
   error?: string | null; replied_at?: string | null; replied_by?: string | null; reply_preview?: string | null;
   meta?: Record<string, any>; attachments?: { filename: string; content_type: string; size: number }[];
 };
-export type NextStepsLatest = { run: NextStepsRun | null; sent?: OutboxItem[]; send_status?: SendStatus | null; running?: boolean; person?: NextPerson;
+export type NextStepsLatest = { run: NextStepsRun | null; sent?: OutboxItem[]; send_status?: SendStatus | null; running?: boolean; person?: NextPerson; auto_send?: boolean;
   in_progress?: { run_id: string; started_at: string; by: string; progress?: { done: number; total: number } } | null };
 export type SheetSection = { property_id: string; address: string; headline: string; steps: NextStep[]; others: Partial<Record<NextPerson, NextStep[]>> };
 export type Sheet = { run_id: string; day: string; person: NextPerson; subtitle: string; sections: SheetSection[]; status: string };

@@ -277,9 +277,18 @@ FOLLOWUP_EXTRACT_FALLBACK_MODEL = model_for(Seat.ANALYST)
 FOLLOWUP_EMAILS_PER_CALL = 12
 FOLLOWUP_EMAIL_CHARS = 4_000
 FOLLOWUP_MAX_OUTPUT_TOKENS = 16_000
-#: Reminders are composed by the morning pass and held until this local hour
-#: (America/New_York) so nobody receives "a kind reminder" at 2 a.m.
+#: JP Sir and Manjunath Sir are in India. The morning cycle ends around 3:30–
+#: 4:30 a.m. Eastern = 1–2 p.m. IST, so their sheets and reminders go the moment
+#: the cycle completes; anything composed at an Indian night hour (a manual run)
+#: is held until 9 a.m. IST.
+TEAM_TZ = "Asia/Kolkata"
 FOLLOWUP_REMINDER_HOUR_LOCAL = 9
+#: Send JP Sir's and Manjunath Sir's sheets automatically when the cycle ends
+#: (admin directive 2026-09-16). Guards: the run must have completed for at
+#: least this many properties, and the person must have something on the sheet
+#: or a follow-up owed. Rakesh can switch auto-send off from the dashboard.
+NEXT_STEPS_AUTO_SEND = True
+NEXT_STEPS_AUTO_SEND_MIN_PROPERTIES = 12
 #: Standard procedure with Wes's team and our own: how long a counterparty
 #: (Wes, Kelly …) has before a reminder is due, how long our own people have
 #: before the system reminds them, and how often it may remind.

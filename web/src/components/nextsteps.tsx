@@ -149,6 +149,11 @@ export function NextStepsPanel() {
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["next-steps-latest"] }); qc.invalidateQueries({ queryKey: ["outbox"] }); },
     onError: (e: any) => setErr(e.message),
   });
+  const autoSend = useMutation({
+    mutationFn: (enabled: boolean) => api.post("/next-steps/auto-send", { enabled }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["next-steps-latest"] }),
+    onError: (e: any) => setErr(e.message),
+  });
 
   const d = q.data;
   const run = d?.run || null;
@@ -208,7 +213,13 @@ export function NextStepsPanel() {
             {d?.send_status?.can_send ? <><MailCheck size={13} className="text-good" /> Sending from {d.send_status.mailbox} is enabled.</> :
               <><MailWarning size={13} className="text-high" /> Sending from {d?.send_status?.mailbox || "rakesh@mtreh.com"} needs a one-time sign-in — emails will wait in the outbox until then. <Link href="/followups?tab=outbox" className="underline">How to enable</Link></>}
           </div>
-          <Button size="sm" variant="primary" disabled={send.isPending || running || run.status !== "complete"} onClick={() => setConfirm("send")}><Mail size={13} /> Send to JP Sir & Manjunath Sir</Button>
+          <div className="flex items-center gap-2">
+            <label className="flex items-center gap-2 text-xs text-muted cursor-pointer select-none" title="When the morning cycle completes (early afternoon in India), JP Sir's and Manjunath Sir's sheets are emailed automatically. Off = only when you press Send.">
+              <input type="checkbox" className="accent-[var(--accent)] h-3.5 w-3.5" checked={!!d?.auto_send} disabled={autoSend.isPending} onChange={(e) => autoSend.mutate(e.target.checked)} />
+              Send automatically each morning
+            </label>
+            <Button size="sm" variant="primary" disabled={send.isPending || running || run.status !== "complete"} onClick={() => setConfirm("send")}><Mail size={13} /> Send now</Button>
+          </div>
         </div>
       )}
 
@@ -216,7 +227,7 @@ export function NextStepsPanel() {
         <DialogContent title={confirm === "generate" ? "Generate the next-steps sheets?" : "Send the sheets to JP Sir and Manjunath Sir?"}
           description={confirm === "generate"
             ? "Fourteen properties are reviewed one by one in fast mode (GPT-6 Astra, about 3–5 minutes per property, three at a time). Four sheets come out: Wes, Manjunath Sir, JP Sir and yours. Nothing is emailed by this step."
-            : "Each receives their own sheet as Word and PDF from rakesh@mtreh.com with a short cover note. The system then watches for their reply and sends a gentle reminder once a day until it comes."}>
+            : "Each receives their own sheet as Word and PDF from rakesh@mtreh.com with a cover note: the steps that matter most, anything carried over, the replies they still owe. The system watches for their reply; tomorrow's sheet mentions it gently if none came."}>
           <div className="flex justify-end gap-2">
             <Button variant="secondary" onClick={() => setConfirm(null)}>Not now</Button>
             <Button variant="primary" onClick={() => { const c = confirm; setConfirm(null); if (c === "generate") generate.mutate(); else send.mutate(); }}>{confirm === "generate" ? "Yes, generate" : "Yes, send both"}</Button>

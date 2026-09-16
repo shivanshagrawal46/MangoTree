@@ -127,7 +127,8 @@ def install(app, mongo, jobs) -> None:
             sent = list(outbox.coll.find({"kind": "next_steps", "meta.run_id": run["run_id"]}, {"_id": 0, "attachments.bytes": 0, "html": 0}))
             prog = in_progress()
             return data.clean({"run": slim(run), "sent": sent, "send_status": outbox.send_status(),
-                               "running": bool(jobs.active_of_kind("next_steps")) or bool(prog), "in_progress": prog})
+                               "running": bool(jobs.active_of_kind("next_steps")) or bool(prog), "in_progress": prog,
+                               "auto_send": dispatch.auto_send_enabled(mongo)})
         person = PERSON_BY_USER.get(user["user_id"])
         return data.clean({"run": slim(run, persons=[person] if person else []), "person": person})
 
@@ -174,6 +175,22 @@ def install(app, mongo, jobs) -> None:
             raise HTTPException(400, "persons must be jp and/or manjunath")
         out = dispatch.send_to_team(mongo, run, by=user["user_id"], outbox=outbox, persons=persons)
         return data.clean({"result": out, "send_status": outbox.send_status()})
+
+    class AutoSend(BaseModel):
+        enabled: bool
+
+    @app.get("/next-steps/auto-send")
+    def next_steps_auto_send_get(user=CurrentUser):
+        ceo(user)
+        return {"enabled": dispatch.auto_send_enabled(mongo), "min_properties": cfg.NEXT_STEPS_AUTO_SEND_MIN_PROPERTIES}
+
+    @app.post("/next-steps/auto-send")
+    def next_steps_auto_send_set(body: AutoSend, user=CurrentUser):
+        """Rakesh's switch: send JP Sir's and Manjunath Sir's sheets automatically
+        when the morning cycle completes (their early afternoon)."""
+        ceo(user)
+        dispatch.set_auto_send(mongo, body.enabled, by=user["user_id"])
+        return {"enabled": dispatch.auto_send_enabled(mongo)}
 
     @app.post("/next-steps/{run_id}/done")
     def next_steps_done(run_id: str, body: StepDone, user=CurrentUser):
