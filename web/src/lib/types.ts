@@ -141,7 +141,8 @@ export type SendStatus = { mailbox: string | null; can_send: boolean; signed_in:
 export type OutboxItem = {
   outbox_id: string; kind: string; ref: string; to: { name: string; address: string }[]; subject: string; text?: string;
   status: "queued" | "sent" | "needs_consent" | "failed" | "replied" | "superseded"; attempts: number; queued_at: string; sent_at?: string | null;
-  error?: string | null; replied_at?: string | null; replied_by?: string | null; reply_preview?: string | null;
+  error?: string | null; replied_at?: string | null; replied_by?: string | null; reply_preview?: string | null; reply_body?: string | null;
+  replies?: { at: string; from: string; body?: string; preview?: string; subject?: string }[];
   meta?: Record<string, any>; attachments?: { filename: string; content_type: string; size: number }[];
 };
 export type NextStepsLatest = { run: NextStepsRun | null; sent?: OutboxItem[]; send_status?: SendStatus | null; running?: boolean; person?: NextPerson; auto_send?: boolean;

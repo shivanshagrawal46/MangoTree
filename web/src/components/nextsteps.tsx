@@ -201,6 +201,7 @@ export function NextStepsPanel() {
                 {p === "wes" && <SendToWes runId={run.run_id} disabled={running || run.status !== "complete"} />}
                 {p === "rakesh" && <div className="text-[11.5px] text-muted">Your own steps, with the team’s under each property.</div>}
                 {mailable && <MailState ob={ob} />}
+                {mailable && <PreviewNote runId={run.run_id} person={p} />}
               </div>
             );
           })}
@@ -280,6 +281,39 @@ function SendToWes({ runId, disabled }: { runId: string; disabled?: boolean }) {
         </DialogContent>
       </Dialog>
     </>
+  );
+}
+
+type TeamPreview = { to: { name: string; address: string }; subject: string; body: string; attachments: string[]; already_sent?: OutboxItem | null; as_sent: boolean };
+
+/** Read the cover note that goes (or went) to JP Sir / Manjunath Sir. */
+function PreviewNote({ runId, person }: { runId: string; person: NextPerson }) {
+  const [open, setOpen] = React.useState(false);
+  const q = useQuery({ queryKey: ["team-preview", runId, person], queryFn: () => api.get<TeamPreview>(`/next-steps/${runId}/preview/${person}`), enabled: open });
+  return (
+    <>
+      <button onClick={() => setOpen(true)} className="text-[11.5px] text-accent hover:underline inline-flex items-center gap-1"><Mail size={11} /> Read the email note</button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent title={`Email to ${PERSON_LABEL[person]}`} description={q.data ? (q.data.as_sent ? `As sent to ${q.data.to.address}.` : `As it will go to ${q.data.to.address} from rakesh@mtreh.com.`) : "Loading…"} wide>
+          {q.data && <EmailPreview subject={q.data.subject} body={q.data.body} attachments={q.data.attachments} />}
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+export function EmailPreview({ subject, body, attachments }: { subject: string; body?: string | null; attachments?: string[] }) {
+  return (
+    <div className="space-y-3">
+      <div className="text-sm font-semibold">{subject}</div>
+      <pre className="whitespace-pre-wrap font-sans text-[13px] leading-relaxed bg-sunken rounded-xl p-4 max-h-[420px] overflow-y-auto">{body || "(no text)"}</pre>
+      {attachments && attachments.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
+          <span className="font-medium text-fg">Attached:</span>
+          {attachments.map((a) => <span key={a} className="inline-flex items-center gap-1 rounded-lg border border-line bg-sunken px-2 h-6"><FileText size={11} /> {a}</span>)}
+        </div>
+      )}
+    </div>
   );
 }
 

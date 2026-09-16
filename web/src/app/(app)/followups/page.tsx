@@ -3,10 +3,11 @@
 import * as React from "react";
 import { useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, MailCheck, MailWarning, RefreshCw } from "lucide-react";
+import { ChevronDown, Loader2, MailCheck, MailWarning, RefreshCw } from "lucide-react";
 import { api, subscribeJob } from "@/lib/api";
 import { useUser } from "@/components/providers";
 import { FollowupList, FollowupRules } from "@/components/followups";
+import { EmailPreview } from "@/components/nextsteps";
 import { Badge, Button, Card, CardHeader, Empty, Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui";
 import { ago, fmtDate } from "@/lib/utils";
 import type { OutboxItem, SendStatus } from "@/lib/types";
@@ -43,6 +44,47 @@ export default function FollowupsPage() {
   );
 }
 
+function OutboxRow({ o, tone }: { o: OutboxItem; tone: "good" | "accent" | "high" | "critical" | "neutral" }) {
+  const [open, setOpen] = React.useState(false);
+  return (
+    <div className="rounded-xl border border-line bg-elev p-3.5">
+      <button onClick={() => setOpen((v) => !v)} className="w-full text-left">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge tone={tone}>{o.status.replace("_", " ")}</Badge>
+          <span className="text-[13px] font-medium">{o.subject}</span>
+          <span className="text-xs text-muted">to {o.to.map((t) => t.name || t.address).join(", ")}</span>
+          <span className="text-xs text-faint ml-auto">{o.sent_at ? `sent ${ago(o.sent_at)}` : `queued ${ago(o.queued_at)}`}</span>
+          <ChevronDown size={14} className={`text-faint transition ${open ? "rotate-180" : ""}`} />
+        </div>
+        <div className="text-[11.5px] text-muted mt-1 flex flex-wrap gap-x-3">
+          <span>{o.kind.replace(/_/g, " ")}</span>
+          {o.attachments?.length ? <span>{o.attachments.map((a) => a.filename).join(" · ")}</span> : null}
+          {o.replied_at && <span className="text-good">replied {ago(o.replied_at)} by {o.replied_by}</span>}
+          {o.error && o.status !== "replied" && <span className="text-critical">{o.error}</span>}
+          {!open && <span className="text-accent">read the email</span>}
+        </div>
+      </button>
+      {open && (
+        <div className="mt-3 space-y-3">
+          <EmailPreview subject={o.subject} body={o.text} attachments={o.attachments?.map((a) => a.filename)} />
+          {(o.replies?.length || o.reply_body) && (
+            <div>
+              <div className="text-[11px] font-semibold uppercase tracking-wider text-good mb-1">Reply{(o.replies?.length || 0) > 1 ? "ies" : ""} received</div>
+              {(o.replies?.length ? o.replies : [{ at: o.replied_at!, from: o.replied_by!, body: o.reply_body! }]).map((r, i) => (
+                <div key={i} className="rounded-xl border border-good/30 bg-good-soft/40 p-3 text-[13px] mb-2">
+                  <div className="text-[11px] text-muted mb-1">{r.from} · {fmtDate(r.at, "d MMM, HH:mm")}</div>
+                  <pre className="whitespace-pre-wrap font-sans leading-relaxed">{r.body || o.reply_preview}</pre>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+      {!open && o.reply_preview && <div className="text-xs text-muted mt-1 italic line-clamp-2">“{o.reply_preview}”</div>}
+    </div>
+  );
+}
+
 function OutboxView() {
   const q = useQuery({ queryKey: ["outbox"], queryFn: () => api.get<{ items: OutboxItem[]; send_status: SendStatus }>("/outbox"), refetchInterval: 60_000 });
   const qc = useQueryClient();
@@ -63,23 +105,7 @@ function OutboxView() {
       </Card>
       {!q.data?.items?.length ? <Empty title="Nothing sent yet" sub="Next-steps sheets and reminders appear here with their reply status." /> : (
         <div className="space-y-2">
-          {q.data.items.map((o) => (
-            <div key={o.outbox_id} className="rounded-xl border border-line bg-elev p-3.5">
-              <div className="flex flex-wrap items-center gap-2">
-                <Badge tone={tone[o.status] || "neutral"}>{o.status.replace("_", " ")}</Badge>
-                <span className="text-[13px] font-medium">{o.subject}</span>
-                <span className="text-xs text-muted">to {o.to.map((t) => t.name || t.address).join(", ")}</span>
-                <span className="text-xs text-faint ml-auto">{o.sent_at ? `sent ${ago(o.sent_at)}` : `queued ${ago(o.queued_at)}`}</span>
-              </div>
-              <div className="text-[11.5px] text-muted mt-1 flex flex-wrap gap-x-3">
-                <span>{o.kind.replace(/_/g, " ")}</span>
-                {o.attachments?.length ? <span>{o.attachments.map((a) => a.filename).join(" · ")}</span> : null}
-                {o.replied_at && <span className="text-good">replied {ago(o.replied_at)} by {o.replied_by}</span>}
-                {o.error && o.status !== "replied" && <span className="text-critical">{o.error}</span>}
-              </div>
-              {o.reply_preview && <div className="text-xs text-muted mt-1 italic line-clamp-2">“{o.reply_preview}”</div>}
-            </div>
-          ))}
+          {q.data.items.map((o) => <OutboxRow key={o.outbox_id} o={o} tone={tone[o.status] || "neutral"} />)}
         </div>
       )}
     </div>

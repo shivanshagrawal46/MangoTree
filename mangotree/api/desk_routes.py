@@ -186,6 +186,14 @@ def install(app, mongo, jobs) -> None:
         ceo(user)
         return data.clean(dispatch.wes_preview(mongo, run_or_404(run_id)))
 
+    @app.get("/next-steps/{run_id}/preview/{person}")
+    def next_steps_team_preview(run_id: str, person: str, user=CurrentUser):
+        """The cover note for JP Sir / Manjunath Sir — as it would go now, or as it went."""
+        ceo(user)
+        if person not in dispatch.TEAM:
+            raise HTTPException(404, "jp or manjunath")
+        return data.clean(dispatch.team_preview(mongo, run_or_404(run_id), person, outbox))
+
     @app.post("/next-steps/{run_id}/send-wes")
     def next_steps_send_wes(run_id: str, body: WesSend, user=CurrentUser):
         """Rakesh's one press: Wes's sheet with the (possibly edited) cover note."""

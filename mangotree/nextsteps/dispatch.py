@@ -129,6 +129,29 @@ def send_to_team(mongo: Mongo, run: Dict[str, Any], *, by: str, outbox, persons=
     return out
 
 
+def team_preview(mongo: Mongo, run: Dict[str, Any], person: str, outbox) -> Dict[str, Any]:
+    """The cover note exactly as it would go to JP Sir / Manjunath Sir now — and,
+    if this run's email already went, what was actually sent."""
+    from mangotree.config.settings import SETTINGS
+    from mangotree.followup.tracker import FollowupTracker
+    ns = NextSteps(mongo, anthropic_api_key=SETTINGS.anthropic_api_key, voyage_api_key=SETTINGS.voyage_api_key, openai_api_key=SETTINGS.openai_api_key_critic or "")
+    tracker = FollowupTracker(mongo, anthropic_api_key=SETTINGS.anthropic_api_key)
+    already = outbox.coll.find_one({"kind": "next_steps", "meta.run_id": run["run_id"], "meta.person": person}, {"_id": 0, "attachments.bytes": 0, "html": 0})
+    if already:
+        return {"to": already["to"][0], "subject": already["subject"], "body": already.get("text"), "attachments": [a["filename"] for a in already.get("attachments") or []],
+                "already_sent": already, "as_sent": True}
+    steps = ns.for_person(person, run)
+    fups, _ = tracker.top_for(person, tracker.list(owner=person, statuses=("open", "escalated")), 3)
+    carried = [s for s in steps if int(s.get("carried_days") or 0) > 0 and not s.get("done")]
+    prev_unanswered = outbox.coll.find_one({"kind": "next_steps", "status": "sent", "meta.person": person, "meta.run_id": {"$ne": run["run_id"]}},
+                                           {"_id": 0, "sent_at": 1}, sort=[("sent_at", -1)])
+    subject, _html, text = next_steps_cover(person, day_label=_day_label(run), top=_top(steps), followups=fups,
+                                            new_since_last=_new_since_previous(ns, run, person), carried=carried,
+                                            unacknowledged_since=(prev_unanswered or {}).get("sent_at"))
+    return {"to": {"name": LABEL[person], "address": ADDRESS.get(person, "")}, "subject": subject, "body": text,
+            "attachments": [filename_for(run, person, "docx"), filename_for(run, person, "pdf")], "already_sent": None, "as_sent": False}
+
+
 # ------------------------------------------------------------------- Wes
 WES_ADDRESS = ADDRESS.get("wes", "wes@roiblocks.com")
 
