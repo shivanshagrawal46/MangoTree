@@ -53,6 +53,20 @@ def _due(s: Dict[str, Any]) -> str:
     return str(d)[:10] if d else ""
 
 
+def carried_label(s: Dict[str, Any]) -> str:
+    """'Still outstanding — on the sheet since 15 Sep (day 3)' for a step
+    carried forward; empty for a new one."""
+    n = int(s.get("carried_days") or 0)
+    if n <= 0:
+        return ""
+    fs = s.get("first_seen") or ""
+    try:
+        fs_label = datetime.strptime(str(fs)[:10], "%Y-%m-%d").strftime("%d %b").lstrip("0")
+    except ValueError:
+        fs_label = str(fs)[:10]
+    return f"Still outstanding — on the sheet since {fs_label} (day {n + 1})"
+
+
 def sections(run: Dict[str, Any], person: str) -> List[Dict[str, Any]]:
     """Property blocks for one person's sheet: only properties with at least one
     step for that person (Rakesh's sheet also lists properties where only the
@@ -116,7 +130,10 @@ def build_pdf(run: Dict[str, Any], person: str) -> bytes:
     ]
 
     def card(i: int, s: Dict[str, Any]) -> Table:
-        inner: List[Any] = [Paragraph(esc(s.get("title")), st["stitle"]), Paragraph(esc(s.get("detail")), st["body"])]
+        inner: List[Any] = [Paragraph(esc(s.get("title")), st["stitle"])]
+        if carried_label(s):
+            inner.append(Paragraph(f"<font color='#B4432B'><b>{esc(carried_label(s))}</b></font>", st["meta"]))
+        inner.append(Paragraph(esc(s.get("detail")), st["body"]))
         if s.get("why_critical"):
             inner.append(Paragraph("Why now: " + esc(s["why_critical"]), st["why"]))
         meta = []
@@ -279,6 +296,9 @@ def build_docx(run: Dict[str, Any], person: str) -> bytes:
         bp = body.paragraphs[0]
         bp.paragraph_format.space_before = Pt(6); bp.paragraph_format.space_after = Pt(2)
         r = bp.add_run(s.get("title") or ""); r.font.bold = True; r.font.size = Pt(10.5); r.font.color.rgb = navy
+        if carried_label(s):
+            p = body.add_paragraph(); p.paragraph_format.space_after = Pt(2)
+            r = p.add_run(carried_label(s)); r.font.size = Pt(9); r.font.bold = True; r.font.color.rgb = RGBColor.from_string("B4432B")
         p = body.add_paragraph(); p.paragraph_format.space_after = Pt(2)
         r = p.add_run(s.get("detail") or ""); r.font.size = Pt(10); r.font.color.rgb = ink
         if s.get("why_critical"):

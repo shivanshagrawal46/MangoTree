@@ -239,7 +239,9 @@ MORNING_WRITER_MODEL = "gpt-6-astra"          # Wes issues + ledger
 #: 10 tool calls / 10 minutes (admin directive 2026-09-11, down from 30/15):
 #: the morning and after-mail investigations refresh a picture that already
 #: exists; the deep 30-step read is for chat questions a person is waiting on.
-MORNING_MAX_TOOL_CALLS = 20
+#: 15 (admin directive 2026-09-16, from 20): one investigation per property
+#: now feeds everything — next steps, tasks, cards, Wes issues, brief.
+MORNING_MAX_TOOL_CALLS = 15
 MORNING_MAX_WALL_CLOCK_S = 15 * 60
 #: Output caps for the two Astra writers of the morning pass (admin directive 2026-09-11).
 LEDGER_MAX_OUTPUT_TOKENS = 30_000
@@ -267,13 +269,25 @@ NEXT_STEPS_MAX_OUTPUT_TOKENS = 24_000
 #: Follow-up tracking begins here; nothing before this date is turned into a
 #: follow-up, and nothing before it is read for replies.
 FOLLOWUP_SINCE = "2026-09-16"
-FOLLOWUP_EXTRACT_MODEL = model_for(Seat.ANALYST)          # Opus 5 reads each new email once
+#: GPT-6 Astra reads the day's new emails property by property, once, in the
+#: morning pass (admin directive 2026-09-16) — one call per property plus one
+#: for unplaced mail. Opus 5 only if there is no OpenAI key.
+FOLLOWUP_EXTRACT_MODEL = "gpt-6-astra"
+FOLLOWUP_EXTRACT_FALLBACK_MODEL = model_for(Seat.ANALYST)
+FOLLOWUP_EMAILS_PER_CALL = 12
+FOLLOWUP_EMAIL_CHARS = 4_000
+FOLLOWUP_MAX_OUTPUT_TOKENS = 16_000
+#: Reminders are composed by the morning pass and held until this local hour
+#: (America/New_York) so nobody receives "a kind reminder" at 2 a.m.
+FOLLOWUP_REMINDER_HOUR_LOCAL = 9
 #: Standard procedure with Wes's team and our own: how long a counterparty
 #: (Wes, Kelly …) has before a reminder is due, how long our own people have
 #: before the system reminds them, and how often it may remind.
-FOLLOWUP_EXTERNAL_DUE_BUSINESS_DAYS = 2
+#: Admin directive 2026-09-16: one business day for everyone — Wes's team and
+#: our own — then a reminder; two business days without a reply escalates.
+FOLLOWUP_EXTERNAL_DUE_BUSINESS_DAYS = 1
 FOLLOWUP_INTERNAL_DUE_BUSINESS_DAYS = 1
-FOLLOWUP_ESCALATE_AFTER_BUSINESS_DAYS = 4
+FOLLOWUP_ESCALATE_AFTER_BUSINESS_DAYS = 2
 FOLLOWUP_MIN_HOURS_BETWEEN_REMINDERS = 20
 #: The subject tag every system-sent email carries, so internal replies can be
 #: recognised without reading anything else in the mailbox.
@@ -281,8 +295,10 @@ SYSTEM_MAIL_TAG = "[RKB]"
 #: Output caps for the two Opus 5 writers that run after new mail (admin
 #: directive 2026-09-11): the task extractor (tasks + Wes's work list + drafted
 #: emails) and the "what's new" cards.
-TASKS_MAX_OUTPUT_TOKENS = 8_000
-CARDS_MAX_OUTPUT_TOKENS = 5_000
+#: Thinking tokens count against these caps. At 8,000 the task extractor was
+#: cut off mid tool-call on Tahona (2026-09-16) and wrote nothing.
+TASKS_MAX_OUTPUT_TOKENS = 20_000
+CARDS_MAX_OUTPUT_TOKENS = 8_000
 #: The resolution pass (ruling every open item) and the three morning briefs (admin, 2026-09-12).
 RESOLUTION_MAX_OUTPUT_TOKENS = 15_000
 BRIEFING_MAX_OUTPUT_TOKENS = 7_000

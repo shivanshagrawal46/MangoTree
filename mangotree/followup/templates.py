@@ -64,7 +64,9 @@ def next_steps_cover(person: str, *, day_label: str, top: List[Dict[str, Any]], 
     if top:
         bullets["Most important today"] = [f"{s.get('address')}: {s.get('title')}" + (f" — by {_date(s.get('due'))}" if s.get("due") else "") for s in top[:3]]
     if followups:
-        bullets["Still awaiting your reply"] = [f"{(f.get('counterparty') or {}).get('name') or 'A counterparty'} on {_addr(f.get('property_ids') or [])}: {f.get('what')} (since {_date(f.get('asked_at'))})" for f in followups[:5]]
+        bullets["Still awaiting your reply — most important"] = [
+            f"{(f.get('counterparty') or {}).get('name') or 'A counterparty'} on {_addr(f.get('property_ids') or [])}: {f.get('what')} (since {_date(f.get('asked_at'))}"
+            f"{', escalated' if f.get('status') == 'escalated' else ''})" for f in followups[:3]]
     if new_since_last and not is_reminder:
         bullets["New since yesterday's sheet"] = [f"{s.get('address')}: {s.get('title')}" for s in new_since_last[:5]]
     closing = ("Kindly reply to this email once you have gone through it, Sir — a single line is enough. The system notes the reply, so I will not trouble you again for it. "
@@ -74,6 +76,57 @@ def next_steps_cover(person: str, *, day_label: str, top: List[Dict[str, Any]], 
 
 
 # ------------------------------------------------------------------ reminders
+def internal_digest(owner: str, top: List[Dict[str, Any]], more: int,
+                    carried_steps: List[Dict[str, Any]] | None = None) -> Tuple[str, str, str]:
+    """One kind email a day to JP Sir / Manjunath Sir: the two or three replies
+    they owe that matter most (oldest and escalated first), plus any urgent next
+    step that has now been carried over unfinished — the way a colleague would
+    mention both in one note rather than send five."""
+    who = LABEL.get(owner, owner)
+    carried_steps = carried_steps or []
+    n = len(top) + more
+    parts = []
+    if n:
+        parts.append(f"{n} repl{'y' if n == 1 else 'ies'} awaiting you")
+    if carried_steps:
+        parts.append(f"{len(carried_steps)} step{'s' if len(carried_steps) > 1 else ''} still open")
+    where = ", ".join(sorted({_addr(f.get("property_ids") or []) for f in top} | {s.get("address") or "" for s in carried_steps} - {""}))[:80]
+    subject = f"{cfg.SYSTEM_MAIL_TAG} {' and '.join(parts)} — {where}" if where else f"{cfg.SYSTEM_MAIL_TAG} {' and '.join(parts)}"
+    paragraphs = [f"Dear {who},"]
+    if n:
+        paragraphs.append(f"A kind reminder, Sir. {'One reply is' if n == 1 else f'{n} replies are'} still pending from our side, and the ones below matter most today. "
+                          "Each stays on your desk in MangoTree until you answer in the email thread or tick it done there.")
+    else:
+        paragraphs.append("A kind reminder, Sir, about a few items from your next-steps sheet that are still open.")
+    bullets: Dict[str, List[str]] = {}
+    if top:
+        items = []
+        for f in top:
+            cp = (f.get("counterparty") or {}).get("name") or "the counterparty"
+            flag = " — ESCALATED" if f.get("status") == "escalated" else ""
+            items.append(f"{cp} · {_addr(f.get('property_ids') or [])} · since {_date(f.get('asked_at'))}{flag}: {f.get('what')}")
+        bullets["Replies most needed"] = items
+    if carried_steps:
+        bullets["Still open from your earlier sheet"] = [
+            f"{s.get('address')}: {s.get('title')} — on the sheet since {_date_str(s.get('first_seen'))}, day {int(s.get('carried_days') or 0) + 1}"
+            + (f", due {_date(s.get('due'))}" if s.get("due") else "") for s in carried_steps[:3]]
+    closing = (f"{'And ' + str(more) + ' more ' + ('is' if more == 1 else 'are') + ' listed on your desk. ' if more else ''}"
+               + ("Could you please reply to each of them today, Sir, even if only to say when the full answer will follow? " if n else "")
+               + ("If a step above is already done, please tick it on your desk (or tell me here) so it does not come back tomorrow; if something is blocking it, a line on what would help. " if carried_steps else "")
+               + "A short reply keeps the work moving and keeps our word with Wes's team.")
+    html, text = _wrap(paragraphs, bullets, closing)
+    return subject, html, text
+
+
+def _date_str(v: Any) -> str:
+    if isinstance(v, datetime):
+        return _date(v)
+    try:
+        return datetime.strptime(str(v)[:10], "%Y-%m-%d").strftime("%d %B").lstrip("0")
+    except (ValueError, TypeError):
+        return str(v or "")[:10]
+
+
 def internal_reminder(f: Dict[str, Any], owner: str) -> Tuple[str, str, str]:
     who = LABEL.get(owner, owner)
     cp = (f.get("counterparty") or {}).get("name") or "the counterparty"

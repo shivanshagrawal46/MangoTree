@@ -10,8 +10,8 @@ replies:
   person's desk, with a kind reminder email from rakesh@mtreh.com when it is
   overdue, until they answer in the thread or tick it done;
 * RKB asks Wes or Kelly for something — the follow-up sits with whoever asked,
-  and when the two-business-day window passes a reminder to Wes or Kelly is
-  drafted for one click; after four it is escalated on Rakesh's desk;
+  and when the one-business-day window passes a reminder to Wes or Kelly is
+  drafted for one click; after two it is escalated on Rakesh's desk;
 * the system sends the next-steps sheet to JP or Manjunath — until they reply
   to that email, a reminder goes out once a day.
 

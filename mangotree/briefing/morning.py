@@ -243,22 +243,35 @@ class Scheduler:
         self._followups = None
         self._outbox = None
 
-    #: Follow-up pass cadence (admin directive 2026-09-16): new mail is read
-    #: for asks, replies to system mail are checked, due reminders go out.
-    FOLLOWUP_MINUTES = int(os.environ.get("MT_FOLLOWUP_MINUTES", "60"))
-
     def run_followups(self) -> Dict[str, Any]:
+        """The follow-up batch (admin directive 2026-09-16): once, inside the
+        morning cycle — new mail read for asks property by property, replies to
+        system mail, reminders composed and held for 9 a.m. Eastern."""
         from mangotree.followup.tracker import FollowupTracker
         from mangotree.mail.outbox import Outbox
         if self._followups is None:
             self._followups = FollowupTracker(self.mongo, anthropic_api_key=self.key)
             self._outbox = Outbox(self.mongo)
-        out = self._followups.tick(self._outbox)
+        out = self._followups.morning(self._outbox)
         self._last_followup = datetime.now(timezone.utc)
         return out
 
-    def _due_followups(self) -> bool:
-        return self._last_followup is None or (datetime.now(timezone.utc) - self._last_followup) >= timedelta(minutes=self.FOLLOWUP_MINUTES)
+    #: The outbox is flushed on a light cadence — a database query, no model —
+    #: so a reminder held for 9 a.m. leaves at 9 a.m. and a send that waited on
+    #: the Mail.Send consent goes the moment consent exists.
+    OUTBOX_MINUTES = int(os.environ.get("MT_OUTBOX_MINUTES", "10"))
+
+    def flush_outbox(self) -> Dict[str, Any]:
+        from mangotree.mail.outbox import Outbox
+        if self._outbox is None:
+            self._outbox = Outbox(self.mongo)
+        if not self._outbox.coll.count_documents({"status": {"$in": ["queued", "needs_consent"]}}, limit=1):
+            return {}
+        return self._outbox.flush()
+
+    def _due_outbox(self) -> bool:
+        last = getattr(self, "_last_outbox", None)
+        return last is None or (datetime.now(timezone.utc) - last) >= timedelta(minutes=self.OUTBOX_MINUTES)
 
     @staticmethod
     def _zone(name: str):
@@ -371,6 +384,13 @@ class Scheduler:
         rebuilt = sum(1 for r in results if r not in ("kept",) and not r.startswith("error"))
         changed = [p.property_id for p, r in zip(PROPERTIES, results) if r not in ("kept",) and not r.startswith("error")]
         out["dossiers"] = f"{rebuilt}/{len(results)} rebuilt, {sum(1 for r in results if r == 'kept')} unchanged, {sum(1 for r in results if r.startswith('error'))} failed"
+        # Follow-ups right after the investigation and before everything that
+        # reads them (the next-steps writer lists open follow-ups as live state).
+        try:
+            out["followups"] = self.run_followups()
+        except Exception as exc:
+            logger.exception("morning follow-up batch failed")
+            out["followups"] = f"error: {type(exc).__name__}"
         # Resolution before generation: yesterday's items are checked against
         # overnight records, so today's agenda cannot re-raise what is done.
         from mangotree.briefing.resolution import ResolutionPass
@@ -475,16 +495,15 @@ class Scheduler:
                 self._yield_logged = True
             return
         self._yield_logged = False
-        # Follow-ups are light (one short read per new email) and time-sensitive:
-        # they run hourly, after intake, whenever no answer is in flight.
-        if self.intake_enabled and self._due_followups():
+        # Held emails leave at their hour; no model involved.
+        if self.intake_enabled and self._due_outbox():
             try:
-                out = self.run_followups()
-                self._record("followups", not any(k.endswith("_error") for k in out), out)
+                flushed = self.flush_outbox()
+                if flushed and flushed.get("sent"):
+                    self._record("outbox", True, flushed)
             except Exception as exc:
-                logger.exception("follow-up pass failed")
-                self._record("followups", False, str(exc)[:400])
-                self._last_followup = datetime.now(timezone.utc)
+                logger.exception("outbox flush failed")
+            self._last_outbox = datetime.now(timezone.utc)
         if self.intake_enabled:
             try:
                 flushed = self.chain.flush_debounced()

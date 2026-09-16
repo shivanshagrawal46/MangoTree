@@ -38,6 +38,23 @@ GRAPH_ROOT = "https://graph.microsoft.com/v1.0"
 MAX_ATTEMPTS = 6
 
 
+def _plain(content: str, content_type: str) -> str:
+    """Reply text as a person would read it: HTML stripped, quoted history cut."""
+    import re
+    text = content or ""
+    if (content_type or "").lower() == "html":
+        try:
+            from bs4 import BeautifulSoup
+            text = BeautifulSoup(text, "lxml").get_text("\n")
+        except Exception:
+            text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"\r\n?", "\n", text)
+    cut = re.search(r"\n(From:|-----Original Message-----|On .{5,80} wrote:)", text)
+    if cut:
+        text = text[:cut.start()]
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
+
+
 class Outbox:
     def __init__(self, mongo: Mongo):
         self.mongo = mongo
@@ -80,10 +97,11 @@ class Outbox:
     # -------------------------------------------------------------- queue
     def queue(self, *, kind: str, ref: str, to: Sequence[Tuple[str, str]], subject: str, html: str, text: str,
               attachments: Sequence[Tuple[str, bytes, str]] = (), meta: Optional[Dict[str, Any]] = None,
-              dedupe: bool = True) -> Dict[str, Any]:
+              dedupe: bool = True, send_after: Optional[datetime] = None) -> Dict[str, Any]:
         """Put one email on the outbox. ``to`` is [(name, address)]; ``attachments``
         [(filename, bytes, content_type)]. With ``dedupe`` an identical
-        (kind, ref) still queued or sent is not queued twice."""
+        (kind, ref) still queued or sent is not queued twice. ``send_after``
+        holds the email (reminders wait for a civil hour)."""
         if dedupe:
             existing = self.coll.find_one({"kind": kind, "ref": ref, "status": {"$in": ["queued", "sent", "needs_consent", "replied"]}}, {"_id": 0, "outbox_id": 1, "status": 1})
             if existing:
@@ -93,6 +111,7 @@ class Outbox:
                "subject": subject, "html": html, "text": text,
                "attachments": [{"filename": f, "content_type": ct, "bytes": b, "size": len(b)} for f, b, ct in attachments],
                "meta": meta or {}, "status": "queued", "attempts": 0, "queued_at": datetime.now(timezone.utc),
+               "send_after": send_after,
                "sent_at": None, "error": None, "internet_message_id": None, "conversation_id": None,
                "replied_at": None, "replied_by": None, "reply_preview": None}
         self.coll.insert_one(doc)
@@ -168,12 +187,14 @@ class Outbox:
         """Attempt every queued email, and every needs_consent one (consent may
         have been granted since)."""
         out = {"sent": 0, "needs_consent": 0, "failed": 0, "queued": 0}
-        pending = list(self.coll.find({"status": {"$in": ["queued", "needs_consent"]}}, {"_id": 0, "outbox_id": 1, "subject": 1, "to": 1, "status": 1})
+        now = datetime.now(timezone.utc)
+        due = {"$or": [{"send_after": None}, {"send_after": {"$exists": False}}, {"send_after": {"$lte": now}}]}
+        pending = list(self.coll.find({"status": {"$in": ["queued", "needs_consent"]}, **due}, {"_id": 0, "outbox_id": 1, "subject": 1, "to": 1, "status": 1})
                        .sort("queued_at", 1).limit(limit))
         if not pending:
             return out
         if not self.can_send():
-            self.coll.update_many({"status": "queued"}, {"$set": {"status": "needs_consent", "last_attempt_at": datetime.now(timezone.utc)}})
+            self.coll.update_many({"status": "queued", **due}, {"$set": {"status": "needs_consent", "last_attempt_at": now}})
             out["needs_consent"] = len(pending)
             return out
         for d in pending:
@@ -195,14 +216,18 @@ class Outbox:
         st = self.state.find_one({"_id": "replies"}) or {}
         floor = datetime.strptime(cfg.FOLLOWUP_SINCE, "%Y-%m-%d").replace(tzinfo=timezone.utc)
         since = max(st.get("watermark") or floor, floor) - timedelta(minutes=10)
-        open_sent = list(self.coll.find({"status": "sent", "conversation_id": {"$ne": None}}, {"_id": 0, "outbox_id": 1, "conversation_id": 1, "to": 1, "kind": 1, "ref": 1}))
+        # Every sent conversation stays watched, not only the ones without a reply
+        # yet: a second answer ("done now") must be on record as well.
+        open_sent = list(self.coll.find({"status": {"$in": ["sent", "replied"]}, "conversation_id": {"$ne": None},
+                                         "sent_at": {"$gte": datetime.now(timezone.utc) - timedelta(days=21)}},
+                                        {"_id": 0, "outbox_id": 1, "conversation_id": 1, "to": 1, "kind": 1, "ref": 1, "status": 1}))
         if not open_sent:
             self.state.update_one({"_id": "replies"}, {"$set": {"watermark": datetime.now(timezone.utc), "checked_at": datetime.now(timezone.utc)}}, upsert=True)
             return {"checked": 0, "replied": 0}
         by_conv = {d["conversation_id"]: d for d in open_sent}
         url = (f"{GRAPH_ROOT}/users/{quote(g.mailbox)}/mailFolders/inbox/messages"
-               f"?$select=id,subject,from,conversationId,internetMessageId,receivedDateTime,bodyPreview"
-               f"&$filter=receivedDateTime ge {since.strftime('%Y-%m-%dT%H:%M:%SZ')}&$orderby=receivedDateTime desc&$top=100")
+               f"?$select=id,subject,from,conversationId,internetMessageId,receivedDateTime,bodyPreview,body"
+               f"&$filter=receivedDateTime ge {since.strftime('%Y-%m-%dT%H:%M:%SZ')}&$orderby=receivedDateTime desc&$top=50")
         headers = {"Authorization": f"Bearer {g.auth.access_token(SCOPES)}", "Accept": "application/json"}
         checked = replied = 0
         newest = since
@@ -224,9 +249,17 @@ class Outbox:
                     continue
                 sender = (((m.get("from") or {}).get("emailAddress") or {}).get("address") or "").lower()
                 if sender and sender in {t["address"] for t in sent["to"]}:
-                    self.coll.update_one({"outbox_id": sent["outbox_id"], "status": "sent"}, {"$set": {
-                        "status": "replied", "replied_at": rec or datetime.now(timezone.utc), "replied_by": sender,
-                        "reply_preview": (m.get("bodyPreview") or "")[:300], "reply_message_id": m.get("internetMessageId")}})
+                    mid = m.get("internetMessageId")
+                    if self.coll.count_documents({"outbox_id": sent["outbox_id"], "replies.message_id": mid}, limit=1):
+                        continue    # already on record
+                    body = _plain((m.get("body") or {}).get("content") or "", (m.get("body") or {}).get("contentType") or "")
+                    reply = {"at": rec or datetime.now(timezone.utc), "from": sender, "message_id": mid, "subject": m.get("subject"),
+                             "preview": (m.get("bodyPreview") or "")[:300], "body": body[:6000], "recorded_at": datetime.now(timezone.utc)}
+                    upd: Dict[str, Any] = {"$push": {"replies": reply}}
+                    if sent.get("status") == "sent":
+                        upd["$set"] = {"status": "replied", "replied_at": reply["at"], "replied_by": sender,
+                                       "reply_preview": reply["preview"], "reply_message_id": mid, "reply_body": body[:6000]}
+                    self.coll.update_one({"outbox_id": sent["outbox_id"]}, upd)
                     replied += 1
                     logger.info("outbox: %s replied to %s", sender, sent["outbox_id"])
             url = data.get("@odata.nextLink")

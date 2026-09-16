@@ -127,6 +127,7 @@ export type NextPerson = "wes" | "manjunath" | "jp" | "rakesh";
 export type NextStep = {
   title: string; detail: string; why_critical: string; due?: string | null; urgency: "critical" | "high";
   evidence: { source_sha: string; quote: string }[]; verified: boolean; done?: boolean; done_by?: string | null; done_at?: string | null;
+  carried_from?: string | null; carried_days?: number; first_seen?: string | null;
   property_id?: string; address?: string; index?: number; run_id?: string;
 };
 export type NextStepsProperty = { address: string; headline: string; error?: string; elapsed_s?: number } & Partial<Record<NextPerson, NextStep[]>>;

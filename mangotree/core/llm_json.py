@@ -71,6 +71,17 @@ def json_call(client, *, model: str, system: Any, user: str, tool_name: str, sch
     # ranking and risk-listing do not need it, and the data must arrive.
     r = _call({})
     for attempt in (1, 2):
+        # A reply cut off by max_tokens is not a result: a half-written tool call
+        # arrives as an empty or partial input and would be written as "nothing
+        # found". Say so instead (2026-09-16: the task extractor wrote zero tasks
+        # for a property whose thinking plus output exceeded 8,000 tokens).
+        if getattr(r, "stop_reason", None) == "max_tokens":
+            out = getattr(getattr(r, "usage", None), "output_tokens", "?")
+            if attempt == 1:
+                logger.warning("%s: reply truncated at max_tokens=%s (out=%s); retrying with thinking disabled", tool_name, max_tokens, out)
+                r = _call({"thinking": {"type": "disabled"}})
+                continue
+            raise ModelReplyError(f"{tool_name}: reply truncated at max_tokens={max_tokens} (out={out}); raise the cap")
         for b in r.content:
             if getattr(b, "type", None) == "tool_use" and getattr(b, "name", None) == tool_name:
                 return dict(b.input)

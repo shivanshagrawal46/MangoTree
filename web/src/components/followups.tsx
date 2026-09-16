@@ -123,9 +123,9 @@ export function FollowupRules() {
     <Card className="p-4 text-[12.5px] leading-relaxed text-muted">
       <div className="text-[13px] font-semibold text-fg mb-1.5">The standard procedure</div>
       <ul className="space-y-1 list-disc pl-4">
-        <li>Every email from {fmtDate(q.data?.since || null, "d MMMM yyyy")} on is read once. Each ask becomes a follow-up that stays open until the person replies in that thread — or someone here marks it done.</li>
-        <li>Money asks go to JP Sir; invoices, permits, inspections, insurance and contractor papers to Manjunath Sir; decisions to Rakesh Sir. Our people get <b className="text-fg">{r.internal_due_business_days} business day</b>, then a kind reminder email from rakesh@mtreh.com, repeated no more than once a day.</li>
-        <li>Wes, Kelly and other counterparties get <b className="text-fg">{r.external_due_business_days} business days</b>; then a reminder is drafted for one click. After <b className="text-fg">{r.escalate_after_business_days}</b> it is escalated here in red.</li>
+        <li>Every email from {fmtDate(q.data?.since || null, "d MMMM yyyy")} on is read once, in the morning cycle, property by property. Each ask becomes a follow-up that stays open until the person replies in that thread — or someone here marks it done.</li>
+        <li>Money asks go to JP Sir; invoices, permits, inspections, insurance and contractor papers to Manjunath Sir; decisions to Rakesh Sir. Our people get <b className="text-fg">{r.internal_due_business_days} business day</b>; then one kind email a day from rakesh@mtreh.com at 9 AM Eastern with the replies most needed and any next step still open.</li>
+        <li>Wes, Kelly and other counterparties get <b className="text-fg">{r.external_due_business_days} business day{r.external_due_business_days > 1 ? "s" : ""}</b>; then a reminder is drafted for one click. After <b className="text-fg">{r.escalate_after_business_days}</b> it is escalated here in red.</li>
         <li>The next-steps sheets emailed to JP Sir and Manjunath Sir are chased the same way until acknowledged. Only internal replies to system emails are read; all other internal mail is left alone.</li>
       </ul>
       {q.data?.last_tick && <div className="mt-2 text-[11px] text-faint">Last check {ago(q.data.last_tick)}.</div>}

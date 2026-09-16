@@ -32,6 +32,9 @@ export function StepCard({ step, n, onDone, compact }: { step: NextStep; n: numb
         <div className="serif text-[#B0893B] font-bold text-[17px] leading-6 w-4 shrink-0">{n}</div>
         <div className="min-w-0 flex-1">
           <div className={cn("font-semibold text-[#1F3550] dark:text-[#dbe3ee] leading-snug", compact ? "text-[13px]" : "text-[14px]", step.done && "line-through")}>{step.title}</div>
+          {(step.carried_days ?? 0) > 0 && !step.done && (
+            <div className="text-[11.5px] font-semibold text-[#B4432B] mt-1">Still outstanding — on the sheet since {fmtDate(step.first_seen || null, "d MMM")} (day {(step.carried_days ?? 0) + 1})</div>
+          )}
           {!compact && <p className="text-[13px] leading-relaxed text-[#2A2A2E] dark:text-fg/85 mt-1.5">{step.detail}</p>}
           {compact && <p className="text-[12px] leading-relaxed text-[#2A2A2E] dark:text-fg/85 mt-1 line-clamp-2">{step.detail}</p>}
           {step.why_critical && !compact && <p className="text-[12px] italic text-[#6B6B76] mt-1.5">Why now: {step.why_critical}</p>}

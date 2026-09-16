@@ -239,11 +239,12 @@ def install(app, mongo, jobs) -> None:
 
     @app.post("/followups/tick")
     def followups_tick(user=CurrentUser):
-        """Run the hourly follow-up pass now (new mail, replies, reminders, outbox)."""
+        """Run the follow-up batch now (it otherwise runs once, in the morning cycle):
+        new mail read for asks, replies to system mail, reminders composed."""
         ceo(user)
         def run(job):
-            job.emit("status", {"text": "Reading new mail for asks, checking replies, sending due reminders…"})
-            return data.clean(tracker.tick(outbox))
+            job.emit("status", {"text": "GPT-6 Astra reading new mail for asks, checking replies, composing due reminders…"})
+            return data.clean(tracker.morning(outbox))
         job = jobs.start("followups", {"by": user["user_id"]}, run)
         return {"job_id": job.job_id}
 

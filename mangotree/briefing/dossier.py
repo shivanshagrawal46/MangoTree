@@ -79,13 +79,20 @@ def context_for(mongo: Mongo, pid: str, *, force: bool = False) -> str:
 
 #: The standing question. Phrased so the agent's sufficiency checklist covers
 #: money, commitments, deadlines, risks and what has NOT happened.
+#: The one morning investigation per property (admin directive 2026-09-16): it
+#: feeds the next-steps sheets, the tasks, the cards, the Wes issues and the
+#: brief, so the next steps come FIRST in what it is asked to establish.
 QUESTION = (
-    "Give the current state of this deal as of today for the CEO: (1) what has happened in the "
-    "last 30 days and what is pending; (2) every open commitment — by the borrower, the contractor "
-    "Wes / Listing Profit, title, counsel — with its date and whether it was met; (3) money: what RKB "
-    "funded, what has been received, what is owed and as of when, any payoff or closing in motion; "
-    "(4) deadlines in the next 60 days; (5) risks to repayment or collateral; (6) what the records "
-    "show has NOT happened that should have. Cite documents for every fact."
+    "First and foremost: what are the one or two most critical and urgent next steps on this property, "
+    "right now, for Wes (the contractor), for JP Sir (RKB's accountant — payments, payoffs, reconciliations), "
+    "for Manjunath Sir (RKB operations — invoices, permits, inspections, insurance, contractor papers) — and, "
+    "only if something genuinely needs him, for Rakesh Sir (decisions, approvals, signatures)? For each, say what "
+    "exactly must be done, by when if a record fixes a date, and cite the record that makes it necessary. "
+    "Then the picture behind them: (1) what has happened in the last 30 days and what is pending; (2) every open "
+    "commitment — by the borrower, Wes / Kelly, title, counsel — with its date and whether it was met; (3) money: "
+    "what RKB funded, what has been received, what is owed and as of when, any payoff or closing in motion; "
+    "(4) permits and inspections with their dates and results; (5) deadlines in the next 60 days; (6) risks to "
+    "repayment or collateral; (7) what the records show has NOT happened that should have. Cite documents for every fact."
 )
 
 

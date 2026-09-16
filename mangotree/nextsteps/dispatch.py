@@ -48,7 +48,7 @@ def send_to_team(mongo: Mongo, run: Dict[str, Any], *, by: str, outbox, persons=
     out: Dict[str, Any] = {}
     for person in persons:
         steps = ns.for_person(person, run)
-        fups = tracker.list(owner=person, statuses=("open", "escalated"))
+        fups, _more = tracker.top_for(person, tracker.list(owner=person, statuses=("open", "escalated")), 3)
         subject, html, text = next_steps_cover(person, day_label=day_label, top=_top(steps), followups=fups,
                                                new_since_last=_new_since_previous(ns, run, person))
         atts = [(filename_for(run, person, "docx"), build_docx(run, person), DOCX_MIME),
@@ -77,9 +77,11 @@ def send_to_team(mongo: Mongo, run: Dict[str, Any], *, by: str, outbox, persons=
 def remind_unacknowledged(mongo: Mongo, outbox) -> Dict[str, int]:
     """Once a day, re-send a next-steps email that got no reply."""
     from mangotree.config.settings import SETTINGS
+    from mangotree.followup.tracker import FollowupTracker
     now = datetime.now(timezone.utc)
     out = {"reminded": 0}
     ns = NextSteps(mongo, anthropic_api_key=SETTINGS.anthropic_api_key, voyage_api_key=SETTINGS.voyage_api_key, openai_api_key=SETTINGS.openai_api_key_critic or "")
+    tracker = FollowupTracker(mongo, anthropic_api_key=SETTINGS.anthropic_api_key)
     for ob in outbox.coll.find({"kind": "next_steps", "status": "sent"}, {"_id": 0, "outbox_id": 1, "meta": 1, "sent_at": 1, "last_reminder_at": 1, "to": 1, "reminders": 1}):
         sent_at = ob.get("sent_at") or now
         if now < business_days_after(sent_at, cfg.FOLLOWUP_INTERNAL_DUE_BUSINESS_DAYS):
@@ -100,11 +102,14 @@ def remind_unacknowledged(mongo: Mongo, outbox) -> Dict[str, int]:
                                               {"$set": {"status": "dismissed", "closed_reason": "superseded by a newer sheet", "closed_at": now}})
             continue
         steps = ns.for_person(person, run)
-        subject, html, text = next_steps_cover(person, day_label=_day_label(run), top=_top(steps), followups=[], new_since_last=[], is_reminder=True)
+        fups, _more = tracker.top_for(person, tracker.list(owner=person, statuses=("open", "escalated")), 3)
+        subject, html, text = next_steps_cover(person, day_label=_day_label(run), top=_top(steps), followups=fups, new_since_last=[], is_reminder=True)
         atts = [(filename_for(run, person, "docx"), build_docx(run, person), DOCX_MIME),
                 (filename_for(run, person, "pdf"), build_pdf(run, person), "application/pdf")]
+        from mangotree.followup.tracker import reminder_send_time
         q = outbox.queue(kind="next_steps_reminder", ref=f"{ob['outbox_id']}:{now:%Y%m%d}", to=ob["to"], subject=subject, html=html, text=text,
-                         attachments=atts, meta={"for_outbox_id": ob["outbox_id"], "person": person, "run_id": run["run_id"]})
+                         attachments=atts, send_after=reminder_send_time(),
+                         meta={"for_outbox_id": ob["outbox_id"], "person": person, "run_id": run["run_id"]})
         outbox.coll.update_one({"outbox_id": ob["outbox_id"]}, {"$set": {"last_reminder_at": now}, "$push": {"reminders": {"at": now, "outbox_id": q.get("outbox_id")}}})
         out["reminded"] += 1
     return out
