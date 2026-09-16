@@ -198,7 +198,7 @@ export function NextStepsPanel() {
                   <span className="tnum text-xs text-muted">{counts?.[p] ?? 0} step{(counts?.[p] ?? 0) === 1 ? "" : "s"}</span>
                 </div>
                 <DownloadButtons runId={run.run_id} person={p} />
-                {p === "wes" && <SendToWes runId={run.run_id} disabled={running || run.status !== "complete"} />}
+                {p === "wes" && <><SendToWes runId={run.run_id} disabled={running || run.status !== "complete"} /><PreviewNote runId={run.run_id} person="wes" /></>}
                 {p === "rakesh" && <div className="text-[11.5px] text-muted">Your own steps, with the team’s under each property.</div>}
                 {mailable && <MailState ob={ob} />}
                 {mailable && <PreviewNote runId={run.run_id} person={p} />}
@@ -257,11 +257,11 @@ function SendToWes({ runId, disabled }: { runId: string; disabled?: boolean }) {
   return (
     <>
       <div className="space-y-1">
-        <Button size="sm" variant="primary" disabled={disabled} onClick={() => { setErr(null); setOpen(true); }}><Send size={12} /> Send to Wes</Button>
+        <Button size="sm" variant="primary" disabled={disabled} onClick={() => { setErr(null); setOpen(true); }} title="Opens the note for review first; nothing is sent until you confirm inside"><Send size={12} /> Send to Wes…</Button>
         {sent && <div className="text-[11px] text-muted">Sent {ago(sent.sent_at || sent.queued_at)}{sent.status === "replied" ? " · Wes replied" : sent.status === "needs_consent" ? " · waiting for sign-in" : ""}</div>}
       </div>
       <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) setDraft(null); }}>
-        <DialogContent title="Send Wes his sheet" description={q.data ? `From rakesh@mtreh.com to ${q.data.to.address} · ${q.data.steps} steps across ${q.data.properties} properties. Edit the note if you like; one press sends it.` : "Preparing the note…"} wide>
+        <DialogContent title="Review, then send Wes his sheet" description={q.data ? `From rakesh@mtreh.com to ${q.data.to.address} · ${q.data.steps} steps across ${q.data.properties} properties. Nothing has been sent yet — edit the note if you like, then press the button below.` : "Preparing the note…"} wide>
           {q.isLoading || !draft ? <div className="text-sm text-muted py-6">Preparing the note…</div> : (
             <div className="space-y-3">
               <input value={draft.subject} onChange={(e) => setDraft({ ...draft, subject: e.target.value })} className="h-9 w-full rounded-xl border border-line bg-elev px-3 text-sm font-medium" />
@@ -289,12 +289,15 @@ type TeamPreview = { to: { name: string; address: string }; subject: string; bod
 /** Read the cover note that goes (or went) to JP Sir / Manjunath Sir. */
 function PreviewNote({ runId, person }: { runId: string; person: NextPerson }) {
   const [open, setOpen] = React.useState(false);
-  const q = useQuery({ queryKey: ["team-preview", runId, person], queryFn: () => api.get<TeamPreview>(`/next-steps/${runId}/preview/${person}`), enabled: open });
+  const path = person === "wes" ? `/next-steps/${runId}/wes-preview` : `/next-steps/${runId}/preview/${person}`;
+  const q = useQuery({ queryKey: ["team-preview", runId, person], queryFn: () => api.get<TeamPreview>(path), enabled: open });
+  const asSent = !!q.data?.as_sent || (person === "wes" && !!q.data?.already_sent);
   return (
     <>
       <button onClick={() => setOpen(true)} className="text-[11.5px] text-accent hover:underline inline-flex items-center gap-1"><Mail size={11} /> Read the email note</button>
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent title={`Email to ${PERSON_LABEL[person]}`} description={q.data ? (q.data.as_sent ? `As sent to ${q.data.to.address}.` : `As it will go to ${q.data.to.address} from rakesh@mtreh.com.`) : "Loading…"} wide>
+        <DialogContent title={`Email to ${PERSON_LABEL[person]}`}
+          description={q.data ? (asSent ? `Sent to ${q.data.to.address}${q.data.already_sent?.sent_at ? ` ${ago(q.data.already_sent.sent_at)}` : ""}. ${person === "wes" ? "Nothing is sent from here — use Send to Wes." : ""}` : `As it will go to ${q.data.to.address} from rakesh@mtreh.com. ${person === "wes" ? "Nothing is sent from here — use Send to Wes." : ""}`) : "Loading…"} wide>
           {q.data && <EmailPreview subject={q.data.subject} body={q.data.body} attachments={q.data.attachments} />}
         </DialogContent>
       </Dialog>
