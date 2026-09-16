@@ -11,7 +11,7 @@ import * as React from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
-import { AlertTriangle, Check, Download, FileText, Loader2, Mail, MailCheck, MailWarning, RefreshCw, Sparkles } from "lucide-react";
+import { AlertTriangle, Check, Download, FileText, Loader2, Mail, MailCheck, MailWarning, RefreshCw, Send, Sparkles } from "lucide-react";
 import { api, subscribeJob } from "@/lib/api";
 import { Badge, Button, Card, Checkbox, Dialog, DialogContent } from "@/components/ui";
 import { useEvidence } from "@/components/evidence";
@@ -198,7 +198,7 @@ export function NextStepsPanel() {
                   <span className="tnum text-xs text-muted">{counts?.[p] ?? 0} step{(counts?.[p] ?? 0) === 1 ? "" : "s"}</span>
                 </div>
                 <DownloadButtons runId={run.run_id} person={p} />
-                {p === "wes" && <div className="text-[11.5px] text-muted">For you to download and send to Wes.</div>}
+                {p === "wes" && <SendToWes runId={run.run_id} disabled={running || run.status !== "complete"} />}
                 {p === "rakesh" && <div className="text-[11.5px] text-muted">Your own steps, with the team’s under each property.</div>}
                 {mailable && <MailState ob={ob} />}
               </div>
@@ -235,6 +235,51 @@ export function NextStepsPanel() {
         </DialogContent>
       </Dialog>
     </Card>
+  );
+}
+
+type WesPreview = { to: { name: string; address: string }; subject: string; body: string; steps: number; properties: number; attachments: string[]; already_sent?: OutboxItem | null };
+
+function SendToWes({ runId, disabled }: { runId: string; disabled?: boolean }) {
+  const qc = useQueryClient();
+  const [open, setOpen] = React.useState(false);
+  const [draft, setDraft] = React.useState<{ subject: string; body: string } | null>(null);
+  const [err, setErr] = React.useState<string | null>(null);
+  const q = useQuery({ queryKey: ["wes-preview", runId], queryFn: () => api.get<WesPreview>(`/next-steps/${runId}/wes-preview`), enabled: open });
+  React.useEffect(() => { if (q.data && !draft) setDraft({ subject: q.data.subject, body: q.data.body }); }, [q.data, draft]);
+  const send = useMutation({
+    mutationFn: () => api.post<{ result: { status: string } }>(`/next-steps/${runId}/send-wes`, { ...draft, confirm: true }),
+    onSuccess: () => { setOpen(false); setDraft(null); qc.invalidateQueries({ queryKey: ["next-steps-latest"] }); qc.invalidateQueries({ queryKey: ["outbox", "wes-preview", "followups"] }); },
+    onError: (e: any) => setErr(e.message),
+  });
+  const sent = q.data?.already_sent;
+  return (
+    <>
+      <div className="space-y-1">
+        <Button size="sm" variant="primary" disabled={disabled} onClick={() => { setErr(null); setOpen(true); }}><Send size={12} /> Send to Wes</Button>
+        {sent && <div className="text-[11px] text-muted">Sent {ago(sent.sent_at || sent.queued_at)}{sent.status === "replied" ? " · Wes replied" : sent.status === "needs_consent" ? " · waiting for sign-in" : ""}</div>}
+      </div>
+      <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) setDraft(null); }}>
+        <DialogContent title="Send Wes his sheet" description={q.data ? `From rakesh@mtreh.com to ${q.data.to.address} · ${q.data.steps} steps across ${q.data.properties} properties. Edit the note if you like; one press sends it.` : "Preparing the note…"} wide>
+          {q.isLoading || !draft ? <div className="text-sm text-muted py-6">Preparing the note…</div> : (
+            <div className="space-y-3">
+              <input value={draft.subject} onChange={(e) => setDraft({ ...draft, subject: e.target.value })} className="h-9 w-full rounded-xl border border-line bg-elev px-3 text-sm font-medium" />
+              <textarea value={draft.body} onChange={(e) => setDraft({ ...draft, body: e.target.value })} className="w-full min-h-[300px] rounded-xl border border-line bg-elev px-3 py-2 text-[13px] leading-relaxed focus:outline-none focus:ring-2 focus:ring-accent/30" />
+              <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
+                <span className="font-medium text-fg">Attached:</span>
+                {q.data!.attachments.map((a) => <span key={a} className="inline-flex items-center gap-1 rounded-lg border border-line bg-sunken px-2 h-6"><FileText size={11} /> {a}</span>)}
+              </div>
+              {sent && <div className="text-xs text-high">This run's sheet was already sent to Wes {ago(sent.sent_at || sent.queued_at)}. Sending again sends a second copy.</div>}
+              {err && <div className="text-xs text-critical">{err}</div>}
+              <div className="flex justify-end gap-2">
+                <Button variant="secondary" onClick={() => setOpen(false)}>Cancel</Button>
+                <Button variant="primary" disabled={send.isPending || !draft.body.trim()} onClick={() => send.mutate()}>{send.isPending ? <Loader2 size={13} className="animate-spin" /> : <Mail size={13} />} Send to Wes now</Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 

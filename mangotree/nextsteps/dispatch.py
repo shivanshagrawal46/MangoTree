@@ -129,6 +129,61 @@ def send_to_team(mongo: Mongo, run: Dict[str, Any], *, by: str, outbox, persons=
     return out
 
 
+# ------------------------------------------------------------------- Wes
+WES_ADDRESS = ADDRESS.get("wes", "wes@roiblocks.com")
+
+
+def wes_preview(mongo: Mongo, run: Dict[str, Any]) -> Dict[str, Any]:
+    """What Rakesh sees before pressing Send: the note as drafted, the attachments."""
+    from mangotree.config.settings import SETTINGS
+    from mangotree.followup.templates import wes_cover
+    ns = NextSteps(mongo, anthropic_api_key=SETTINGS.anthropic_api_key, voyage_api_key=SETTINGS.voyage_api_key, openai_api_key=SETTINGS.openai_api_key_critic or "")
+    steps = ns.for_person("wes", run)
+    carried = [s for s in steps if int(s.get("carried_days") or 0) > 0 and not s.get("done")]
+    props = len({s["property_id"] for s in steps})
+    subject, html, text = wes_cover(day_label=_day_label(run), top=_top(steps), carried=carried, properties=props)
+    already = mongo.db["outbox"].find_one({"kind": "next_steps_wes", "meta.run_id": run["run_id"]}, {"_id": 0, "attachments.bytes": 0, "html": 0})
+    return {"to": {"name": "Wes Stone", "address": WES_ADDRESS}, "subject": subject, "body": text, "steps": len(steps), "properties": props,
+            "attachments": [filename_for(run, "wes", "docx"), filename_for(run, "wes", "pdf")], "already_sent": already}
+
+
+def send_to_wes(mongo: Mongo, run: Dict[str, Any], *, by: str, outbox, subject: Optional[str] = None, body: Optional[str] = None) -> Dict[str, Any]:
+    """One press: Wes's sheet (Word + PDF) with the cover note, from rakesh@mtreh.com,
+    and an 'awaiting Wes — acknowledge the sheet' follow-up."""
+    from mangotree.config.settings import SETTINGS
+    from mangotree.followup.tracker import FollowupTracker
+    import html as _h
+    prev = wes_preview(mongo, run)
+    subject = (subject or prev["subject"]).strip()[:200]
+    text = (body or prev["body"]).strip()
+    html = ("<div style='font-family:Calibri,Segoe UI,Helvetica,Arial,sans-serif;font-size:14.5px;line-height:1.55;color:#2a2a2e;max-width:640px;white-space:pre-wrap'>"
+            + _h.escape(text) + "</div>")
+    atts = [(filename_for(run, "wes", "docx"), build_docx(run, "wes"), DOCX_MIME),
+            (filename_for(run, "wes", "pdf"), build_pdf(run, "wes"), "application/pdf")]
+    now = datetime.now(timezone.utc)
+    q = outbox.queue(kind="next_steps_wes", ref=f"{run['run_id']}:wes:{now:%Y%m%d%H%M%S}", to=[("Wes Stone", WES_ADDRESS)], subject=subject, html=html, text=text,
+                     attachments=atts, dedupe=False, meta={"run_id": run["run_id"], "person": "wes", "day": run.get("day"), "by": by, "steps": prev["steps"]})
+    tracker = FollowupTracker(mongo, anthropic_api_key=SETTINGS.anthropic_api_key)
+    tracker.coll.update_many({"kind": "ask_external", "counterparty.person_id": "wes", "topic": "documents", "status": {"$in": ["open", "escalated"]},
+                              "what": {"$regex": "^Acknowledge the next-steps sheet"}},
+                             {"$set": {"status": "dismissed", "closed_reason": "superseded by today's sheet", "closed_at": now}})
+    tracker.coll.insert_one({
+        "followup_id": f"fu-wes-{q['outbox_id'][3:]}", "kind": "ask_external", "owner": "rakesh", "outbox_id": q["outbox_id"],
+        "property_ids": [], "thread_key": None, "subject": subject,
+        "counterparty": {"name": "Wes Stone", "email": WES_ADDRESS, "person_id": "wes"},
+        "what": f"Acknowledge the next-steps sheet of {_day_label(run)} and say where each item stands", "topic": "documents", "source_sha": None,
+        "asked_at": now, "created_at": now, "updated_at": now,
+        "due": business_days_after(now, cfg.FOLLOWUP_EXTERNAL_DUE_BUSINESS_DAYS),
+        "status": "open", "reminders": [], "last_reminder_at": None, "escalated_at": None, "run_id": run["run_id"]})
+    NextSteps(mongo, anthropic_api_key=SETTINGS.anthropic_api_key, voyage_api_key=SETTINGS.voyage_api_key, openai_api_key=SETTINGS.openai_api_key_critic or "") \
+        .runs.update_one({"run_id": run["run_id"]}, {"$set": {"sent_wes": {"at": now, "by": by, "outbox_id": q["outbox_id"]}}})
+    try:
+        flush = outbox.flush()
+    except Exception as exc:
+        flush = {"error": str(exc)[:200]}
+    return {"queued": q, "flush": flush, "status": (outbox.get(q["outbox_id"]) or {}).get("status")}
+
+
 def auto_send_after_run(mongo: Mongo, run: Dict[str, Any], outbox) -> Dict[str, Any]:
     """Called by the morning cycle once the sheets exist."""
     if not run or run.get("status") != "complete":

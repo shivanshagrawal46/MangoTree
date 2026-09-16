@@ -176,6 +176,25 @@ def install(app, mongo, jobs) -> None:
         out = dispatch.send_to_team(mongo, run, by=user["user_id"], outbox=outbox, persons=persons)
         return data.clean({"result": out, "send_status": outbox.send_status()})
 
+    class WesSend(BaseModel):
+        subject: Optional[str] = None
+        body: Optional[str] = None
+        confirm: bool = False
+
+    @app.get("/next-steps/{run_id}/wes-preview")
+    def next_steps_wes_preview(run_id: str, user=CurrentUser):
+        ceo(user)
+        return data.clean(dispatch.wes_preview(mongo, run_or_404(run_id)))
+
+    @app.post("/next-steps/{run_id}/send-wes")
+    def next_steps_send_wes(run_id: str, body: WesSend, user=CurrentUser):
+        """Rakesh's one press: Wes's sheet with the (possibly edited) cover note."""
+        ceo(user)
+        if not body.confirm:
+            raise HTTPException(400, "confirm=true required")
+        out = dispatch.send_to_wes(mongo, run_or_404(run_id), by=user["user_id"], outbox=outbox, subject=body.subject, body=body.body)
+        return data.clean({"result": out, "send_status": outbox.send_status()})
+
     class AutoSend(BaseModel):
         enabled: bool
 

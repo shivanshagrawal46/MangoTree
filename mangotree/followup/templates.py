@@ -86,6 +86,30 @@ def next_steps_cover(person: str, *, day_label: str, top: List[Dict[str, Any]], 
     return subject, html, text
 
 
+def wes_cover(*, day_label: str, top: List[Dict[str, Any]], carried: List[Dict[str, Any]], properties: int) -> Tuple[str, str, str]:
+    """Subject, html, text for Rakesh's email to Wes with his sheet — warm,
+    partner to partner; the sheet does the asking, the note frames it."""
+    subject = f"Next steps for you — {day_label}"
+    paragraphs = [
+        "Hi Wes,",
+        (f"Attached is today's sheet — one or two items per property that matter most right now, across {properties} "
+         f"propert{'y' if properties == 1 else 'ies'}, as a Word file and a PDF of the same thing. It comes out of the {day_label} review of everything "
+         "in the file, so where it names a date or a figure, that is where it came from."),
+    ]
+    bullets: Dict[str, List[str]] = {}
+    if top:
+        bullets["The ones I'd put first"] = [f"{s.get('address')}: {s.get('title')}" + (f" — by {_date(s.get('due'))}" if s.get("due") else "") for s in top[:3]]
+    if carried:
+        bullets["Still open from an earlier sheet"] = [
+            f"{s.get('address')}: {s.get('title')} — since {_date_str(s.get('first_seen'))}" for s in carried[:3]]
+    closing = ("A quick reply with where each item stands — done, in hand, or blocked and why — is all I need; a line per property is plenty. "
+               "If anything on the sheet is already handled or simply wrong, tell me and it comes off tomorrow's. Thank you, as always, for the work.")
+    text_parts = paragraphs + [f"{k}\n" + "\n".join(f"  • {i}" for i in v) for k, v in bullets.items() if v] + [closing, "Best regards,\nRakesh Bhargava\nRKB Consulting Group, Inc."]
+    html, _ = _wrap(paragraphs, bullets, closing)
+    html = html.replace("Warm regards,<br>", "Best regards,<br>")
+    return subject, html, "\n\n".join(text_parts)
+
+
 # ------------------------------------------------------------------ reminders
 def internal_digest(owner: str, top: List[Dict[str, Any]], more: int,
                     carried_steps: List[Dict[str, Any]] | None = None) -> Tuple[str, str, str]:
