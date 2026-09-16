@@ -6,7 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Command } from "cmdk";
 import { motion } from "framer-motion";
-import { LayoutGrid, Building2, CheckSquare, Inbox, Users, MessageSquare, Search, LogOut, Moon, Sun, AlertTriangle, ChevronRight, HardHat } from "lucide-react";
+import { LayoutGrid, Building2, CheckSquare, Inbox, Users, MessageSquare, Search, LogOut, Moon, Sun, AlertTriangle, ChevronRight, HardHat, ClipboardList, BellRing } from "lucide-react";
 import { api } from "@/lib/api";
 import { useUser } from "@/components/providers";
 import { Kbd } from "@/components/ui";
@@ -16,10 +16,20 @@ import type { PropertySummary } from "@/lib/types";
 const NAV = [
   { href: "/", label: "Dashboard", icon: LayoutGrid },
   { href: "/ask", label: "Ask anything", icon: MessageSquare },
+  { href: "/next-steps", label: "Next steps", icon: ClipboardList },
+  { href: "/followups", label: "Follow-ups", icon: BellRing },
   { href: "/tasks", label: "Tasks", icon: CheckSquare },
   { href: "/wes", label: "Wes agenda", icon: HardHat },
   { href: "/review", label: "Review", icon: Inbox },
   { href: "/people", label: "People", icon: Users },
+];
+// JP Sir and Manjunath Sir see only what is theirs (admin directive 2026-09-16):
+// the desk, questions, their follow-ups and tasks. No portfolio views.
+const TEAM_NAV = [
+  { href: "/", label: "My desk", icon: LayoutGrid },
+  { href: "/ask", label: "Ask anything", icon: MessageSquare },
+  { href: "/followups", label: "My follow-ups", icon: BellRing },
+  { href: "/tasks", label: "My tasks", icon: CheckSquare },
 ];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
@@ -44,6 +54,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   if (loading || !user) return <div className="min-h-screen grid place-items-center text-muted text-sm">Loading…</div>;
   const unplaced = dash.data?.unplaced || 0;
+  const ceo = user.role === "ceo";
+  const nav = ceo ? NAV : TEAM_NAV;
   const toggleTheme = () => { const d = !document.documentElement.classList.contains("dark"); document.documentElement.classList.toggle("dark", d); localStorage.setItem("mt-theme", d ? "dark" : "light"); };
 
   return (
@@ -57,7 +69,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <Search size={14} /> <span className="flex-1 text-left">Jump to…</span> <Kbd>⌘K</Kbd>
         </button>
         <nav className="px-2 space-y-0.5">
-          {NAV.map(({ href, label, icon: Icon }) => {
+          {nav.map(({ href, label, icon: Icon }) => {
             const active = href === "/" ? path === "/" : path.startsWith(href);
             return (
               <Link key={href} href={href} className={cn("flex items-center gap-2.5 h-9 px-2.5 rounded-lg text-[13px] transition", active ? "bg-accent-soft text-accent font-medium" : "text-muted hover:bg-sunken hover:text-fg")}>
@@ -68,9 +80,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             );
           })}
         </nav>
-        <div className="px-4 pt-4 pb-1 text-[10px] uppercase tracking-wider text-faint flex items-center gap-1.5"><Building2 size={11} /> Properties</div>
+        {ceo && <div className="px-4 pt-4 pb-1 text-[10px] uppercase tracking-wider text-faint flex items-center gap-1.5"><Building2 size={11} /> Properties</div>}
         <div className="flex-1 overflow-y-auto px-2 pb-2 space-y-0.5">
-          {(props.data || []).map((p) => {
+          {ceo && (props.data || []).map((p) => {
             const active = path === `/property/${p.property_id}`;
             const dot = { critical: "bg-critical", watch: "bg-high", good: "bg-good" }[p.health?.level || "good"];
             return (
@@ -97,12 +109,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           {children}
         </motion.div>
       </main>
-      <Palette open={palette} onOpenChange={setPalette} properties={props.data || []} />
+      <Palette open={palette} onOpenChange={setPalette} properties={ceo ? (props.data || []) : []} nav={nav} />
     </div>
   );
 }
 
-function Palette({ open, onOpenChange, properties }: { open: boolean; onOpenChange: (v: boolean) => void; properties: PropertySummary[] }) {
+function Palette({ open, onOpenChange, properties, nav }: { open: boolean; onOpenChange: (v: boolean) => void; properties: PropertySummary[]; nav: typeof NAV }) {
   const router = useRouter();
   const [q, setQ] = React.useState("");
   const remote = useQuery({ queryKey: ["quick", q], queryFn: () => api.get<any>(`/search/quick?q=${encodeURIComponent(q)}`), enabled: open && q.length >= 2 });
@@ -115,7 +127,7 @@ function Palette({ open, onOpenChange, properties }: { open: boolean; onOpenChan
         <Command.Empty className="px-3 py-6 text-center text-sm text-muted">Nothing yet — keep typing.</Command.Empty>
         {q.length > 6 && <Command.Group heading="Ask" className="text-[10px] uppercase tracking-wider text-faint px-2 pt-2 pb-1"><Item onSelect={() => go(`/ask?q=${encodeURIComponent(q)}`)} icon={MessageSquare} label={`Ask: “${q}”`} sub="Full investigation across every property" /></Command.Group>}
         <Command.Group heading="Go to" className="text-[10px] uppercase tracking-wider text-faint px-2 pt-2 pb-1">
-          {NAV.map((n) => <Item key={n.href} onSelect={() => go(n.href)} icon={n.icon} label={n.label} />)}
+          {nav.map((n) => <Item key={n.href} onSelect={() => go(n.href)} icon={n.icon} label={n.label} />)}
         </Command.Group>
         <Command.Group heading="Properties" className="text-[10px] uppercase tracking-wider text-faint px-2 pt-2 pb-1">
           {properties.map((p) => <Item key={p.property_id} value={`${p.address} ${p.property_id}`} onSelect={() => go(`/property/${p.property_id}`)} icon={Building2} label={p.address} sub={propertyLabel(p.property_id)} />)}

@@ -56,6 +56,27 @@ def _json(raw: str) -> dict:
     return json.loads(m.group(0) if m else txt)
 
 
+SCHEDULE_TZ = os.environ.get("MT_SCHEDULE_TZ", "America/New_York")
+
+
+def _zone(name: str = SCHEDULE_TZ):
+    try:
+        from zoneinfo import ZoneInfo
+        return ZoneInfo(name)
+    except Exception as exc:                        # no tz database on this machine
+        logger.warning("schedule timezone %s unavailable (%s); using UTC", name, exc)
+        return timezone.utc
+
+
+def local_day(tz=None) -> str:
+    """Today's date on the firm's clock (Eastern). Every 'once a day' record —
+    locks, runs, briefings — is keyed on this, never on the UTC date. Keyed on
+    UTC (2026-09-12/13) every daily job fired at 00:00 UTC = 8 p.m. Eastern,
+    because the UTC date had turned while the Eastern hour check was trivially
+    satisfied, and the briefs were written the evening before."""
+    return datetime.now(timezone.utc).astimezone(tz or _zone()).strftime("%Y-%m-%d")
+
+
 class Briefing:
     def __init__(self, mongo: Mongo, *, anthropic_api_key: str, model: Optional[str] = None):
         import anthropic
@@ -111,7 +132,7 @@ class Briefing:
 
     # ------------------------------------------------------------------ write
     def generate(self, user_id: str, *, force: bool = False) -> Dict[str, Any]:
-        day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        day = local_day()
         if not force:
             existing = self.coll.find_one({"user_id": user_id, "day": day}, {"_id": 0})
             if existing:
@@ -218,19 +239,38 @@ class Scheduler:
         self._watcher = None
         self._chain = None
         self._last_poll: Optional[datetime] = None
+        self._last_followup: Optional[datetime] = None
+        self._followups = None
+        self._outbox = None
+
+    #: Follow-up pass cadence (admin directive 2026-09-16): new mail is read
+    #: for asks, replies to system mail are checked, due reminders go out.
+    FOLLOWUP_MINUTES = int(os.environ.get("MT_FOLLOWUP_MINUTES", "60"))
+
+    def run_followups(self) -> Dict[str, Any]:
+        from mangotree.followup.tracker import FollowupTracker
+        from mangotree.mail.outbox import Outbox
+        if self._followups is None:
+            self._followups = FollowupTracker(self.mongo, anthropic_api_key=self.key)
+            self._outbox = Outbox(self.mongo)
+        out = self._followups.tick(self._outbox)
+        self._last_followup = datetime.now(timezone.utc)
+        return out
+
+    def _due_followups(self) -> bool:
+        return self._last_followup is None or (datetime.now(timezone.utc) - self._last_followup) >= timedelta(minutes=self.FOLLOWUP_MINUTES)
 
     @staticmethod
     def _zone(name: str):
-        try:
-            from zoneinfo import ZoneInfo
-            return ZoneInfo(name)
-        except Exception as exc:                        # no tz database on this machine
-            logger.warning("schedule timezone %s unavailable (%s); using UTC", name, exc)
-            return timezone.utc
+        return _zone(name)
 
     def _now_local(self) -> datetime:
         """Now, on the firm's clock — what every 'hour' in this scheduler means."""
         return datetime.now(timezone.utc).astimezone(self.tz)
+
+    def _day(self) -> str:
+        """Today on the firm's clock — what every 'once a day' means."""
+        return self._now_local().strftime("%Y-%m-%d")
 
     @property
     def watcher(self):
@@ -271,7 +311,7 @@ class Scheduler:
 
     def _claim_daily(self, job: str) -> bool:
         from pymongo.errors import DuplicateKeyError
-        day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        day = self._day()
         now = datetime.now(timezone.utc)
         who = {"host": socket.gethostname(), "pid": os.getpid()}
         try:
@@ -288,7 +328,7 @@ class Scheduler:
         return taken is not None
 
     def _release_daily(self, job: str, ok: bool) -> None:
-        day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        day = self._day()
         self.locks.update_one({"job": job, "day": day}, {"$set": {"status": "ok" if ok else "failed", "finished_at": datetime.now(timezone.utc)}})
 
     def _due_daily(self, job: str) -> bool:
@@ -300,7 +340,7 @@ class Scheduler:
         below is what actually guarantees a single run."""
         if self._now_local().hour < max(0, self.hour - 2):
             return False
-        day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        day = self._day()
         lock = self.locks.find_one({"job": job, "day": day})
         return lock is None or lock.get("status") == "failed"
 
@@ -360,6 +400,18 @@ class Scheduler:
             out["cards"] = f"error: {type(exc).__name__}"
         out["ledger"] = LedgerBuilder(self.mongo, anthropic_api_key=self.key).run(concurrency=4).as_dict()
         out["wes"] = self.wes.run(force=True, concurrency=4)
+        # The four next-steps sheets (admin directive 2026-09-16): generated
+        # every morning so they are ready to read; sent to JP and Manjunath only
+        # when Rakesh presses the button and confirms.
+        try:
+            from mangotree.nextsteps.generator import NextSteps
+            ns = NextSteps(self.mongo, anthropic_api_key=self.key, voyage_api_key=SETTINGS.voyage_api_key,
+                           openai_api_key=SETTINGS.openai_api_key_critic or "")
+            r = ns.generate(by="morning")
+            out["next_steps"] = {"run_id": r.get("run_id"), "status": r.get("status"), "counts": r.get("counts"), "errors": r.get("errors")}
+        except Exception as exc:
+            logger.exception("morning next-steps generation failed")
+            out["next_steps"] = f"error: {type(exc).__name__}"
         # Every model call failed (invalid key, outage): say so, so the day is not
         # recorded as done with nothing built.
         wes_vals = list((out["wes"] or {}).values()) if isinstance(out["wes"], dict) else []
@@ -376,7 +428,7 @@ class Scheduler:
     def _due_nightly(self) -> bool:
         if self._now_local().hour != self.NIGHTLY_HOUR:
             return False
-        day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        day = self._day()
         return self.runs.count_documents({"job": "nightly", "day": day}) == 0
 
     def run_intake(self, *, kind: str = "poll", hours: Optional[float] = None) -> Dict[str, Any]:
@@ -395,7 +447,7 @@ class Scheduler:
     def _due_briefing(self) -> bool:
         if self._now_local().hour < self.hour:
             return False
-        day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        day = self._day()
         return self.mongo.db["briefings"].count_documents({"day": day}) < len(self.users)
 
     def _due_cards(self) -> bool:
@@ -423,6 +475,16 @@ class Scheduler:
                 self._yield_logged = True
             return
         self._yield_logged = False
+        # Follow-ups are light (one short read per new email) and time-sensitive:
+        # they run hourly, after intake, whenever no answer is in flight.
+        if self.intake_enabled and self._due_followups():
+            try:
+                out = self.run_followups()
+                self._record("followups", not any(k.endswith("_error") for k in out), out)
+            except Exception as exc:
+                logger.exception("follow-up pass failed")
+                self._record("followups", False, str(exc)[:400])
+                self._last_followup = datetime.now(timezone.utc)
         if self.intake_enabled:
             try:
                 flushed = self.chain.flush_debounced()
@@ -431,7 +493,7 @@ class Scheduler:
             except Exception as exc:
                 logger.exception("debounced tasks/cards failed")
         if self.intake_enabled and self._due_nightly() and self._claim_daily("nightly"):
-            day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            day = self._day()
             try:
                 sweep = self.run_intake(kind="sweep", hours=72)
                 nightly = self.chain.nightly()
@@ -448,7 +510,7 @@ class Scheduler:
         # morning's ledger, not yesterday's. Recorded per day; a failure retries on
         # the next tick rather than waiting for tomorrow.
         if self._due_daily("money_wes") and self._claim_daily("money_wes"):
-            day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            day = self._day()
             try:
                 out = self.run_money_and_wes()
                 # A pass whose model calls all failed (bad key, outage) is a failure,

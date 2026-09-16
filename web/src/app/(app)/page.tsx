@@ -15,11 +15,23 @@ import { useEvidence } from "@/components/evidence";
 import { MoneyFlow, PortfolioBars } from "@/components/charts";
 import { TaskBoard } from "@/components/tasks";
 import { BriefingHero, CardsFeed, DeadlinesBoard } from "@/components/briefing";
+import { NextStepsPanel } from "@/components/nextsteps";
+import { FollowupList } from "@/components/followups";
+import { Desk } from "@/components/desk";
+import { useUser } from "@/components/providers";
 import { cn, fmtDate, ago, money, HEALTH, propertyLabel } from "@/lib/utils";
 import type { Dashboard, PropertySummary, LedgerPortfolio } from "@/lib/types";
 import { Figure } from "@/components/ledger";
 
 export default function DashboardPage() {
+  const { user } = useUser();
+  // JP Sir and Manjunath Sir get their desk, not the portfolio (admin directive
+  // 2026-09-16): their next steps, their follow-ups, their tasks.
+  if (user && user.role !== "ceo") return <Desk />;
+  return <CeoDashboard />;
+}
+
+function CeoDashboard() {
   const q = useQuery({ queryKey: ["dashboard"], queryFn: () => api.get<Dashboard>("/dashboard"), refetchInterval: 90_000 });
   const lq = useQuery({ queryKey: ["ledger-portfolio"], queryFn: () => api.get<LedgerPortfolio>("/ledger"), refetchInterval: 300_000 });
   const ledger = lq.data;
@@ -61,6 +73,16 @@ export default function DashboardPage() {
 
       {/* briefing */}
       <BriefingHero userName={me.name} />
+
+      {/* next steps: four sheets, generate / download / send */}
+      <NextStepsPanel />
+
+      {/* follow-ups: who owes whom a reply */}
+      <Card>
+        <CardHeader title="Follow-ups awaiting a reply" sub="Every ask since 16 September, open until the person answers. Overdue is amber, escalated is red."
+          right={<Link href="/followups"><Button size="sm" variant="ghost">All follow-ups <ArrowRight size={13} /></Button></Link>} />
+        <div className="px-5 pb-5"><FollowupList compact limit={6} /></div>
+      </Card>
 
       {/* KPI strip */}
       {/* Money from the ledger only (documented movements, quote-verified). The

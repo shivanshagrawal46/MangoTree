@@ -95,7 +95,6 @@ if os.environ.get("MT_SCHEDULER", "0").strip().lower() in ("1", "true", "yes"):
     _scheduler.start()
 else:
     logging.getLogger("mangotree").warning("scheduler OFF (set MT_SCHEDULER=1 on the server); mail intake, morning pass and briefings will not run here")
-_threading.Thread(target=lambda: (data.portfolio(mongo), _warm_caches()), daemon=True, name="warm-caches").start()
 _cards = CardDetector(mongo, anthropic_api_key=SETTINGS.anthropic_api_key)
 _briefing = Briefing(mongo, anthropic_api_key=SETTINGS.anthropic_api_key)
 
@@ -142,6 +141,7 @@ def _warm_caches() -> None:
         _cached("unplaced_count", 60, lambda: mongo.artifacts.count_documents({"placement": "unplaced"}))
     except Exception as exc:
         logger.warning("cache warm: %s", exc)
+
 
 
 def panel():
@@ -1203,3 +1203,13 @@ def quick_search(q: str, user=CurrentUser):
 def PEOPLE_LIST():
     from mangotree.config.registry import PEOPLE
     return PEOPLE
+
+
+# Next-steps sheets, follow-up tracker, outbox, personal desks (admin directive
+# 2026-09-16). Kept in their own module; installed onto this app.
+from . import desk_routes  # noqa: E402
+desk_routes.install(app, mongo, jobs)
+
+# Cache warm-up starts last, once every function it calls exists: started at
+# the top of the module it raced the import and hit NameError on a slow boot.
+_threading.Thread(target=lambda: (data.portfolio(mongo), _warm_caches()), daemon=True, name="warm-caches").start()

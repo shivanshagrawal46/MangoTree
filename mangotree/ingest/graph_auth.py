@@ -52,11 +52,16 @@ from typing import Callable, List, Optional
 
 from mangotree.core.logging import logger
 
-#: Delegated scopes. `Mail.Read` and nothing else — ingestion never writes, and a
-#: write scope we do not use is a write scope someone can later misuse.
-#: `offline_access` is what yields the refresh token; without it we would need
-#: Rakesh to sign in hourly.
+#: Delegated scopes for ingestion: `Mail.Read` and nothing else — ingestion
+#: never writes. `offline_access` is what yields the refresh token; without it
+#: we would need Rakesh to sign in hourly.
 SCOPES: List[str] = ["Mail.Read", "offline_access"]
+#: Sending (admin directive 2026-09-16): the next-steps sheets for JP and
+#: Manjunath and the follow-up reminders go out from rakesh@mtreh.com. Kept as
+#: a separate scope set so that reading keeps working on the existing consent
+#: while sending reports "consent needed" until Rakesh signs in once more; the
+#: device-code sign-in asks for both, so one sign-in covers everything.
+SEND_SCOPES: List[str] = ["Mail.Send"]
 
 AUTHORITY = "https://login.microsoftonline.com/{tenant}"
 
@@ -159,7 +164,7 @@ class GraphDelegatedAuth:
     ) -> str:
         """Interactive one-time sign-in. Returns the signed-in username."""
         app = self._application()
-        flow = app.initiate_device_flow(scopes=[s for s in SCOPES if s != "offline_access"])
+        flow = app.initiate_device_flow(scopes=[s for s in SCOPES if s != "offline_access"] + SEND_SCOPES)
 
         if "user_code" not in flow:
             raise GraphAuthError(
@@ -213,8 +218,13 @@ class GraphDelegatedAuth:
         return username
 
     # ------------------------------------------------------------------ tokens
-    def access_token(self) -> str:
-        """A valid access token, refreshed silently. Never prompts."""
+    def access_token(self, scopes: Optional[List[str]] = None) -> str:
+        """A valid access token, refreshed silently. Never prompts.
+
+        ``scopes`` defaults to the read scopes. Pass ``SEND_SCOPES`` to send:
+        if the signed-in consent predates the send scope, this raises
+        ``GraphReauthRequired`` for sending only — reading is unaffected."""
+        wanted = [s for s in (scopes or SCOPES) if s != "offline_access"]
         with self._lock:
             app = self._application()
             accounts = app.get_accounts()
@@ -238,13 +248,18 @@ class GraphDelegatedAuth:
                     )
                 account = match[0]
 
-            result = app.acquire_token_silent(
-                [s for s in SCOPES if s != "offline_access"], account=account
-            )
+            result = app.acquire_token_silent(wanted, account=account)
             self._save_cache()
 
             if not result or "access_token" not in result:
                 error = (result or {}).get("error_description", "no cached token")
+                if any(s in SEND_SCOPES for s in wanted):
+                    raise GraphReauthRequired(
+                        "Sending needs a one-time consent for Mail.Send: run "
+                        "`python -m mangotree.cli outlook-auth` and have "
+                        f"{self.mailbox} sign in once more (reading is unaffected). "
+                        f"Detail: {str(error)[:300]}"
+                    )
                 raise GraphReauthRequired(
                     "Silent token refresh failed — the refresh token has expired "
                     "or been revoked (password change, MFA reset, or ~90 days "
@@ -252,6 +267,13 @@ class GraphDelegatedAuth:
                     f"Detail: {str(error)[:300]}"
                 )
             return result["access_token"]
+
+    def can_send(self) -> bool:
+        try:
+            self.access_token(SEND_SCOPES)
+            return True
+        except GraphReauthRequired:
+            return False
 
     def needs_reauth(self) -> bool:
         try:

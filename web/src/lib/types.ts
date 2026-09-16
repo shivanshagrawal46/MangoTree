@@ -122,6 +122,50 @@ export type WesIssue = {
 };
 export type WesAgendaDoc = { property_id: string; day: string | null; generated_at?: string; issues: WesIssue[]; quiet?: boolean; note?: string };
 
+/* ---------------------------------------------------- next steps / desks */
+export type NextPerson = "wes" | "manjunath" | "jp" | "rakesh";
+export type NextStep = {
+  title: string; detail: string; why_critical: string; due?: string | null; urgency: "critical" | "high";
+  evidence: { source_sha: string; quote: string }[]; verified: boolean; done?: boolean; done_by?: string | null; done_at?: string | null;
+  property_id?: string; address?: string; index?: number; run_id?: string;
+};
+export type NextStepsProperty = { address: string; headline: string; error?: string; elapsed_s?: number } & Partial<Record<NextPerson, NextStep[]>>;
+export type NextStepsRun = {
+  run_id: string; day: string; started_at: string; finished_at?: string; by: string; status: "running" | "complete" | "failed";
+  order: string[]; properties: Record<string, NextStepsProperty>; progress?: { done: number; total: number };
+  counts?: Record<NextPerson, number>; errors?: string[]; elapsed_s?: number; subtitle?: string;
+  sent?: { at: string; by: string; outbox: Record<string, { outbox_id: string; status: string }> };
+};
+export type SendStatus = { mailbox: string | null; can_send: boolean; signed_in: boolean; how_to_enable?: string; error?: string };
+export type OutboxItem = {
+  outbox_id: string; kind: string; ref: string; to: { name: string; address: string }[]; subject: string; text?: string;
+  status: "queued" | "sent" | "needs_consent" | "failed" | "replied" | "superseded"; attempts: number; queued_at: string; sent_at?: string | null;
+  error?: string | null; replied_at?: string | null; replied_by?: string | null; reply_preview?: string | null;
+  meta?: Record<string, any>; attachments?: { filename: string; content_type: string; size: number }[];
+};
+export type NextStepsLatest = { run: NextStepsRun | null; sent?: OutboxItem[]; send_status?: SendStatus | null; running?: boolean; person?: NextPerson;
+  in_progress?: { run_id: string; started_at: string; by: string; progress?: { done: number; total: number } } | null };
+export type SheetSection = { property_id: string; address: string; headline: string; steps: NextStep[]; others: Partial<Record<NextPerson, NextStep[]>> };
+export type Sheet = { run_id: string; day: string; person: NextPerson; subtitle: string; sections: SheetSection[]; status: string };
+
+export type Followup = {
+  followup_id: string; kind: "ask_internal" | "ask_external" | "report_ack"; property_ids: string[]; thread_key?: string | null; subject?: string;
+  owner: "rakesh" | "jp" | "manjunath"; counterparty: { name: string; email: string; person_id?: string | null };
+  what: string; topic: string; source_sha?: string | null; asked_at: string; created_at: string; due: string;
+  status: "open" | "replied" | "done" | "dismissed" | "escalated"; reminders: { at: string; mode: string; to?: string; outbox_id?: string }[];
+  last_reminder_at?: string | null; escalated_at?: string | null; closed_at?: string | null; closed_by?: string | null; closed_reason?: string | null;
+  draft?: { subject: string; body: string; to?: string; at: string } | null; updates?: { at: string; sha: string; what: string }[];
+};
+export type FollowupsResponse = { items: Followup[]; counts: Record<string, Record<string, number>>; last_tick?: string | null; since: string;
+  rules: { external_due_business_days: number; internal_due_business_days: number; escalate_after_business_days: number } };
+export type Desk = {
+  user: { user_id: string; name: string; role: string; full_name?: string }; person: NextPerson | null;
+  run: { run_id: string; day: string; status: string; finished_at?: string } | null; subtitle?: string | null;
+  steps: NextStep[]; followups: Followup[]; tasks: Task[];
+  sheet_mail?: { status: string; sent_at?: string; replied_at?: string; subject?: string } | null;
+  team?: Record<string, { steps: number; followups: number }> | null;
+};
+
 export type Intake = {
   error?: string;
   poll_minutes: number;

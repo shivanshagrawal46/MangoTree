@@ -120,6 +120,13 @@ class JobRunner:
     def get(self, job_id: str) -> Optional[Job]:
         return self.jobs.get(job_id)
 
+    def active_of_kind(self, kind: str) -> Optional[Job]:
+        """The in-process job of this kind still queued or running, if any."""
+        for j in self.jobs.values():
+            if j.kind == kind and j.status in ("queued", "running"):
+                return j
+        return None
+
     def cancel(self, job_id: str) -> bool:
         job = self.jobs.get(job_id)
         if not job or job.status not in ("queued", "running"):

@@ -244,6 +244,40 @@ MORNING_MAX_WALL_CLOCK_S = 15 * 60
 #: Output caps for the two Astra writers of the morning pass (admin directive 2026-09-11).
 LEDGER_MAX_OUTPUT_TOKENS = 30_000
 WES_MAX_OUTPUT_TOKENS = 12_000
+#: At most this many Wes issues per property per day (admin directive
+#: 2026-09-16, down from three: only the genuinely critical ones).
+WES_MAX_ISSUES = 2
+
+# =============================================================================
+# Next-steps reports and follow-ups — admin directive 2026-09-16
+# =============================================================================
+#: The properties the person-by-person "next steps" reports and the follow-up
+#: tracker cover. 9th St NW is excluded by decision, not by accident.
+REPORT_EXCLUDED_PROPERTIES = ("9th_st_nw",)
+#: 1–2 critical next steps per person per property; never more.
+NEXT_STEPS_MAX_PER_PERSON = 2
+#: The per-property investigation behind a next-steps run is the fast mode
+#: (GPT-6 Astra, FAST_MAX_TOOL_CALLS), run for the 14 properties with this
+#: much parallelism.
+NEXT_STEPS_CONCURRENCY = 3
+NEXT_STEPS_WRITER_MODEL = "gpt-6-astra"
+#: Responses API counts reasoning tokens against this cap; at 6,000 the
+#: function arguments were cut mid-string on a busy property (2026-09-16).
+NEXT_STEPS_MAX_OUTPUT_TOKENS = 24_000
+#: Follow-up tracking begins here; nothing before this date is turned into a
+#: follow-up, and nothing before it is read for replies.
+FOLLOWUP_SINCE = "2026-09-16"
+FOLLOWUP_EXTRACT_MODEL = model_for(Seat.ANALYST)          # Opus 5 reads each new email once
+#: Standard procedure with Wes's team and our own: how long a counterparty
+#: (Wes, Kelly …) has before a reminder is due, how long our own people have
+#: before the system reminds them, and how often it may remind.
+FOLLOWUP_EXTERNAL_DUE_BUSINESS_DAYS = 2
+FOLLOWUP_INTERNAL_DUE_BUSINESS_DAYS = 1
+FOLLOWUP_ESCALATE_AFTER_BUSINESS_DAYS = 4
+FOLLOWUP_MIN_HOURS_BETWEEN_REMINDERS = 20
+#: The subject tag every system-sent email carries, so internal replies can be
+#: recognised without reading anything else in the mailbox.
+SYSTEM_MAIL_TAG = "[RKB]"
 #: Output caps for the two Opus 5 writers that run after new mail (admin
 #: directive 2026-09-11): the task extractor (tasks + Wes's work list + drafted
 #: emails) and the "what's new" cards.

@@ -941,10 +941,14 @@ def cmd_outlook_auth(args) -> int:
         account = auth.signed_in_account()
         print(f"\nAlready signed in as {account}.")
         if not auth.needs_reauth():
-            print("Token refreshes silently. Nothing to do.")
-            print("Use --force to sign in again as a different account.\n")
-            return 0
-        print("But the refresh token is no longer valid — signing in again.\n")
+            if auth.can_send():
+                print("Token refreshes silently; reading and sending both work. Nothing to do.")
+                print("Use --force to sign in again as a different account.\n")
+                return 0
+            print("Reading works, but SENDING is not yet consented (Mail.Send is new since 2026-09-16).")
+            print("Signing in once more adds it — the next-steps sheets and reminders go out from this mailbox.\n")
+        else:
+            print("But the refresh token is no longer valid — signing in again.\n")
 
     print("\n" + "=" * 68)
     print("  OUTLOOK SIGN-IN — for Rakesh Sir")
@@ -958,9 +962,12 @@ def cmd_outlook_auth(args) -> int:
         print(f"  1. Open this page:   {prompt.verification_uri}")
         print(f"  2. Enter this code:  {prompt.user_code}")
         print(f"  3. Sign in as:       {auth.mailbox}")
-        print("  4. Approve the consent screen. It should say 'Read your mail'.")
+        print("  4. Approve the consent screen. It should say 'Read your mail' and")
+        print("     'Send mail as you' — both for THIS account only.")
         print("     If it mentions ALL mailboxes, STOP — the app has Application")
         print("     permissions instead of Delegated. See runbook step 3.")
+        print("     If 'Send mail as you' is missing, add the delegated permission")
+        print("     Mail.Send to the app registration in Entra (API permissions).")
         print("  " + "-" * 64)
         print(f"\n  Code expires in {prompt.expires_in // 60} minutes. Waiting...\n")
 

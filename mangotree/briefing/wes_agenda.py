@@ -1,8 +1,10 @@
-"""The daily top-three per property to raise with Wes — by Claude Fable 5.1.
+"""The daily top issues per property to raise with Wes — by GPT-6 Astra.
 
-Every morning, for each property, three issues and no more: what it is, why
-today, the evidence (a verbatim quote from a record), and the exact ask for Wes.
-Written for a five-minute conversation, not a report.
+Every morning, for each property, at most TWO issues (admin directive
+2026-09-16, down from three: the system was cluttered), and only the genuinely
+critical ones: what it is, why today, the evidence (a verbatim quote from a
+record), and the exact ask for Wes. Written for a five-minute conversation, not a
+report. A property with nothing critical gets zero issues, not filler.
 
 Inputs the model sees, per property
     * the money ledger's risks, gaps and discrepancies (the tax-sale foreclosure
@@ -36,10 +38,12 @@ from mangotree.storage.mongo import Mongo
 _SYSTEM = """You prepare the CEO of RKB Consulting Group (a renovation lender) for his
 conversation with Wes, the contractor who runs the renovation work on the
 properties RKB has funded. For ONE property, using only the RECORDS given, choose
-the THREE issues most worth raising with Wes today. Fewer than three if the
-records honestly do not support three.
+AT MOST TWO issues — only those that are genuinely critical to raise with Wes
+today. One if only one is critical; none (quiet=true) if nothing is. Never pad:
+a routine follow-up is not an issue. The CEO reads this for fourteen properties
+in five minutes, so every issue must earn its place.
 
-What makes an issue worth raising
+What makes an issue critical
   1. money at risk: a draw paid with no evidence of the work, a lien or tax sale
      against the collateral, interest not received, a payoff or maturity near
   2. work: an item Wes committed to that is past its date, blocked, or silent;
@@ -75,7 +79,7 @@ _TOOL = {
     "input_schema": {
         "type": "object",
         "properties": {
-            "issues": {"type": "array", "maxItems": 3, "items": {"type": "object", "properties": {
+            "issues": {"type": "array", "maxItems": cfg.WES_MAX_ISSUES, "items": {"type": "object", "properties": {
                 "title": {"type": "string"}, "why_now": {"type": "string"}, "ask": {"type": "string"},
                 "urgency": {"type": "string"}, "carried_from": {"type": ["string", "null"]},
                 "evidence": {"type": "array", "items": {"type": "object", "properties": {
@@ -269,7 +273,7 @@ class WesAgenda:
 
         issues: List[dict] = []
         dropped = 0
-        for i in (data.get("issues") or [])[:3]:
+        for i in (data.get("issues") or [])[:cfg.WES_MAX_ISSUES]:
             ev_ok = []
             for e in i.get("evidence") or []:
                 sha = full.get(str(e.get("source_sha") or "")[:16])
