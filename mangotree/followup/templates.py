@@ -104,9 +104,12 @@ def wes_cover(*, day_label: str, top: List[Dict[str, Any]], carried: List[Dict[s
             f"{s.get('address')}: {s.get('title')} — since {_date_str(s.get('first_seen'))}" for s in carried[:3]]
     closing = ("A quick reply with where each item stands — done, in hand, or blocked and why — is all I need; a line per property is plenty. "
                "If anything on the sheet is already handled or simply wrong, tell me and it comes off tomorrow's. Thank you, as always, for the work.")
-    text_parts = paragraphs + [f"{k}\n" + "\n".join(f"  • {i}" for i in v) for k, v in bullets.items() if v] + [closing, "Best regards,\nRakesh Bhargava\nRKB Consulting Group, Inc."]
+    footer = "This is an auto-generated mail from the system."
+    text_parts = paragraphs + [f"{k}\n" + "\n".join(f"  • {i}" for i in v) for k, v in bullets.items() if v] + [closing, "Best regards,\nRakesh Bhargava\nRKB Consulting Group, Inc.", footer]
     html, _ = _wrap(paragraphs, bullets, closing)
     html = html.replace("Warm regards,<br>", "Best regards,<br>")
+    if html.endswith("</div>"):
+        html = html[:-len("</div>")] + f"<p style='margin:18px 0 0;font-size:12px;color:#8a8a94'>{footer}</p></div>"
     return subject, html, "\n\n".join(text_parts)
 
 
