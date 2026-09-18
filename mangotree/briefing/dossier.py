@@ -206,6 +206,10 @@ class PropertyDossier:
             return self.build(pid, force=True)
         now = datetime.now(timezone.utc)
         reason = self.changed_since(pid, built)
+        # A dossier answers the question it was asked; when the question changes
+        # (2026-09-16: next steps per person first) the old answer is stale.
+        if reason is None and existing.get("question") != QUESTION:
+            reason = "question changed"
         if reason is None and (now - built) < timedelta(days=max_stale_days):
             logger.info("dossier %s: unchanged since %s — kept", pid, f"{built:%m-%d %H:%M}")
             self.coll.update_one({"property_id": pid}, {"$set": {"checked_at": now, "kept_reason": "unchanged"}})

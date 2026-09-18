@@ -1,16 +1,20 @@
-"""AI task extraction — Opus 5 reads a property's recent records and writes the to-do list.
+"""AI task extraction — Opus 5 writes the to-do list from Astra's investigation.
 
-For each property: the last months of emails (subject, sender, date, body
-excerpt), the timeline's open-ended events (deadlines, defaults, extensions,
-commitments), and the existing open tasks so nothing is duplicated. Opus 5
-returns tasks with an owner, a due date where the records state one, a
-priority, a status (open, or done if the records show it happened), and the
-evidence — a verbatim quote and the source sha. A task with no quote is dropped:
-an AI to-do that cannot point at its reason is noise.
+Admin directive 2026-09-17: one analysis per property (the morning dossier, by
+GPT-6 Astra); Opus 5 does not read the property again. For each property Opus
+sees the dossier — where the deal stands, what is open, blocked or owed and by
+whom — the tasks already open, and ONLY the records that arrived since the last
+task pass, tagged with their sha. From that it:
 
-Wes's construction work is asked for separately, so the property page can show
-what the contractor has finished and what remains.
+  * marks open tasks done or superseded when the investigation shows it,
+  * writes NEW tasks only from the new records, each with a verbatim quote and
+    the record's sha (a task that cannot point at its reason is noise),
+  * drafts the email where carrying out a task means writing to someone.
 
+Before this it re-read 120 days of mail every morning, independently of the
+investigation, and re-proposed the same tasks (243 written on 2026-09-17).
+
+Wes's construction work list is paused (WES_WORK_LIST_ENABLED).
 Runs per property; safe to re-run (idempotent ids; human-closed tasks are not
 resurrected).
 """
@@ -30,8 +34,10 @@ from mangotree.storage.mongo import Mongo
 
 from .store import TaskStore, normalise_owner
 
-RECENT_DAYS = 120
-MAX_EMAILS = 60
+#: First pass on a property (no watermark yet): how far back "new" reaches.
+#: The investigation carries the history; three days of records is enough.
+RECENT_DAYS = 3
+MAX_EMAILS = 40
 #: 4,000 (admin, 2026-09-11), from 1,200: at 1,200 a multi-property email was
 #: read only at the top — the same fault that hid Tahona in the action sheet.
 MAX_BODY = 4000
@@ -46,18 +52,30 @@ People:
   Wes      — the contractor (Wes Stone, ROI Blocks / LP Remodeling): construction
              work, draws, inspections, permits, punch lists
 
-You will see one property's recent emails, its timeline of dated events, and
-the tasks already open. Produce:
+You will see, for one property: the INVESTIGATION (this morning's read of the
+whole file by the analyst — where the deal stands, what is open, blocked or owed
+and by whom), the TASKS ALREADY OPEN, and the NEW RECORDS that arrived since the
+last task pass, each tagged [sha=...]. You do not re-read the property; the
+investigation is your picture of it. Produce:
 
-1. "tasks": things a person at RKB must do or decide. For each:
-   title (short, imperative, names the thing: "Send payoff demand to title for
-   2000 Chita Ct"), owner (Rakesh / JP / Manjunath / Wes / a named other),
-   due (YYYY-MM-DD if the records state or clearly imply it, else null),
-   priority (critical: money at risk now or a passed deadline; high: this
-   week; normal; low), status ("open", or "done" if the records show it was
-   completed), why (one plain sentence), quote (verbatim text from the records
-   that is the reason), source_sha (the sha shown with that record).
-   Do NOT repeat a task already open unless the records show it is now done.
+1. "tasks" — in two kinds:
+   a) UPDATES to tasks already open: where the investigation or a new record
+      shows an open task was completed, return it with status "done" and the
+      quote that shows it (from a new record if one exists; otherwise quote the
+      investigation's sentence and set source_sha to "investigation"). Where a
+      task is superseded (the deadline passed and a new one exists, the ask was
+      withdrawn), return status "done" the same way. Do not return open tasks
+      that are simply still open — silence means unchanged.
+   b) NEW tasks — things a person at RKB must now do or decide — ONLY from the
+      NEW RECORDS, each with a verbatim quote from that record and its sha.
+      Never re-propose something already open in other words; never propose
+      from the investigation alone, without a new record that supports it.
+   Zero new tasks is the right answer on a quiet day.
+   For each: title (short, imperative, names the thing: "Send payoff demand to
+   title for 2000 Chita Ct"), owner (Rakesh / JP / Manjunath / Wes / a named
+   other), due (YYYY-MM-DD if a record states or clearly implies it, else null),
+   priority (critical: money at risk now or a passed deadline; high: this week;
+   normal; low), status, why (one plain sentence), quote, source_sha.
    email — when carrying out the task means sending a message to someone
    outside RKB (Wes, a borrower, counsel, title, an insurer — asking, chasing,
    confirming, instructing), include the complete email ready to send:
@@ -76,10 +94,9 @@ the tasks already open. Produce:
    every date, unmistakably. Never invent a date or a fact. Omit "email"
    (null) for internal steps, phone calls and decisions.
 
-2. "wes_work": the contractor's construction items for this property — each
-   with title, status ("done" | "in_progress" | "remaining" | "blocked"), a
-   due or promised date if any, quote, source_sha. Include what is finished as
-   well as what remains, so completion can be shown.
+2. "wes_work": leave as an empty list unless the records header says the work
+   list is wanted; when it is, the contractor's construction items — title,
+   status ("done" | "in_progress" | "remaining" | "blocked"), due, quote, source_sha.
 
 Rules: plain words; no task without a quote; never invent a date. Respond by
 calling write_tasks once with {"tasks": [...], "wes_work": [...]}.
@@ -148,46 +165,48 @@ class TaskExtractor:
         self.stats = ExtractStats()
 
     # ---------------------------------------------------------------- gather
+    def _last_pass(self, property_id: str) -> Optional[datetime]:
+        st = self.mongo.db["task_extract_state"].find_one({"_id": property_id})
+        return (st or {}).get("at")
+
+    def _mark_pass(self, property_id: str, at: datetime) -> None:
+        self.mongo.db["task_extract_state"].update_one({"_id": property_id}, {"$set": {"at": at}}, upsert=True)
+
     def _records(self, property_id: str) -> str:
-        since = datetime.now(timezone.utc) - timedelta(days=RECENT_DAYS)
         parts: List[str] = []
         prop = PROPERTY_INDEX.get(property_id)
-        parts.append(f"PROPERTY: {property_id} — {prop.canonical_address if prop else ''}")
-        # Investigation first (admin directive 2026-09-03): the agent's picture of
-        # where the deal stands, the chat's decisions, standing notes, and what a
-        # person already closed — so a week of mail is judged with its history.
+        parts.append(f"PROPERTY: {property_id} \u2014 {prop.canonical_address if prop else ''}")
+        parts.append("WES WORK LIST WANTED: " + ("yes" if cfg.WES_WORK_LIST_ENABLED else "no"))
+        # The investigation IS the reading (admin directive 2026-09-17).
         from mangotree.briefing.dossier import context_for
         parts.append("\n" + context_for(self.mongo, property_id) + "\n")
 
-        emails = list(self.mongo.artifacts.find(
-            {"property_ids": property_id, "source_type": "email", "date": {"$gte": since}},
-            {"sha256": 1, "subject": 1, "date": 1, "participants.from": 1, "body_clean": 1, "attachment_names": 1},
+        # Only what arrived since the last task pass \u2014 by arrival or placement,
+        # not by the document's own date, so a late-placed email still counts once.
+        since = self._last_pass(property_id) or (datetime.now(timezone.utc) - timedelta(days=RECENT_DAYS))
+        new = list(self.mongo.artifacts.find(
+            {"property_ids": property_id, "is_inline_image": {"$ne": True},
+             "$or": [{"created_at": {"$gt": since}}, {"placed_at": {"$gt": since}}]},
+            {"sha256": 1, "subject": 1, "filename": 1, "source_type": 1, "date": 1, "participants.from": 1, "body_clean": 1, "text": 1, "attachment_names": 1},
         ).sort("date", -1).limit(MAX_EMAILS))
-        parts.append(f"\n=== RECENT EMAILS ({len(emails)}, newest first) ===")
-        for e in emails:
-            frm = ((e.get("participants") or {}).get("from") or [""])[0]
-            body = " ".join((e.get("body_clean") or "").split())[:MAX_BODY]
-            atts = ", ".join(e.get("attachment_names") or [])
-            parts.append(f"\n[sha={e['sha256'][:16]}] {e['date']:%Y-%m-%d} from {frm}\nSubject: {e.get('subject')}"
-                         + (f"\nAttachments: {atts}" if atts else "") + f"\n{body}")
-
-        events = list(self.mongo.db["timeline_events"].find(
-            {"property_id": property_id, "event_type": {"$in": ["default", "legal", "extension", "payoff", "funding",
-                                                                  "construction", "title", "tax_insurance", "communication", "listing_sale"]}},
-            {"occurred_at": 1, "event_type": 1, "title": 1, "quote": 1, "source_sha": 1, "amount": 1},
-        ).sort("occurred_at", -1).limit(MAX_EVENTS))
-        parts.append(f"\n=== TIMELINE EVENTS ({len(events)}, newest first) ===")
-        for ev in events:
-            d = ev.get("occurred_at")
-            ds = d.strftime("%Y-%m-%d") if hasattr(d, "strftime") else "undated"
-            amt = f" ${ev['amount']:,.0f}" if isinstance(ev.get("amount"), (int, float)) else ""
-            parts.append(f"[sha={str(ev.get('source_sha'))[:16]}] {ds} {ev.get('event_type')}: {ev.get('title')}{amt}"
-                         + (f' — "{str(ev.get("quote"))[:200]}"' if ev.get("quote") else ""))
+        parts.append(f"\n=== NEW RECORDS SINCE THE LAST TASK PASS ({len(new)}, since {since:%Y-%m-%d %H:%M} UTC, newest first) ===")
+        if not new:
+            parts.append("(none \u2014 no new tasks can be proposed today; updates from the investigation only)")
+        for e in new:
+            if e.get("source_type") == "email":
+                frm = ((e.get("participants") or {}).get("from") or [""])[0]
+                body = " ".join((e.get("body_clean") or "").split())[:MAX_BODY]
+                atts = ", ".join(e.get("attachment_names") or [])
+                parts.append(f"\n[sha={e['sha256'][:16]}] EMAIL {str(e.get('date'))[:10]} from {frm}\nSubject: {e.get('subject')}"
+                             + (f"\nAttachments: {atts}" if atts else "") + f"\n{body}")
+            else:
+                body = " ".join((e.get("text") or "").split())[:MAX_BODY]
+                parts.append(f"\n[sha={e['sha256'][:16]}] DOCUMENT {str(e.get('date'))[:10]} {e.get('filename')}\n{body}")
 
         open_tasks = self.store.list(property_id=property_id, statuses=("open", "suggested"))
         parts.append(f"\n=== TASKS ALREADY OPEN ({len(open_tasks)}) ===")
-        for t in open_tasks[:60]:
-            parts.append(f"- [{t['owner']}] {t['title']}" + (f" (due {t['due']:%Y-%m-%d})" if t.get("due") else ""))
+        for t in open_tasks[:80]:
+            parts.append(f"- [{t['owner']}] {t['title']}" + (f" (due {t['due']:%Y-%m-%d})" if t.get("due") else "") + f"  <{t.get('status')}>")
         # Contacts and sign-offs, so a drafted email has a real "To" and the right signature.
         try:
             from mangotree.api import data as _data
@@ -216,6 +235,7 @@ class TaskExtractor:
 
     # ------------------------------------------------------------------- call
     def extract(self, property_id: str) -> Dict[str, int]:
+        started = datetime.now(timezone.utc)      # records gathered from here; watermark after success
         text = self._records(property_id)
         from mangotree.core.llm_json import json_call
         from mangotree.core.usage import METER
@@ -244,8 +264,13 @@ class TaskExtractor:
             if not quote or not t.get("title"):
                 dropped += 1
                 continue
-            sha = full.get(str(t.get("source_sha") or "")[:16])
             status = "done" if str(t.get("status")).lower() == "done" else "suggested"
+            sha = full.get(str(t.get("source_sha") or "")[:16])
+            # A NEW task must point at a new record; an update ("done") may rest on
+            # the investigation's own sentence, marked as such.
+            if sha is None and not (status == "done" and str(t.get("source_sha") or "").lower().startswith("investigation")):
+                dropped += 1
+                continue
             doc = self.store.upsert(
                 title=str(t["title"]), owner=normalise_owner(t.get("owner")), property_id=property_id,
                 by="opus-5", source="ai_extracted", status=status,
@@ -259,7 +284,7 @@ class TaskExtractor:
                     done += 1
 
         wes = []
-        for w in data.get("wes_work") or []:
+        for w in (data.get("wes_work") or []) if cfg.WES_WORK_LIST_ENABLED else []:
             quote = str(w.get("quote") or "").strip()
             if not quote or not w.get("title"):
                 dropped += 1
@@ -270,11 +295,14 @@ class TaskExtractor:
                 "due": _date(w.get("due")), "quote": quote[:600], "source_sha": full.get(str(w.get("source_sha") or "")[:16]),
             })
         now = datetime.now(timezone.utc)
-        coll = self.mongo.db["wes_work"]
-        coll.create_index("property_id", name="ix_wes_property")
-        coll.delete_many({"property_id": property_id, "source": "ai_extracted"})
-        if wes:
-            coll.insert_many([{**w, "property_id": property_id, "source": "ai_extracted", "extracted_at": now} for w in wes])
+        if cfg.WES_WORK_LIST_ENABLED:
+            coll = self.mongo.db["wes_work"]
+            coll.create_index("property_id", name="ix_wes_property")
+            coll.delete_many({"property_id": property_id, "source": "ai_extracted"})
+            if wes:
+                coll.insert_many([{**w, "property_id": property_id, "source": "ai_extracted", "extracted_at": now} for w in wes])
+        # Watermark: the next pass sees only what arrives after this one began.
+        self._mark_pass(property_id, started)
 
         self.stats.tasks_written += written
         self.stats.tasks_done += done
@@ -285,7 +313,7 @@ class TaskExtractor:
         return out
 
     def run(self, property_ids: Optional[List[str]] = None, *, concurrency: int = 5) -> ExtractStats:
-        ids = property_ids or [p.property_id for p in PROPERTIES]
+        ids = list(property_ids or cfg.analysis_property_ids())
         self.stats.properties = len(ids)
         with ThreadPoolExecutor(max_workers=concurrency) as pool:
             futs = {pool.submit(self.extract, pid): pid for pid in ids}

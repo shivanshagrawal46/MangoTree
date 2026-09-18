@@ -16,7 +16,7 @@ import { Timeline } from "@/components/timeline";
 import { TaskBoard } from "@/components/tasks";
 import { MoneyFlow, ByType, Donut } from "@/components/charts";
 import { CardsFeed } from "@/components/briefing";
-import { LedgerView, WesAgendaCard, WesAgendaStrip, Figure } from "@/components/ledger";
+import { LedgerView, Figure } from "@/components/ledger";
 import { UploadBox } from "@/components/upload";
 import { FileDown } from "lucide-react";
 import { cn, fmtDate, ago, money, HEALTH, PLACEMENT_LABEL } from "@/lib/utils";
@@ -52,7 +52,6 @@ export default function PropertyPage() {
             <div className="flex items-center gap-2"><Donut done={d.wes.done} total={d.wes.total} size={48} /><div><div className="text-[11px] uppercase tracking-wide text-faint">Wes</div><div className="text-xs text-muted tnum">{d.wes.done}/{d.wes.total} done</div></div></div>
           </div>
         </div>
-        <WesAgendaStrip pid={pid} />
         <Tabs value={tab} onValueChange={setTab} className="mt-3">
           <TabsList>
             {[["chat", "Chat"], ["timeline", `Timeline · ${d.events}`], ["tasks", "Tasks"], ["money", "Money"], ["docs", `Docs · ${d.documents.total}`], ["files", "Files"], ["comms", "Comms"], ["wes", "Wes's work"], ["people", "People"]].map(([k, l]) => <TabsTrigger key={k} value={k}>{l}</TabsTrigger>)}
@@ -69,7 +68,7 @@ export default function PropertyPage() {
           {tab === "docs" && <div className="h-full overflow-y-auto p-6"><Docs pid={pid} /></div>}
           {tab === "files" && <div className="h-full overflow-y-auto p-6"><Files pid={pid} /></div>}
           {tab === "comms" && <div className="h-full overflow-y-auto p-6"><Comms pid={pid} /></div>}
-          {tab === "wes" && <div className="h-full overflow-y-auto p-6 max-w-4xl space-y-4"><WesAgendaCard pid={pid} /><Wes pid={pid} /></div>}
+          {tab === "wes" && <div className="h-full overflow-y-auto p-6 max-w-4xl space-y-4"><Wes pid={pid} /></div>}
           {tab === "people" && <div className="h-full overflow-y-auto p-6"><People pid={pid} /></div>}
         </motion.div>
       </div>

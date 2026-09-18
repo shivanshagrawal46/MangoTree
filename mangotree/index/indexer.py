@@ -153,7 +153,7 @@ class Indexer:
             # Retrieval metadata: carried onto every chunk so a query can narrow
             # by sender, date, folder or scope during the search itself.
             "participants": 1, "scope": 1, "common_kind": 1, "common_topics": 1, "placement": 1, "relative_path": 1,
-            "parent_email_shas": 1,
+            "parent_email_shas": 1, "chunk_sections": 1,
         }
         cursor = self.mongo.artifacts.find(query, projection)
         if limit:
@@ -224,6 +224,9 @@ class Indexer:
             artifact_sha=doc["sha256"],
             property_ids=property_ids,
             default_ref=default_ref,
+            # A transcript whose author labelled each part with the property:
+            # the headings decide, chunks stop at section boundaries.
+            sections=doc.get("chunk_sections") or None,
         )
         if not chunks:
             self.stats.skipped_no_text += 1

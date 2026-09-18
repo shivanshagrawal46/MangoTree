@@ -53,17 +53,30 @@ money at risk, a deadline inside two weeks, a blocked draw or inspection, a comm
 is overdue, a reply RKB owes. Zero steps for a person is the correct answer when nothing
 critical sits with them. Never pad. Never repeat a step that a record shows is done.
 
+THE LENS — RKB is a lender. A step for Wes earns its place only if it does one of three things:
+  (a) brings RKB's money back — a sale, a payoff, a refinance, a repayment plan, a closing;
+  (b) protects RKB's collateral or lien — insurance, a foreclosure filing, a lien position;
+  (c) unblocks work RKB is funding so the deal can complete and repay — permits, inspections,
+      draws with evidence.
+Wes's own housekeeping — his taxes, his contractor's invoices, his company's paperwork — is NOT
+a step for him on RKB's sheet unless a record shows it directly threatens (a) or (b); and if it
+does, say so in RKB's terms ("clear the DC tax so the tax lien stops sitting ahead of RKB").
+Read the deal from the records: who owns the property, what RKB is owed, how RKB gets paid.
+When Wes's company is the owner (as he may state on a call), the step is the one that gets RKB
+repaid — price cut, contract, closing date — not the owner's chores. When RKB is buying or
+making an offer, steps about permission to enter, inspect or restart are moot.
+
 Who does what
   wes        — {wes}
   manjunath  — {manjunath}
   jp         — {jp}
   rakesh     — {rakesh}
 
-Each step
-  title          — an instruction in plain words, seven to twelve words, starting with a verb
-  detail         — two to four sentences: exactly what to do, what to send, to whom, and what
-                   "done" looks like; the date or figure if a record carries it
-  why_critical   — one sentence: what happens if this waits
+Each step — SHORT and straight to the point; the reader has fourteen properties to get through
+  title          — one instruction, plain words, at most twelve words, starting with a verb
+  detail         — ONE sentence (at most thirty words): the concrete thing, to whom, by when if a
+                   record fixes it. No lists of documents, no "done means", no background.
+  why_critical   — one short sentence, or empty if the title already says it
   due            — YYYY-MM-DD if a record or a commitment fixes a date, else null
   urgency        — critical | high
   evidence       — one or two {{source_sha (16-char prefix as shown), quote (VERBATIM from
@@ -75,14 +88,20 @@ Numbers: a dollar figure only if it is inside a quote you cite. Otherwise descri
 Do not invent a person's step from another person's issue: if Wes must send an invoice, that is
 Wes's step; Manjunath's step, if any, is what Manjunath does about it (chase it, check it, enter it).
 
-Memory — this is what earns trust. The PREVIOUS SHEET section lists yesterday's steps for
-this property with their state:
-  * DONE (ticked by the person, or the records show it happened): NEVER raise it again, in any
-    wording. If a related but genuinely new step follows from it, that is a new step, not a repeat.
-  * NOT DONE and still critical: carry it forward — same substance, carried_from set to its
-    title, and say plainly in the detail that it is still outstanding and since when. A person
-    reminding a colleague would not pretend it is new.
-  * NOT DONE but the records now show it is moot or resolved: drop it.
+Memory — this is what earns trust. The PREVIOUS SHEET lists the steps each person was given,
+and RESPONSES SINCE THE PREVIOUS SHEET is what they actually said back (a call, an email). Judge
+EVERY previous step against the responses FIRST, one of four ways:
+  * ANSWERED AND CLOSED — they did it, or Rakesh said on the call it is no longer needed
+    ("you have nothing to do"): the step disappears. No replacement unless something new follows.
+  * ANSWERED WITH A PLAN OR NEW FACT — they said what is happening and what they will do next:
+    retire the old step and write THE NEXT MOVE after their answer, in their own terms
+    ("Email CLA Title today for the US Bank payoff specifics and forward the reply"). Set
+    carried_from to the old title. Mention what they said ("you said on the 16th…") in the detail.
+  * NOT ADDRESSED — they said nothing about it: carry it, same substance, carried_from set,
+    detail one line: still outstanding since <date>.
+  * DONE per the records or ticked by the person: never raise it again, in any wording.
+A response that is only a status update ("still waiting on DC") is still an answer: the next
+move is then to get the date or the person chasing it, not to repeat the original ask.
 
 headline — one plain sentence on where this property stands today, for the top of the sheet.
 
@@ -199,6 +218,29 @@ class NextSteps:
             lines.append("  (nothing was on it)")
         return "\n".join(lines)
 
+    def _responses_since(self, pid: str, since: Optional[datetime]) -> str:
+        """What the people on the sheet actually SAID since the previous sheet —
+        Wes's and Kelly's emails on this property, and their part of any call
+        transcript — verbatim, labelled. The writer judges every carried step
+        against this block first."""
+        since = since or (datetime.now(timezone.utc) - timedelta(days=3))
+        q = {"property_ids": pid, "is_inline_image": {"$ne": True},
+             "$or": [{"created_at": {"$gt": since}}, {"placed_at": {"$gt": since}}]}
+        rows = list(self.mongo.artifacts.find(q, {"sha256": 1, "source_type": 1, "doc_class": 1, "subject": 1, "filename": 1, "date": 1,
+                                                  "author_person_id": 1, "participants.from": 1, "body_clean": 1, "text": 1, "chunk_sections": 1, "meeting": 1}).sort("date", 1).limit(30))
+        out: List[str] = []
+        for a in rows:
+            who = a.get("author_person_id") or ((a.get("participants") or {}).get("from") or [""])[0]
+            if a.get("doc_class") == "meeting_transcript" or a.get("meeting"):
+                parts = [s for s in (a.get("chunk_sections") or []) if s.get("property_id") == pid]
+                text = a.get("text") or ""
+                body = "\n".join(text[s["start"]:s["end"]] for s in parts) if parts else text[:6000]
+                who = ", ".join(PERSON_LABEL.get(p, p) for p in (a.get("meeting") or {}).get("participants") or []) or who
+                out.append(f"[sha={a['sha256'][:16]}] CALL on {str(a.get('date'))[:10]} — {(a.get('meeting') or {}).get('title') or a.get('filename')} — participants: {who}\n{body.strip()[:6000]}")
+            elif a.get("source_type") == "email" and who in ("wes", "kelly", "jp", "manjunath") or (isinstance(who, str) and any(k in who for k in ("wes@", "kelly@", "jp@", "manjunath@"))):
+                out.append(f"[sha={a['sha256'][:16]}] EMAIL {str(a.get('date'))[:10]} from {who}: {a.get('subject')}\n{(a.get('body_clean') or '')[:3000].strip()}")
+        return "\n\n".join(out) if out else "(no reply from Wes, Kelly, JP Sir or Manjunath Sir on this property since the previous sheet)"
+
     def _investigate(self, pid: str) -> Dict[str, Any]:
         """The morning dossier is THE investigation (admin directive 2026-09-16:
         one read per property, no second one). Today's dossier is used as is; a
@@ -208,17 +250,21 @@ class NextSteps:
         from mangotree.briefing.dossier import PropertyDossier
         from mangotree.briefing.morning import local_day
         dossier = PropertyDossier(self.mongo, **self.keys)
-        doc = dossier.coll.find_one({"property_id": pid}, {"_id": 0})
-        built = (doc or {}).get("built_at")
-        fresh = bool(built) and local_day() == local_day_of(built) and (doc.get("question") == dossier_question())
+        before = dossier.coll.find_one({"property_id": pid}, {"_id": 0, "built_at": 1})
+        # One rule for "is the investigation current", shared with the morning
+        # cycle: rebuild only if records changed since it was built, the question
+        # changed, or it is older than a week. (Insisting on a same-day dossier
+        # here re-investigated all fourteen on 2026-09-18 for nothing — $99.)
+        doc = dossier.refresh_if_changed(pid)
+        fresh = bool(before) and (doc or {}).get("built_at") == before.get("built_at")
+        changed = None if fresh else (doc or {}).get("rebuild_reason") or "no dossier"
         if not fresh:
-            logger.info("next steps %s: no dossier from today (%s) — investigating", pid, f"{built:%m-%d %H:%M}" if built else "none")
-            doc = dossier.build(pid, force=True)
+            logger.info("next steps %s: %s — investigated", pid, changed)
         inv = (doc or {}).get("investigation") or {}
         shas = [s.get("sha256") for s in (inv.get("sources") or []) if s.get("sha256")]
         return {"answer": inv.get("answer") or "", "open_items": list(inv.get("open_items") or []), "risks": list(inv.get("risks") or []),
                 "shas": shas, "steps": inv.get("steps"), "elapsed_ms": inv.get("elapsed_ms"), "model": inv.get("model"),
-                "dossier_built_at": (doc or {}).get("built_at"), "investigated_now": not fresh,
+                "dossier_built_at": (doc or {}).get("built_at"), "investigated_now": not fresh, "reason": changed,
                 "budget": {k: (inv.get("budget") or {}).get(k) for k in ("tool_calls_used", "planner_cost_usd", "run")}}
 
     def _records(self, shas: Sequence[str]) -> tuple[str, Dict[str, str], Dict[str, str]]:
@@ -248,9 +294,19 @@ class NextSteps:
         p = PROPERTY_INDEX[pid]
         records, full, texts = self._records(inv["shas"])
         prev = self._previous(pid)
-        user = (f"PROPERTY: {p.canonical_address} ({pid})\nTODAY: {datetime.now(timezone.utc):%Y-%m-%d}\n\n"
-                f"INVESTIGATION:\n{inv['answer']}\n\nOpen items the analyst listed: {inv['open_items']}\nRisks: {inv['risks']}\n\n"
+        # "Since the previous sheet" = since the sheet Wes actually received (the
+        # last send), or the previous run if nothing was sent — whichever is earlier.
+        prev_run = self.runs.find_one({"status": "complete"}, {"_id": 0, "started_at": 1}, sort=[("started_at", -1)])
+        last_sent = self.mongo.db["outbox"].find_one({"kind": {"$in": ["next_steps_wes", "next_steps"]}, "status": {"$in": ["sent", "replied", "superseded"]}},
+                                                     {"_id": 0, "sent_at": 1}, sort=[("sent_at", -1)])
+        candidates = [d for d in ((prev_run or {}).get("started_at"), (last_sent or {}).get("sent_at")) if d]
+        responses = self._responses_since(pid, min(candidates) if candidates else None)
+        deal = " | ".join(x for x in (f"deal type: {getattr(p, 'deal_type', None)}" if getattr(p, "deal_type", None) else "",
+                                     f"registry notes: {getattr(p, 'notes', None)}" if getattr(p, "notes", None) else "") if x) or "(no registry notes)"
+        user = (f"PROPERTY: {p.canonical_address} ({pid})\nDEAL: {deal}\nTODAY: {datetime.now(timezone.utc):%Y-%m-%d}\n\n"
                 f"PREVIOUS SHEET:\n{self._previous_block(prev)}\n\n"
+                f"RESPONSES SINCE THE PREVIOUS SHEET (what they actually said — judge every carried step against this first):\n{responses}\n\n"
+                f"INVESTIGATION:\n{inv['answer']}\n\nOpen items the analyst listed: {inv['open_items']}\nRisks: {inv['risks']}\n\n"
                 f"LIVE STATE:\n{self._live_state(pid)}\n\nRECORDS:\n{records}")
         system = _SYSTEM.format(**PERSON_ROLE)
         data = None

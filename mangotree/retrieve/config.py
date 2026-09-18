@@ -239,9 +239,10 @@ MORNING_WRITER_MODEL = "gpt-6-astra"          # Wes issues + ledger
 #: 10 tool calls / 10 minutes (admin directive 2026-09-11, down from 30/15):
 #: the morning and after-mail investigations refresh a picture that already
 #: exists; the deep 30-step read is for chat questions a person is waiting on.
-#: 15 (admin directive 2026-09-16, from 20): one investigation per property
-#: now feeds everything — next steps, tasks, cards, Wes issues, brief.
-MORNING_MAX_TOOL_CALLS = 15
+#: 12 (admin directive 2026-09-17, from 15; from 20 the day before): one
+#: investigation per property feeds everything — next steps, tasks, brief. The
+#: Opus 5 stage-2 rerank stays on inside it: the best documents must reach Astra.
+MORNING_MAX_TOOL_CALLS = 12
 MORNING_MAX_WALL_CLOCK_S = 15 * 60
 #: Output caps for the two Astra writers of the morning pass (admin directive 2026-09-11).
 LEDGER_MAX_OUTPUT_TOKENS = 30_000
@@ -253,9 +254,27 @@ WES_MAX_ISSUES = 2
 # =============================================================================
 # Next-steps reports and follow-ups — admin directive 2026-09-16
 # =============================================================================
-#: The properties the person-by-person "next steps" reports and the follow-up
-#: tracker cover. 9th St NW is excluded by decision, not by accident.
-REPORT_EXCLUDED_PROPERTIES = ("9th_st_nw",)
+#: Properties left out of EVERY daily pass — investigation, follow-ups,
+#: resolution, tasks, ledger, sheets, brief (admin directive 2026-09-17: "forget
+#: 9th St; no analysis"). Their records stay searchable; the property page works;
+#: nothing is spent on them each morning.
+ANALYSIS_EXCLUDED_PROPERTIES = ("9th_st_nw",)
+REPORT_EXCLUDED_PROPERTIES = ANALYSIS_EXCLUDED_PROPERTIES
+
+
+def analysis_property_ids():
+    from mangotree.config.registry import PROPERTIES
+    return [p.property_id for p in PROPERTIES if p.property_id not in ANALYSIS_EXCLUDED_PROPERTIES]
+
+
+# Feature switches — admin directive 2026-09-17
+#: Everything Opus 5 writes stays intact: "what's new" cards and Wes's
+#: construction work list run every morning as before.
+CARDS_ENABLED = True
+WES_WORK_LIST_ENABLED = True
+#: Wes issues (Astra's daily two per property): removed from the cycle and the
+#: UI — Wes's items live on his next-steps sheet.
+WES_ISSUES_ENABLED = False
 #: 1–2 critical next steps per person per property; never more.
 NEXT_STEPS_MAX_PER_PERSON = 2
 #: The per-property investigation behind a next-steps run is the fast mode

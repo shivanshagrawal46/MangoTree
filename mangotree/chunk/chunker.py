@@ -202,6 +202,59 @@ def pack_segments(
     return chunks
 
 
+def apply_sections(segments: List[Segment], text: str, sections: Sequence[dict]) -> List[Segment]:
+    """The author's own section headings override inference.
+
+    ``sections`` is [{start, end, property_id|None}] in character offsets of
+    ``text`` (a transcript with a property name above each part). Every segment
+    takes the property of the section it starts in — exactly one, or none for a
+    section outside the portfolio, which makes it ``ambiguous``: kept for
+    portfolio-wide search, excluded from every single-property search. Because
+    ``pack_segments`` never mixes property sets, chunks then end where sections
+    end (2026-09-17: Brentford minutes had been carried forward as Tahona)."""
+    if not sections:
+        return segments
+    out: List[Segment] = []
+    pos = 0
+
+    def stamp(seg: Segment, idx: int) -> None:
+        sec = next((s for s in sections if s["start"] <= idx < s["end"]), None) if idx >= 0 else None
+        pid = (sec or {}).get("property_id")
+        if pid:
+            seg.property_ids, seg.attribution, seg.confidence = [pid], "explicit", 1.0
+        else:
+            seg.property_ids, seg.attribution, seg.confidence = [], "ambiguous", 0.0
+
+    for seg in segments:
+        idx = text.find(seg.text[:80], pos) if seg.text else -1
+        if idx >= 0:
+            pos = idx
+        # A segment that runs across a section boundary (the source had no blank
+        # line before the next heading) is split there, so not even the heading
+        # line of the next property lands in this one's chunk.
+        pieces: List[Segment] = []
+        remaining, at = seg.text, idx
+        while idx >= 0 and remaining:
+            sec = next((s for s in sections if s["start"] <= at < s["end"]), None)
+            if not sec or at + len(remaining) <= sec["end"]:
+                break
+            cut = sec["end"] - at
+            head, remaining = remaining[:cut].rstrip(), remaining[cut:].lstrip()
+            if head:
+                pieces.append(Segment(seg.index, head, [], seg.attribution, seg.confidence))
+                stamp(pieces[-1], at)
+            at = sec["end"]
+        if pieces:
+            if remaining:
+                pieces.append(Segment(seg.index, remaining, [], seg.attribution, seg.confidence))
+                stamp(pieces[-1], at)
+            out.extend(pieces)
+        else:
+            stamp(seg, idx)
+            out.append(seg)
+    return out
+
+
 def chunk_artifact(
     text: str,
     *,
@@ -209,11 +262,16 @@ def chunk_artifact(
     property_ids: Sequence[str] = (),
     default_ref: str = "",
     include_ambiguous: bool = True,
+    sections: Optional[Sequence[dict]] = None,
 ) -> List[Chunk]:
-    """Segment then pack — the entry point used by the indexing pipeline."""
+    """Segment then pack — the entry point used by the indexing pipeline.
+    ``sections`` (optional) are author-given property sections; see
+    ``apply_sections``."""
     if not text or not text.strip():
         return []
     segments = segment_text(text, document_property_ids=list(property_ids))
+    if sections:
+        segments = apply_sections(segments, text, sections)
     return pack_segments(
         segments,
         artifact_sha=artifact_sha,

@@ -35,6 +35,8 @@ def main() -> int:
     ap.add_argument("--by", default="admin")
     ap.add_argument("--source", default="manual", help="manual | granola | fireflies …")
     ap.add_argument("--note", default=None)
+    ap.add_argument("--by-headings", action="store_true",
+                    help="force placement by the document's property headings (detected automatically when two or more are present)")
     args = ap.parse_args()
 
     path = Path(args.file)
@@ -51,7 +53,7 @@ def main() -> int:
     def emit(kind, payload):
         print(f"[{datetime.now():%H:%M:%S}] {payload.get('text') if isinstance(payload, dict) else payload}", flush=True)
 
-    trace = ing.process(stored["sha256"], emit=emit)
+    trace = ing.process(stored["sha256"], emit=emit, by_headings=args.by_headings)
     print(json.dumps(trace, default=str, indent=2))
     return 0 if not trace.get("error") and not trace.get("segregation_error") else 1
 

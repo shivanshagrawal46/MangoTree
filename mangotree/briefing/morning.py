@@ -110,8 +110,14 @@ class Briefing:
             {"$match": {"created_at": {"$gte": since}, "is_inline_image": {"$ne": True}}},
             {"$unwind": {"path": "$property_ids", "preserveNullAndEmptyArrays": True}},
             {"$group": {"_id": "$property_ids", "n": {"$sum": 1}}}]))
-        cards = list(self.mongo.db["cards"].find({"status": "new", "significance": {"$gte": 3}}, {"_id": 0}).sort([("significance", -1), ("created_at", -1)]).limit(20))
+        from mangotree.retrieve import config as cfg
+        # Cards paused (2026-09-17): the brief does not read stale ones as "new".
+        cards = list(self.mongo.db["cards"].find({"status": "new", "significance": {"$gte": 3}}, {"_id": 0}).sort([("significance", -1), ("created_at", -1)]).limit(20)) if cfg.CARDS_ENABLED else []
         handled = data.handled_overnight(self.mongo)
+        excluded = set(cfg.ANALYSIS_EXCLUDED_PROPERTIES)
+        portfolio = [p for p in portfolio if p["property_id"] not in excluded]
+        deadlines = [d for d in deadlines if d.get("property_id") not in excluded]
+        risk = [r for r in risk if r.get("property_id") not in excluded]
         return {
             "generated_at": now, "user_id": user_id, "owner": owner,
             "portfolio": [{"property_id": p["property_id"], "address": p["address"], "health": p["health"]["level"], "reasons": p["health"]["reasons"][:2],
@@ -364,10 +370,14 @@ class Scheduler:
         write the Wes issues. The brief that follows reads all of it."""
         from concurrent.futures import ThreadPoolExecutor
         from mangotree.briefing.dossier import PropertyDossier
-        from mangotree.config.registry import PROPERTIES
+        from mangotree.config.registry import PROPERTY_INDEX
         from mangotree.config.settings import SETTINGS
         from mangotree.ledger.builder import LedgerBuilder
+        from mangotree.retrieve import config as cfg
         out: Dict[str, Any] = {}
+        # Every daily pass runs over the analysed properties only (9th St is out
+        # by decision, 2026-09-17); its records stay searchable.
+        PROPERTIES = [PROPERTY_INDEX[pid] for pid in cfg.analysis_property_ids()]
         dossier = PropertyDossier(self.mongo, anthropic_api_key=self.key, voyage_api_key=SETTINGS.voyage_api_key,
                                   openai_api_key=SETTINGS.openai_api_key_critic or "")
         # Re-investigate only what changed since the last dossier (new documents,
@@ -412,14 +422,18 @@ class Scheduler:
                 out["tasks"] = f"error: {type(exc).__name__}"
         else:
             out["tasks"] = "no property changed"
-        try:
-            from .cards import CardDetector
-            out["cards"] = CardDetector(self.mongo, anthropic_api_key=self.key).run()
-        except Exception as exc:
-            logger.exception("morning card detection failed")
-            out["cards"] = f"error: {type(exc).__name__}"
-        out["ledger"] = LedgerBuilder(self.mongo, anthropic_api_key=self.key).run(concurrency=4).as_dict()
-        out["wes"] = self.wes.run(force=True, concurrency=4)
+        if cfg.CARDS_ENABLED:
+            try:
+                from .cards import CardDetector
+                out["cards"] = CardDetector(self.mongo, anthropic_api_key=self.key).run([p.property_id for p in PROPERTIES])
+            except Exception as exc:
+                logger.exception("morning card detection failed")
+                out["cards"] = f"error: {type(exc).__name__}"
+        else:
+            out["cards"] = "paused"
+        out["ledger"] = LedgerBuilder(self.mongo, anthropic_api_key=self.key).run([p.property_id for p in PROPERTIES], concurrency=4).as_dict()
+        # Wes issues removed from the cycle (admin directive 2026-09-17).
+        out["wes"] = self.wes.run([p.property_id for p in PROPERTIES], force=True, concurrency=4) if cfg.WES_ISSUES_ENABLED else "removed"
         # The four next-steps sheets (admin directive 2026-09-16): generated
         # every morning so they are ready to read; sent to JP and Manjunath only
         # when Rakesh presses the button and confirms.
@@ -452,10 +466,10 @@ class Scheduler:
             out["reminders"] = f"error: {type(exc).__name__}"
         # Every model call failed (invalid key, outage): say so, so the day is not
         # recorded as done with nothing built.
-        wes_vals = list((out["wes"] or {}).values()) if isinstance(out["wes"], dict) else []
+        ns_out = out.get("next_steps")
         out["all_failed"] = bool(
             (out["ledger"].get("calls", 0) == 0 and out["ledger"].get("errors"))
-            and wes_vals and all(isinstance(v, dict) and v.get("error") for v in wes_vals)
+            and (not isinstance(ns_out, dict) or ns_out.get("status") != "complete")
         )
         return out
 

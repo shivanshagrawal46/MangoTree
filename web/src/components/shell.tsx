@@ -19,7 +19,6 @@ const NAV = [
   { href: "/next-steps", label: "Next steps", icon: ClipboardList },
   { href: "/followups", label: "Follow-ups", icon: BellRing },
   { href: "/tasks", label: "Tasks", icon: CheckSquare },
-  { href: "/wes", label: "Wes agenda", icon: HardHat },
   { href: "/review", label: "Review", icon: Inbox },
   { href: "/people", label: "People", icon: Users },
 ];
