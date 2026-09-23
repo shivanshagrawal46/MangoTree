@@ -43,6 +43,13 @@ Return JSON only:
  "closing": "one calm sentence"}
 Rules: only what the facts contain; keep source_sha from the facts on each item;
 short sentences; no jargon; at most 5 items per section; drop empty sections.
+TRUTH ORDER (2026-09-22): "current_state" — this morning's investigation of each
+property, which has read every record including the newest — is the present state
+of that property. Cards, tasks and events are dated OBSERVATIONS. Never present an
+observation as today's fact when the current_state says it has since been resolved,
+answered or superseded; say the newer thing instead, or leave it out. A card older
+than a later card on the same subject is history, not news. If two facts conflict,
+the one dated later wins, and the investigation wins over any single card.
 Money rule: a dollar figure may appear ONLY if it is present in the facts as a
 ledger figure (invested, owed, owed_as_of) or on a dated event. Where a property's
 money_established is false, say "not established in documents" — never write 0,
@@ -111,10 +118,25 @@ class Briefing:
             {"$unwind": {"path": "$property_ids", "preserveNullAndEmptyArrays": True}},
             {"$group": {"_id": "$property_ids", "n": {"$sum": 1}}}]))
         from mangotree.retrieve import config as cfg
-        # Cards paused (2026-09-17): the brief does not read stale ones as "new".
-        cards = list(self.mongo.db["cards"].find({"status": "new", "significance": {"$gte": 3}}, {"_id": 0}).sort([("significance", -1), ("created_at", -1)]).limit(20)) if cfg.CARDS_ENABLED else []
-        handled = data.handled_overnight(self.mongo)
         excluded = set(cfg.ANALYSIS_EXCLUDED_PROPERTIES)
+        # Cards are OBSERVATIONS, and only recent ones belong in "what changed
+        # overnight": the last two days, newest first. On 2026-09-22 a 10 Sept
+        # card ("counsel still needs the originals") was still "new" and the
+        # brief stated it as today's fact although Erin had confirmed receipt on
+        # the 19th and the investigation said so.
+        cards = list(self.mongo.db["cards"].find(
+            {"status": "new", "significance": {"$gte": 3}, "created_at": {"$gte": now - timedelta(days=2)},
+             "property_id": {"$nin": list(excluded)}},
+            {"_id": 0}).sort([("created_at", -1), ("significance", -1)]).limit(20)) if cfg.CARDS_ENABLED else []
+        # The present state of each property is this morning's investigation —
+        # the one reader that has seen every record. The brief must lead with it.
+        current_state = []
+        for d in self.mongo.db["dossiers"].find({"property_id": {"$nin": list(excluded)}}, {"_id": 0, "property_id": 1, "built_at": 1, "investigation.answer": 1, "investigation.open_items": 1}):
+            inv = d.get("investigation") or {}
+            current_state.append({"property_id": d["property_id"], "as_of": d.get("built_at"),
+                                  "state": (inv.get("answer") or "")[:3500],
+                                  "open_items": list(inv.get("open_items") or [])[:6]})
+        handled = data.handled_overnight(self.mongo)
         portfolio = [p for p in portfolio if p["property_id"] not in excluded]
         deadlines = [d for d in deadlines if d.get("property_id") not in excluded]
         risk = [r for r in risk if r.get("property_id") not in excluded]
@@ -132,7 +154,9 @@ class Briefing:
             "suggested_for_me": [{"title": t["title"], "property_id": t.get("property_id"), "why": t.get("why")} for t in suggested],
             "deadlines": deadlines, "recent_money_and_risk": risk,
             "intake": [{"property_id": i["_id"] or "unfiled", "documents": i["n"]} for i in intake],
-            "new_cards": [{"property_id": c["property_id"], "title": c["title"], "why": c["why_it_matters"], "significance": c["significance"], "source_sha": c["source_sha"]} for c in cards],
+            "new_cards": [{"property_id": c["property_id"], "title": c["title"], "why": c["why_it_matters"], "significance": c["significance"],
+                           "observed_on": c.get("source_date") or c.get("created_at"), "source_sha": c["source_sha"]} for c in cards],
+            "current_state": current_state,
             "handled": handled,
         }
 
@@ -422,6 +446,12 @@ class Scheduler:
                 out["tasks"] = f"error: {type(exc).__name__}"
         else:
             out["tasks"] = "no property changed"
+        # A card is news for a week; after that it is history and must not be
+        # served as "new" to the brief or the feeds (2026-09-22: 25 cards on one
+        # property were still "new" back to 3 September).
+        aged = self.mongo.db["cards"].update_many({"status": "new", "created_at": {"$lt": datetime.now(timezone.utc) - timedelta(days=7)}},
+                                                  {"$set": {"status": "aged", "aged_at": datetime.now(timezone.utc)}})
+        out["cards_aged"] = aged.modified_count
         if cfg.CARDS_ENABLED:
             try:
                 from .cards import CardDetector
@@ -472,6 +502,18 @@ class Scheduler:
             and (not isinstance(ns_out, dict) or ns_out.get("status") != "complete")
         )
         return out
+
+    def cycle_enabled(self) -> bool:
+        """The daily analysis runs unless settings.morning_cycle_enabled is false."""
+        try:
+            doc = self.mongo.db["settings"].find_one({"_id": "morning_cycle_enabled"})
+            return True if doc is None else bool(doc.get("value", True))
+        except Exception:
+            return True
+
+    def set_cycle_enabled(self, value: bool, by: str) -> None:
+        self.mongo.db["settings"].update_one({"_id": "morning_cycle_enabled"},
+                                             {"$set": {"value": bool(value), "by": by, "at": datetime.now(timezone.utc)}}, upsert=True)
 
     def _due_poll(self) -> bool:
         from mangotree.ingest.watch import POLL_MINUTES
@@ -560,6 +602,16 @@ class Scheduler:
         # Money and the Wes agenda run BEFORE the briefing so the brief reads the
         # morning's ledger, not yesterday's. Recorded per day; a failure retries on
         # the next tick rather than waiting for tomorrow.
+        # Admin switch (2026-09-24): the daily analysis — investigation,
+        # follow-ups, resolution, tasks, cards, ledger, sheets, brief — is paused
+        # until Rakesh says resume. Read from the database on every tick so it
+        # takes effect on the server at once. Mail intake and the outbox go on.
+        if not self.cycle_enabled():
+            if not getattr(self, "_paused_logged", False):
+                logger.info("scheduler: the daily analysis is PAUSED by admin (settings.morning_cycle_enabled=false); mail intake continues")
+                self._paused_logged = True
+            return
+        self._paused_logged = False
         if self._due_daily("money_wes") and self._claim_daily("money_wes"):
             day = self._day()
             try:

@@ -60,6 +60,10 @@ class AutoSend(BaseModel):
     enabled: bool
 
 
+class CycleSwitch(BaseModel):
+    enabled: bool
+
+
 def install(app, mongo, jobs) -> None:
     from mangotree.followup.tracker import FollowupTracker
     from mangotree.mail.outbox import Outbox
@@ -210,6 +214,21 @@ def install(app, mongo, jobs) -> None:
             raise HTTPException(400, "confirm=true required")
         out = dispatch.send_to_wes(mongo, run_or_404(run_id), by=user["user_id"], outbox=outbox, subject=body.subject, body=body.body)
         return data.clean({"result": out, "send_status": outbox.send_status()})
+
+    @app.get("/morning-cycle")
+    def morning_cycle_get(user=CurrentUser):
+        ceo(user)
+        doc = mongo.db["settings"].find_one({"_id": "morning_cycle_enabled"}, {"_id": 0})
+        return {"enabled": True if doc is None else bool(doc.get("value", True)), "by": (doc or {}).get("by"), "at": (doc or {}).get("at")}
+
+    @app.post("/morning-cycle")
+    def morning_cycle_set(body: CycleSwitch, user=CurrentUser):
+        """Pause / resume the daily analysis (investigation, follow-ups, tasks,
+        cards, ledger, sheets, brief). Mail intake and the outbox are unaffected."""
+        ceo(user)
+        mongo.db["settings"].update_one({"_id": "morning_cycle_enabled"},
+                                        {"$set": {"value": bool(body.enabled), "by": user["user_id"], "at": datetime.now(timezone.utc)}}, upsert=True)
+        return {"enabled": bool(body.enabled)}
 
     @app.get("/next-steps/auto-send")
     def next_steps_auto_send_get(user=CurrentUser):
