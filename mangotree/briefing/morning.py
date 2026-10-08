@@ -462,6 +462,14 @@ class Scheduler:
         else:
             out["cards"] = "paused"
         out["ledger"] = LedgerBuilder(self.mongo, anthropic_api_key=self.key).run([p.property_id for p in PROPERTIES], concurrency=4).as_dict()
+        # Permit register (2026-10-08): deterministic, no model cost; before the
+        # sheets so the writer sees expiries and failed inspections as live state.
+        try:
+            from mangotree.permits.register import PermitRegister
+            out["permits"] = PermitRegister(self.mongo).build([p.property_id for p in PROPERTIES])
+        except Exception as exc:
+            logger.exception("permit register failed")
+            out["permits"] = f"error: {type(exc).__name__}"
         # Wes issues removed from the cycle (admin directive 2026-09-17).
         out["wes"] = self.wes.run([p.property_id for p in PROPERTIES], force=True, concurrency=4) if cfg.WES_ISSUES_ENABLED else "removed"
         # The four next-steps sheets (admin directive 2026-09-16): generated

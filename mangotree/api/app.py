@@ -29,7 +29,7 @@ from mangotree.storage.mongo import get_mongo
 from mangotree.tasks.store import OWNERS, TaskStore
 
 from . import data
-from .auth import CurrentUser, change_password, ensure_users, login, logout
+from .auth import AnySession, CurrentUser, change_password, ensure_users, login, logout
 from .jobs import JobRunner, _jsonable
 
 app = FastAPI(title="MangoTree API", version="0.1")
@@ -201,12 +201,12 @@ def auth_logout(response: Response):
 
 
 @app.get("/auth/me")
-def auth_me(user=CurrentUser):
+def auth_me(user=AnySession):
     return user
 
 
 @app.post("/auth/password")
-def auth_password(body: PasswordBody, user=CurrentUser):
+def auth_password(body: PasswordBody, user=AnySession):
     change_password(mongo, user["user_id"], body.current, body.new)
     return {"ok": True}
 
@@ -1209,6 +1209,14 @@ def PEOPLE_LIST():
 # 2026-09-16). Kept in their own module; installed onto this app.
 from . import desk_routes  # noqa: E402
 desk_routes.install(app, mongo, jobs)
+# The contractor portal (2026-10-08): its own dependency, its own routes, its
+# own projection. Nothing above is reachable from a contractor session.
+from . import portal_routes  # noqa: E402
+portal_routes.install(app, mongo)
+# Permit register (2026-10-08): per-property permits, inspections, estimated
+# expiry and alerts, read deterministically out of the official forms.
+from . import permit_routes  # noqa: E402
+permit_routes.install(app, mongo, jobs)
 
 # Cache warm-up starts last, once every function it calls exists: started at
 # the top of the module it raced the import and hit NameError on a slow boot.

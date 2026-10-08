@@ -16,7 +16,12 @@ export default function LoginPage() {
   const [busy, setBusy] = React.useState(false);
   const submit = async (e: React.FormEvent) => {
     e.preventDefault(); setBusy(true); setErr("");
-    try { await api.post("/auth/login", { user_id: u, password: p }); await qc.invalidateQueries({ queryKey: ["me"] }); router.replace("/"); }
+    try {
+      const me = await api.post<{ home?: string }>("/auth/login", { user_id: u, password: p });
+      await qc.invalidateQueries({ queryKey: ["me"] });
+      // Contractor accounts have one home: the portal. RKB goes to the dashboard.
+      router.replace(me?.home === "portal" ? "/portal" : "/");
+    }
     catch (ex: any) { setErr(ex.message || "Sign-in failed"); } finally { setBusy(false); }
   };
   return (

@@ -18,6 +18,7 @@ import { MoneyFlow, ByType, Donut } from "@/components/charts";
 import { CardsFeed } from "@/components/briefing";
 import { LedgerView, Figure } from "@/components/ledger";
 import { UploadBox } from "@/components/upload";
+import { PropertyPermits } from "@/components/permits";
 import { FileDown } from "lucide-react";
 import { cn, fmtDate, ago, money, HEALTH, PLACEMENT_LABEL } from "@/lib/utils";
 import type { PropertySummary, ArtifactRow, WesItem } from "@/lib/types";
@@ -54,7 +55,7 @@ export default function PropertyPage() {
         </div>
         <Tabs value={tab} onValueChange={setTab} className="mt-3">
           <TabsList>
-            {[["chat", "Chat"], ["timeline", `Timeline · ${d.events}`], ["tasks", "Tasks"], ["money", "Money"], ["docs", `Docs · ${d.documents.total}`], ["files", "Files"], ["comms", "Comms"], ["wes", "Wes's work"], ["people", "People"]].map(([k, l]) => <TabsTrigger key={k} value={k}>{l}</TabsTrigger>)}
+            {[["chat", "Chat"], ["timeline", `Timeline · ${d.events}`], ["tasks", "Tasks"], ["money", "Money"], ["permits", "Permits"], ["docs", `Docs · ${d.documents.total}`], ["files", "Files"], ["comms", "Comms"], ["wes", "Wes's work"], ["people", "People"]].map(([k, l]) => <TabsTrigger key={k} value={k}>{l}</TabsTrigger>)}
           </TabsList>
         </Tabs>
       </div>
@@ -65,6 +66,7 @@ export default function PropertyPage() {
           {tab === "timeline" && <div className="h-full overflow-y-auto p-6 max-w-4xl"><Timeline propertyId={pid} /></div>}
           {tab === "tasks" && <div className="h-full overflow-y-auto p-6 max-w-4xl"><TaskBoard propertyId={pid} /></div>}
           {tab === "money" && <div className="h-full overflow-y-auto p-6 max-w-6xl"><LedgerView pid={pid} /><details className="mt-6"><summary className="text-xs text-muted cursor-pointer hover:text-fg">Amounts mentioned in documents (old view — mentions, not movements)</summary><div className="mt-3"><Money pid={pid} /></div></details></div>}
+          {tab === "permits" && <div className="h-full overflow-y-auto p-6 max-w-4xl"><PropertyPermits pid={pid} /></div>}
           {tab === "docs" && <div className="h-full overflow-y-auto p-6"><Docs pid={pid} /></div>}
           {tab === "files" && <div className="h-full overflow-y-auto p-6"><Files pid={pid} /></div>}
           {tab === "comms" && <div className="h-full overflow-y-auto p-6"><Comms pid={pid} /></div>}

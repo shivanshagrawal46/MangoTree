@@ -181,6 +181,14 @@ class NextSteps:
                                                 {"_id": 0, "title": 1, "done_at": 1}).sort("done_at", -1).limit(8))
         if done:
             parts.append("Recently marked done (do not raise again): " + "; ".join(t.get("title") or "" for t in done))
+        try:
+            from mangotree.permits.register import PermitRegister
+            lines = PermitRegister(self.mongo).live_state_lines(pid)
+            if lines:
+                parts.append("Permit register (official status from the DOB export / Tertius; expiry is an ESTIMATE unless stated):")
+                parts.extend(lines[:8])
+        except Exception:
+            logger.debug("permit register unavailable for %s", pid, exc_info=True)
         return "\n".join(parts) or "(nothing tracked yet today)"
 
     # ------------------------------------------------------------- memory
@@ -231,7 +239,11 @@ class NextSteps:
         out: List[str] = []
         for a in rows:
             who = a.get("author_person_id") or ((a.get("participants") or {}).get("from") or [""])[0]
-            if a.get("doc_class") == "meeting_transcript" or a.get("meeting"):
+            if a.get("doc_class") == "portal_reply":
+                # Typed by Wes on the portal against a named step — the most
+                # direct answer there is; the writer treats it like his email.
+                out.append(f"[sha={a['sha256'][:16]}] PORTAL REPLY {str(a.get('date'))[:10]} from {PERSON_LABEL.get(who, who)}:\n{(a.get('text') or '')[:3000].strip()}")
+            elif a.get("doc_class") == "meeting_transcript" or a.get("meeting"):
                 parts = [s for s in (a.get("chunk_sections") or []) if s.get("property_id") == pid]
                 text = a.get("text") or ""
                 body = "\n".join(text[s["start"]:s["end"]] for s in parts) if parts else text[:6000]
@@ -413,7 +425,16 @@ class NextSteps:
         self.runs.update_one({"run_id": run_id}, {"$set": {"status": status, "finished_at": finished, "errors": errors, "counts": counts,
                                                            "elapsed_s": round((finished - started).total_seconds(), 1)}})
         say("done", {"run_id": run_id, "status": status, "counts": counts, "errors": errors})
-        return self.get(run_id)
+        run = self.get(run_id)
+        # The contractor portal reads a projection of this run — only the fields
+        # written for Wes — built here so it is ready the moment the sheet is.
+        try:
+            from mangotree.portal.sheets import publish_all
+            if run and run.get("status") == "complete":
+                publish_all(self.mongo, run)
+        except Exception:
+            logger.exception("portal projection failed for %s", run_id)
+        return run
 
     # -------------------------------------------------------------- read
     def get(self, run_id: str) -> Optional[Dict[str, Any]]:

@@ -6,7 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Command } from "cmdk";
 import { motion } from "framer-motion";
-import { LayoutGrid, Building2, CheckSquare, Inbox, Users, MessageSquare, Search, LogOut, Moon, Sun, AlertTriangle, ChevronRight, HardHat, ClipboardList, BellRing } from "lucide-react";
+import { LayoutGrid, Building2, CheckSquare, Inbox, Users, MessageSquare, Search, LogOut, Moon, Sun, AlertTriangle, ChevronRight, HardHat, ClipboardList, BellRing, FileBadge } from "lucide-react";
 import { api } from "@/lib/api";
 import { useUser } from "@/components/providers";
 import { Kbd } from "@/components/ui";
@@ -19,6 +19,7 @@ const NAV = [
   { href: "/next-steps", label: "Next steps", icon: ClipboardList },
   { href: "/followups", label: "Follow-ups", icon: BellRing },
   { href: "/tasks", label: "Tasks", icon: CheckSquare },
+  { href: "/permits", label: "Permits", icon: FileBadge },
   { href: "/review", label: "Review", icon: Inbox },
   { href: "/people", label: "People", icon: Users },
 ];
@@ -37,21 +38,25 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const path = usePathname();
   const qc = useQueryClient();
   const [palette, setPalette] = React.useState(false);
-  const props = useQuery({ queryKey: ["properties"], queryFn: () => api.get<PropertySummary[]>("/properties"), enabled: !!user, staleTime: 5 * 60_000 });
+  const rkb = !!user && user.side !== "contractor";
+  const props = useQuery({ queryKey: ["properties"], queryFn: () => api.get<PropertySummary[]>("/properties"), enabled: rkb, staleTime: 5 * 60_000 });
   // The frame only needs the review badge and the degrade banner — a 200-byte call, not the whole dashboard.
-  const dash = useQuery({ queryKey: ["shell"], queryFn: () => api.get<{ unplaced: number; degrades: string[]; answering?: { property_id: string | null; question: string; job_id: string }[] }>("/shell"), enabled: !!user, staleTime: 5 * 60_000,
+  const dash = useQuery({ queryKey: ["shell"], queryFn: () => api.get<{ unplaced: number; degrades: string[]; answering?: { property_id: string | null; question: string; job_id: string }[] }>("/shell"), enabled: rkb, staleTime: 5 * 60_000,
     // Poll while any answer is running so the sidebar spinner clears on its own.
     refetchInterval: (query) => ((query.state.data?.answering?.length ?? 0) > 0 ? 15_000 : false) });
   const answering = new Set((dash.data?.answering || []).map((a) => a.property_id || "__global__"));
 
   React.useEffect(() => { if (!loading && !user) router.replace("/login"); }, [loading, user, router]);
+  // A contractor session has nothing here (the server refuses every RKB route
+  // anyway); send it to its own home before any query fires.
+  React.useEffect(() => { if (user?.side === "contractor") router.replace("/portal"); }, [user, router]);
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); setPalette((v) => !v); } };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  if (loading || !user) return <div className="min-h-screen grid place-items-center text-muted text-sm">Loading…</div>;
+  if (loading || !user || !rkb) return <div className="min-h-screen grid place-items-center text-muted text-sm">Loading…</div>;
   const unplaced = dash.data?.unplaced || 0;
   const ceo = user.role === "ceo";
   const nav = ceo ? NAV : TEAM_NAV;

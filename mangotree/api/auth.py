@@ -111,8 +111,36 @@ def read_token(token: str) -> Optional[str]:
 
 
 def public_user(doc: Dict[str, Any]) -> Dict[str, Any]:
-    return {"user_id": doc["user_id"], "login": doc.get("login") or doc["user_id"], "name": doc.get("name"), "full_name": doc.get("full_name"),
-            "role": doc.get("role"), "home": ROLE_HOME.get(doc.get("role"), "decisions")}
+    side = doc.get("side") or "rkb"
+    out = {"user_id": doc["user_id"], "login": doc.get("login") or doc["user_id"], "name": doc.get("name"), "full_name": doc.get("full_name"),
+           "role": doc.get("role"), "side": side,
+           "home": "portal" if side == "contractor" else ROLE_HOME.get(doc.get("role"), "decisions")}
+    if side == "contractor":
+        # The contractor portal needs the organisation and the person behind the
+        # login, and the properties the organisation may see — nothing else.
+        out.update({"org": doc.get("org"), "org_name": doc.get("org_name"), "person_id": doc.get("person_id"),
+                    "property_ids": list(doc.get("property_ids") or [])})
+    return out
+
+
+def ensure_contractor(mongo: Mongo, *, user_id: str, login_name: str, name: str, full_name: str, org: str, org_name: str,
+                      person_id: str, property_ids: List[str], password: Optional[str] = None) -> Dict[str, Any]:
+    """Create or update a contractor account (side=contractor). The password is
+    set only when given (first creation, or a reset by RKB); returns the public
+    user. Contractor accounts are refused by every RKB route by construction —
+    see current_user()."""
+    users = mongo.db["users"]
+    now = datetime.now(timezone.utc)
+    doc = {"user_id": user_id, "login": login_name.strip().lower(), "name": name, "full_name": full_name, "role": "contractor",
+           "side": "contractor", "org": org, "org_name": org_name, "person_id": person_id, "property_ids": list(property_ids),
+           "updated_at": now}
+    upd: Dict[str, Any] = {"$set": doc, "$setOnInsert": {"created_at": now, "active": True}}
+    if password:
+        if len(password) < 10:
+            raise ValueError("contractor password must be at least 10 characters")
+        upd["$set"]["password_hash"] = hash_password(password)
+    users.update_one({"user_id": user_id}, upd, upsert=True)
+    return public_user(users.find_one({"user_id": user_id}))
 
 
 def login(mongo: Mongo, user_id: str, password: str, response: Response) -> Dict[str, Any]:
@@ -132,7 +160,9 @@ def logout(response: Response) -> None:
     response.delete_cookie(COOKIE, path="/")
 
 
-def current_user(request: Request) -> Dict[str, Any]:
+def current_session(request: Request) -> Dict[str, Any]:
+    """Whoever is signed in — RKB or contractor. Only /auth/me, /auth/logout and
+    /auth/password use this; every other route takes one of the two below."""
     token = request.cookies.get(COOKIE) or (request.headers.get("authorization") or "").replace("Bearer ", "")
     uid = read_token(token) if token else None
     if not uid:
@@ -141,6 +171,24 @@ def current_user(request: Request) -> Dict[str, Any]:
     if not doc:
         raise HTTPException(401, "user disabled")
     return public_user(doc)
+
+
+def current_user(request: Request) -> Dict[str, Any]:
+    """An RKB user. Default-deny for contractors: a contractor session holding
+    the URL of a document, a chat, a ledger or a task gets 403 here, whatever
+    the browser shows. The portal has its own dependency (current_contractor)
+    and its own routes; nothing existing is opened to contractors."""
+    user = current_session(request)
+    if user.get("side") == "contractor":
+        raise HTTPException(403, "this area is for RKB staff; contractor accounts use the portal")
+    return user
+
+
+def current_contractor(request: Request) -> Dict[str, Any]:
+    user = current_session(request)
+    if user.get("side") != "contractor":
+        raise HTTPException(403, "the portal is for contractor accounts")
+    return user
 
 
 def change_password(mongo: Mongo, user_id: str, old: str, new: str) -> None:
@@ -153,3 +201,5 @@ def change_password(mongo: Mongo, user_id: str, old: str, new: str) -> None:
 
 
 CurrentUser = Depends(current_user)
+AnySession = Depends(current_session)
+CurrentContractor = Depends(current_contractor)

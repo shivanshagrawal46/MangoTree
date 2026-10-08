@@ -102,7 +102,9 @@ def wes_cover(*, day_label: str, top: List[Dict[str, Any]], carried: List[Dict[s
     if carried:
         bullets["Still open from an earlier sheet"] = [
             f"{s.get('address')}: {s.get('title')} — since {_date_str(s.get('first_seen'))}" for s in carried[:3]]
+    from mangotree.retrieve import config as _cfg
     closing = ("A quick reply with where each item stands — done, in hand, or blocked and why — is all I need; a line per property is plenty. "
+               f"You can also answer item by item on your portal: {_cfg.PORTAL_URL} (your own sign-in). "
                "If anything on the sheet is already handled or simply wrong, tell me and it comes off tomorrow's. Thank you, as always, for the work.")
     footer = "This is an auto-generated mail from the system."
     text_parts = paragraphs + [f"{k}\n" + "\n".join(f"  • {i}" for i in v) for k, v in bullets.items() if v] + [closing, "Best regards,\nRakesh Bhargava\nRKB Consulting Group, Inc.", footer]

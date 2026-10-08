@@ -44,6 +44,21 @@ export function StepCard({ step, n, onDone, compact }: { step: NextStep; n: numb
             {ev && <button onClick={() => open({ sha: ev.source_sha, highlight: ev.quote })} className="hover:text-accent text-left truncate max-w-[420px]" title="Open the record">“{ev.quote.slice(0, 120)}{ev.quote.length > 120 ? "…" : ""}”</button>}
             {!step.verified && <span title="No verbatim quote could be matched to a record for this step" className="text-faint">unquoted</span>}
           </div>
+          {step.reported_done && !step.done && (
+            <div className="mt-2 rounded-lg border border-[#B0893B]/40 bg-[#B0893B]/10 px-3 py-2 text-[12px] text-[#1F3550] dark:text-fg">
+              <span className="font-semibold">{step.reported_done.by || "Wes"} reports this done</span> on the portal, {fmtDate(step.reported_done.at, "d MMM HH:mm")}{step.reported_done.note ? ` — “${step.reported_done.note}”` : ""}. Tick the box once you have checked it.
+            </div>
+          )}
+          {!!step.replies?.length && !compact && (
+            <div className="mt-2 space-y-1">
+              {step.replies.filter((r) => r.action === "replied").map((r) => (
+                <div key={r.event_id} className="rounded-lg bg-white/70 dark:bg-black/20 border border-[#D9D3C7] dark:border-line px-3 py-2 text-[12px]">
+                  <span className="font-semibold text-[#1F3550] dark:text-fg">{r.name || "Wes"}</span> <span className="text-faint">on the portal, {fmtDate(r.at, "d MMM HH:mm")}</span>
+                  <div className="text-[#2A2A2E] dark:text-fg/85 whitespace-pre-wrap mt-0.5">{r.text}</div>
+                </div>
+              ))}
+            </div>
+          )}
           {onDone && <div className="mt-3"><Checkbox checked={!!step.done} onCheckedChange={onDone} size={20} /></div>}
         </div>
       </div>

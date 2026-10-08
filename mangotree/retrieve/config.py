@@ -263,6 +263,13 @@ ANALYSIS_EXCLUDED_PROPERTIES = ("9th_st_nw", "chita_ct")
 REPORT_EXCLUDED_PROPERTIES = ANALYSIS_EXCLUDED_PROPERTIES
 
 
+#: Where the web app is reachable from outside — the contractor portal link in
+#: Wes's daily email. Set MT_PUBLIC_URL in .env when a domain arrives.
+import os as _os
+PUBLIC_URL = (_os.environ.get("MT_PUBLIC_URL") or "http://139.59.39.65:3017").rstrip("/")
+PORTAL_URL = PUBLIC_URL + "/portal"
+
+
 def analysis_property_ids():
     from mangotree.config.registry import PROPERTIES
     return [p.property_id for p in PROPERTIES if p.property_id not in ANALYSIS_EXCLUDED_PROPERTIES]

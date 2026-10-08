@@ -1,4 +1,33 @@
-export type User = { user_id: string; name: string; full_name?: string; role: string; home: string };
+export type User = {
+  user_id: string; name: string; full_name?: string; role: string; home: string;
+  /** "rkb" (default) or "contractor" — contractor sessions live in /portal only. */
+  side?: "rkb" | "contractor"; org?: string; org_name?: string; person_id?: string; property_ids?: string[];
+};
+
+/* ------------------------------------------------------- contractor portal */
+export type PortalReply = { event_id: string; at: string; name?: string; person_id?: string; action: "replied" | "reported_done"; text?: string };
+export type PortalStep = {
+  step_id: string; index: number; title: string; detail: string; due?: string | null; urgency: "critical" | "high";
+  first_seen?: string | null; carried_days?: number; replies: PortalReply[]; reported_done: boolean;
+};
+export type PortalSheet = {
+  sheet_id: string; run_id: string; day: string; published_at: string; step_count: number; open_count: number;
+  properties: { property_id: string; address: string; steps: PortalStep[] }[];
+};
+
+/* ---------------------------------------------------------------- permits */
+export type PermitAlert = { kind: string; level: "critical" | "high" | "normal" | "watch"; text: string; property_id?: string; permit_no?: string; address?: string };
+export type Permit = {
+  property_id: string; permit_no: string; kind: string; jurisdiction: string; jurisdiction_name: string; anchored: boolean;
+  official: { status?: string | null; type?: string | null; description?: string | null; filed?: string | null; issued?: string | null; review_status?: string | null;
+              discipline?: string | null; status_date?: string | null; as_of?: string | null; applicant?: string | null; source_sha?: string | null; quote?: string | null };
+  inspections: { type: string; outcome: string; note?: string | null; date?: string | null; date_basis?: string; source_sha: string; quote: string; filename?: string }[];
+  notices: { event_no?: string | null; event_date?: string | null; type: string; contact?: string | null; notice_date?: string | null; accepted_reply?: boolean; stale?: boolean; source_sha: string; quote?: string }[];
+  statements: { by: string; person_id?: string | null; date?: string | null; quote: string; source_sha: string; subject?: string; source_type?: string }[];
+  expiry: { date?: string | null; basis?: string | null; rule: string };
+  last_activity?: string | null; alerts: PermitAlert[]; sources: string[]; updated_at?: string;
+};
+export type PermitBoard = { properties: { property_id: string; address: string; jurisdiction: string; permits: Permit[] }[]; alerts: PermitAlert[]; count: number; updated_at?: string | null };
 
 export type PropertySummary = {
   property_id: string; address: string; city?: string; state?: string; deal_type?: string; status: string;
@@ -129,6 +158,8 @@ export type NextStep = {
   evidence: { source_sha: string; quote: string }[]; verified: boolean; done?: boolean; done_by?: string | null; done_at?: string | null;
   carried_from?: string | null; carried_days?: number; first_seen?: string | null;
   property_id?: string; address?: string; index?: number; run_id?: string;
+  /** Contractor portal: Wes's replies on this step, and "reported done" (RKB confirms; it never closes the step by itself). */
+  step_id?: string; replies?: PortalReply[]; reported_done?: { at: string; by?: string; person_id?: string; note?: string } | null;
 };
 export type NextStepsProperty = { address: string; headline: string; error?: string; elapsed_s?: number } & Partial<Record<NextPerson, NextStep[]>>;
 export type NextStepsRun = {
