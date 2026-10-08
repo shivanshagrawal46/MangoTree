@@ -222,6 +222,81 @@ def store_reply(mongo: Mongo, *, user: Dict[str, Any], sheet: Dict[str, Any], st
     return {"event": ev, "artifact_sha": sha}
 
 
+# ----------------------------------------------------------------- tasks
+#: What a contractor may see of a task. "why", evidence quotes, the draft
+#: email and RKB's remarks stay inside.
+SAFE_TASK_FIELDS = ("task_id", "title", "priority", "due", "created_at", "property_id")
+#: Tasks are owned by "Wes" on the board; Kelly (same company) works his list.
+PERSONA_TASK_OWNER = {"wes": "Wes", "kelly": "Wes"}
+
+
+def contractor_tasks(mongo: Mongo, user: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Tasks owned by this contractor's persona on the properties in scope —
+    the same list Rakesh Sir's board shows under "Wes" (suggested + open),
+    minus RKB's reasoning. Dismissing a task on the board removes it here."""
+    from mangotree.tasks.store import TaskStore
+    owner = PERSONA_TASK_OWNER.get(user.get("person_id") or "")
+    if not owner:
+        return []
+    scope = set(user.get("property_ids") or [])
+    rows = TaskStore(mongo).list(owner=owner, statuses=("suggested", "open"), limit=300)
+    out = []
+    for t in rows:
+        pid = t.get("property_id")
+        if pid and pid not in scope:
+            continue
+        out.append({**{k: t.get(k) for k in SAFE_TASK_FIELDS},
+                    "address": PROPERTY_INDEX[pid].canonical_address if pid in PROPERTY_INDEX else None,
+                    "reported_done": t.get("reported_done") or None,
+                    "replies": [r for r in (t.get("contractor_replies") or [])]})
+    return out
+
+
+def store_task_reply(mongo: Mongo, *, user: Dict[str, Any], task: Dict[str, Any], text: str, action: str, ip: Optional[str] = None) -> Dict[str, Any]:
+    """Same three places as a step reply: the event log, the task document
+    RKB reads (never its status), and a record on the property."""
+    text = (text or "").strip()
+    pid = task.get("property_id")
+    now = datetime.now(timezone.utc)
+    ev = record_event(mongo, user=user, action=action, ip=ip, property_id=pid, step_title=task.get("title"), text=text,
+                      extra={"task_id": task["task_id"], "kind": "task"})
+    entry = {"at": now, "by": user.get("name") or user["user_id"], "person_id": user.get("person_id"), "text": text, "action": action, "event_id": ev["event_id"]}
+    upd: Dict[str, Any] = {"$push": {"contractor_replies": entry}, "$set": {"updated_at": now}}
+    if action == "reported_done":
+        upd["$set"]["reported_done"] = {"at": now, "by": user.get("name"), "person_id": user.get("person_id"), "note": text}
+    mongo.db["tasks"].update_one({"task_id": task["task_id"]}, upd)
+    try:
+        from mangotree.tasks.store import TaskStore
+        TaskStore(mongo)._log(task["task_id"], f"portal:{action}", user["user_id"], {"text": text[:200]})
+    except Exception:
+        logger.debug("task log failed", exc_info=True)
+    sha = None
+    if pid in PROPERTY_INDEX:
+        person = PEOPLE_INDEX.get(user.get("person_id") or "")
+        who = (person.display_name if person else None) or user.get("full_name") or user.get("name") or user["user_id"]
+        label = "reports DONE" if action == "reported_done" else "replies"
+        address = PROPERTY_INDEX[pid].canonical_address
+        body = (f"Portal reply — {who} {label} on {now:%Y-%m-%d %H:%M} UTC\nProperty: {address}\nTask: {task.get('title')}\n"
+                f"{'Note' if action == 'reported_done' else 'Reply'}: {text or '(no text)'}\n")
+        data = body.encode("utf-8")
+        sha = sha256_bytes(data)
+        filename = f"Portal reply - {who} - {now:%Y-%m-%d %H%M} - {address}.txt"
+        mongo.put_original(sha, data, filename, {"source_type": "upload", "doc_class": "portal_reply", "uploaded_by": user["user_id"]})
+        mongo.artifacts.update_one({"sha256": sha}, {"$set": {
+            "sha256": sha, "source_type": "upload", "filename": filename, "extension": ".txt", "content_type": "text/plain", "kind": "text",
+            "doc_class": "portal_reply", "raw_size": len(data), "date": now, "privileged": False, "access": "normal",
+            "author_person_id": user.get("person_id"), "person_ids": [user["person_id"]] if user.get("person_id") else [],
+            "text": body, "extraction": {"status": "complete", "method": "portal", "extracted_at": now},
+            "property_ids": [pid], "placement": "property", "scope": "property", "placed_at": now,
+            "segregation": {"properties": [pid], "confidence": 1.0, "unresolved": False, "reasoning": "portal reply on a task of this property",
+                            "fallback_used": "portal", "scope": "property", "model": "portal", "decided_at": now},
+            "resolution_status": "resolved", "resolution": {"status": "segregated", "notes": ["portal reply; placed by the task it answers"]},
+            "portal": {"event_id": ev["event_id"], "task_id": task["task_id"], "action": action, "org": user.get("org")},
+            "updated_at": now}, "$addToSet": {"source_types": "upload"},
+            "$setOnInsert": {"created_at": now, "first_run_id": f"portal-{now:%Y%m%d}"}}, upsert=True)
+    return {"event": ev, "artifact_sha": sha}
+
+
 def replies_for_steps(mongo: Mongo, org: str, step_ids: Sequence[str]) -> Dict[str, List[Dict[str, Any]]]:
     out: Dict[str, List[Dict[str, Any]]] = {}
     for e in mongo.db["contractor_events"].find({"org": org, "step_id": {"$in": list(step_ids)}, "action": {"$in": ["replied", "reported_done"]}},

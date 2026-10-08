@@ -175,6 +175,12 @@ export function TaskBoard({ propertyId, ownerFilter, statusFilter, showAdd = tru
                       {t.status === "done" && t.done_by && <span className="text-faint">done by {t.done_by} · {fmtDate(t.done_at)}</span>}
                       {!compact && t.why && <span className="text-faint">— {t.why}</span>}
                     </div>
+                    {t.status !== "done" && t.reported_done && (
+                      <div className="mt-1 text-[11.5px] text-good font-medium">{t.reported_done.by || t.owner} reports done via portal · {fmtDate(t.reported_done.at, "d MMM HH:mm")}{t.reported_done.note ? ` — “${t.reported_done.note}”` : ""} · tick to confirm</div>
+                    )}
+                    {!compact && t.status !== "done" && (t.contractor_replies || []).filter((r) => r.action === "replied").slice(-1).map((r) => (
+                      <div key={r.event_id} className="mt-1 text-[11.5px] text-muted border-l-2 border-accent pl-2"><span className="font-semibold text-fg">{r.by || r.name} (portal)</span> {fmtDate(r.at, "d MMM HH:mm")}: {r.text}</div>
+                    ))}
                     {!compact && t.evidence?.[0]?.quote && <button onClick={() => t.evidence?.[0]?.source_sha && open({ sha: t.evidence[0].source_sha, highlight: t.evidence[0].quote.slice(0, 60) })} className="mt-1 text-[11.5px] text-left italic text-muted border-l-2 border-line pl-2 hover:text-fg hover:border-accent line-clamp-1">“{t.evidence[0].quote}”</button>}
                     {t.draft_email && t.status !== "done" && <div className="mt-1.5"><EmailDraftCard draft={t.draft_email} compact /></div>}
                   </div>

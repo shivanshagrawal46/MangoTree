@@ -5,10 +5,14 @@ export type User = {
 };
 
 /* ------------------------------------------------------- contractor portal */
-export type PortalReply = { event_id: string; at: string; name?: string; person_id?: string; action: "replied" | "reported_done"; text?: string };
+export type PortalReply = { event_id: string; at: string; name?: string; by?: string; person_id?: string; action: "replied" | "reported_done"; text?: string };
 export type PortalStep = {
   step_id: string; index: number; title: string; detail: string; due?: string | null; urgency: "critical" | "high";
   first_seen?: string | null; carried_days?: number; replies: PortalReply[]; reported_done: boolean;
+};
+export type PortalTask = {
+  task_id: string; title: string; priority: "critical" | "high" | "normal" | "low"; due?: string | null; created_at?: string;
+  property_id?: string | null; address?: string | null; replies: PortalReply[]; reported_done?: { at: string; by?: string; note?: string } | null;
 };
 export type PortalSheet = {
   sheet_id: string; run_id: string; day: string; published_at: string; step_count: number; open_count: number;
@@ -86,6 +90,8 @@ export type Task = {
   priority: "critical" | "high" | "normal" | "low"; source: string; due?: string | null; why?: string;
   evidence?: { quote: string; source_sha?: string }[]; created_by: string; created_at: string; done_at?: string | null; done_by?: string | null;
   draft_email?: EmailDraft | null;
+  /** Contractor portal: Wes's replies and "reported done" (RKB ticks the box; the status never changes by itself). */
+  contractor_replies?: PortalReply[]; reported_done?: { at: string; by?: string; note?: string } | null;
 };
 
 export type WesItem = { title: string; status: "done" | "in_progress" | "remaining" | "blocked"; due?: string | null; quote: string; source_sha?: string };

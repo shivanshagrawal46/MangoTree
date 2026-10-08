@@ -134,6 +134,35 @@ def install(app, mongo) -> None:
         """'Reported done' — shown to RKB as reported; RKB confirms and closes."""
         return _write(user, request, step_id, body.text, "reported_done")
 
+    # ------------------------------------------------------------- tasks
+    @app.get("/portal/tasks")
+    def portal_tasks(user=CurrentContractor):
+        """The open tasks RKB has assigned to this person, on the properties in
+        scope — title, priority, due date; none of RKB's reasoning."""
+        return _jsonable({"items": S.contractor_tasks(mongo, user)})
+
+    def _task_write(user, request, task_id: str, text: str, action: str):
+        text = (text or "").strip()
+        if action == "replied" and not text:
+            raise HTTPException(400, "write a reply first")
+        if len(text) > MAX_TEXT:
+            raise HTTPException(400, f"keep it under {MAX_TEXT} characters")
+        if S.writes_today(mongo, user["user_id"]) >= MAX_WRITES_PER_DAY:
+            raise HTTPException(429, "too many entries today; please continue tomorrow or email Rakesh")
+        task = next((t for t in S.contractor_tasks(mongo, user) if t["task_id"] == task_id), None)
+        if not task:
+            raise HTTPException(404, "that task is not on your list")
+        out = S.store_task_reply(mongo, user=user, task=task, text=text, action=action, ip=_ip(request))
+        return _jsonable({"ok": True, "event_id": out["event"]["event_id"], "at": out["event"]["at"], "task_id": task_id})
+
+    @app.post("/portal/tasks/{task_id}/reply")
+    def portal_task_reply(task_id: str, body: ReplyBody, request: Request, user=CurrentContractor):
+        return _task_write(user, request, task_id, body.text, "replied")
+
+    @app.post("/portal/tasks/{task_id}/done")
+    def portal_task_done(task_id: str, body: DoneBody, request: Request, user=CurrentContractor):
+        return _task_write(user, request, task_id, body.text, "reported_done")
+
     @app.get("/portal/history")
     def portal_history(user=CurrentContractor):
         """What this organisation has said through the portal, newest first."""
