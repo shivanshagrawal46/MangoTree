@@ -262,10 +262,26 @@ class NextSteps:
         rows = list(self.mongo.db["remember_notes"].find(
             {"active": {"$ne": False}, "status": {"$ne": "pending"},
              "$or": [{"scope": "global"}, {"scope": "property", "property_id": pid}]},
-            {"_id": 0, "text": 1, "scope": 1, "author": 1, "created_at": 1}).sort("created_at", -1).limit(30))
+            {"_id": 0, "text": 1, "scope": 1, "author": 1, "created_at": 1, "decided_at": 1}).sort("created_at", -1).limit(30))
         if not rows:
             return "(none)"
-        return "\n".join(f"- [{r.get('scope')}] {r.get('text')} — {r.get('author')}, {str(r.get('created_at'))[:10]}" for r in rows)
+        out = []
+        for r in rows:
+            # The date the decision was taken (a call), not the day it was typed in.
+            decided = r.get("decided_at") or r.get("created_at")
+            line = f"- [{r.get('scope')}] {r.get('text')} — {r.get('author')}, decided {str(decided)[:10]}"
+            if r.get("scope") == "property" and isinstance(decided, datetime):
+                # Deterministic guard (2026-10-08: a 3 Oct "we are making a cash
+                # offer" note froze the sheet while a 5 Oct settlement demand was
+                # the live matter): show what arrived after the decision.
+                later = list(self.mongo.artifacts.find(
+                    {"property_ids": pid, "is_inline_image": {"$ne": True}, "date": {"$gt": decided}},
+                    {"_id": 0, "date": 1, "subject": 1, "filename": 1}).sort("date", -1).limit(3))
+                if later:
+                    names = "; ".join(f"{str(x.get('date'))[:10]} {x.get('subject') or x.get('filename') or ''}"[:90] for x in later)
+                    line += f"\n    RECORDS AFTER THIS DECISION ({len(later)}+; newest first): {names} — check whether they overtake the note's premise."
+            out.append(line)
+        return "\n".join(out)
 
     def _investigate(self, pid: str, *, reuse: bool = False) -> Dict[str, Any]:
         """The morning dossier is THE investigation (admin directive 2026-09-16:
@@ -332,9 +348,12 @@ class NextSteps:
         deal = " | ".join(x for x in (f"deal type: {getattr(p, 'deal_type', None)}" if getattr(p, "deal_type", None) else "",
                                      f"registry notes: {getattr(p, 'notes', None)}" if getattr(p, "notes", None) else "") if x) or "(no registry notes)"
         user = (f"PROPERTY: {p.canonical_address} ({pid})\nDEAL: {deal}\nTODAY: {datetime.now(timezone.utc):%Y-%m-%d}\n\n"
-                f"STANDING INSTRUCTIONS FROM RAKESH SIR (his decisions; they override the investigation, the records and the previous sheet — "
-                f"a property he marked update-only gets one line asking for status; work he assigned to RKB never goes on Wes's list; "
-                f"a matter he said not to raise is not raised):\n{self._standing_instructions(pid)}\n\n"
+                f"STANDING INSTRUCTIONS FROM RAKESH SIR (each is dated). They decide WHAT KIND of ask goes to whom: a property marked "
+                f"update-only gets one line asking for status; work he assigned to RKB never goes on Wes's list; a matter he said not to "
+                f"raise is not raised. They do NOT freeze the facts: where a note describes a state of play and a record dated AFTER the note "
+                f"shows the situation has moved (a demand, a deadline, a filing, a closing), the newer record governs the step and the note's "
+                f"premise is treated as outdated. Never carry a question the records already answer or that events have overtaken.\n"
+                f"{self._standing_instructions(pid)}\n\n"
                 f"PREVIOUS SHEET:\n{self._previous_block(prev)}\n\n"
                 f"RESPONSES SINCE THE PREVIOUS SHEET (what they actually said — judge every carried step against this first):\n{responses}\n\n"
                 f"INVESTIGATION:\n{inv['answer']}\n\nOpen items the analyst listed: {inv['open_items']}\nRisks: {inv['risks']}\n\n"

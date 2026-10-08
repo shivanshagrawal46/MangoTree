@@ -277,7 +277,8 @@ class PropertyDossier:
             parts.append(f"\n=== WHAT HAS BEEN DISCUSSED AND DECIDED (rolling summary of the property chat, {str(mem.get('chat_summary_at'))[:10]}) ===")
             parts.append(str(mem["chat_summary"])[:3000])
         if mem.get("remember_notes"):
-            parts.append("\n=== STANDING INSTRUCTIONS (remember notes — these override inference) ===")
+            parts.append("\n=== STANDING INSTRUCTIONS (remember notes, each dated — they override inference about WHO does WHAT and what to raise; "
+                         "they do not override records dated after them: if a later document shows the situation has moved, the record governs) ===")
             parts += [f"- [{n.get('scope')}] {n.get('text')} — {n.get('author')}, {str(n.get('created_at'))[:10]}" for n in mem["remember_notes"]]
         if mem.get("dismissals"):
             parts.append("\n=== JUDGED NOISE BEFORE (dismissed cards with remark — do not raise again) ===")
