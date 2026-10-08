@@ -217,7 +217,7 @@ def auth_password(body: PasswordBody, user=CurrentUser):
 
 @app.get("/properties")
 def list_properties(user=CurrentUser):
-    return data.portfolio(mongo)
+    return data.active_portfolio(mongo)
 
 
 @app.get("/properties/{pid}")
@@ -883,7 +883,7 @@ def dashboard(user=CurrentUser):
         "user": user,
         "needs_attention": data.needs_attention(mongo, user["user_id"]),
         "handled": _cached("handled", 300, lambda: data.handled_overnight(mongo)),
-        "portfolio": data.portfolio(mongo),
+        "portfolio": data.active_portfolio(mongo),
         "tasks": _cached("task_counts", 30, tasks.counts),
         "money": _cached("money_all", 120, lambda: data.money(mongo, None) | {"events": []}),
         "degrades": _cached("degrades", 300, _degrades),

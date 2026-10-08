@@ -256,9 +256,10 @@ WES_MAX_ISSUES = 2
 # =============================================================================
 #: Properties left out of EVERY daily pass — investigation, follow-ups,
 #: resolution, tasks, ledger, sheets, brief (admin directive 2026-09-17: "forget
-#: 9th St; no analysis"). Their records stay searchable; the property page works;
-#: nothing is spent on them each morning.
-ANALYSIS_EXCLUDED_PROPERTIES = ("9th_st_nw",)
+#: 9th St; no analysis"; 2026-10-08: Chita Ct is sold). Their records stay
+#: searchable; the property page works by URL; they are hidden from the sidebar
+#: and the dashboard grid; nothing is spent on them each morning.
+ANALYSIS_EXCLUDED_PROPERTIES = ("9th_st_nw", "chita_ct")
 REPORT_EXCLUDED_PROPERTIES = ANALYSIS_EXCLUDED_PROPERTIES
 
 

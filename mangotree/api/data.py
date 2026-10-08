@@ -297,6 +297,15 @@ def portfolio(mongo: Mongo, *, fresh: bool = False) -> List[Dict[str, Any]]:
     return _compute_portfolio(mongo)
 
 
+def active_portfolio(mongo: Mongo) -> List[Dict[str, Any]]:
+    """The grid without the properties that are out of the daily pass (sold /
+    admin-excluded). The sidebar, the command palette and the dashboard grid
+    use this; the property page still resolves every id through portfolio()."""
+    from mangotree.retrieve import config as cfg
+    hidden = set(cfg.ANALYSIS_EXCLUDED_PROPERTIES)
+    return [r for r in portfolio(mongo) if r.get("property_id") not in hidden]
+
+
 def _refresh_portfolio_async(mongo: Mongo) -> None:
     import threading
     with _PORTFOLIO_LOCK:

@@ -594,7 +594,8 @@ PROPERTIES: List[Property] = [
         city="Temple Hills", state="MD", postal="20748",
         aliases=("2000 Chita", "Chita Ct", "Chita Court", "Chita"),
         disk_folder="Chita Ct., Temple Hills, MD 20748",
-        notes="Demand letters, failed sale, video evidence.",
+        status="sold",
+        notes="Demand letters, failed sale, video evidence. SOLD (admin 2026-10-08): no daily analysis.",
     ),
     Property(
         property_id="decatur_st",
