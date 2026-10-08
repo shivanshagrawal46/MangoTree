@@ -253,7 +253,21 @@ class NextSteps:
                 out.append(f"[sha={a['sha256'][:16]}] EMAIL {str(a.get('date'))[:10]} from {who}: {a.get('subject')}\n{(a.get('body_clean') or '')[:3000].strip()}")
         return "\n\n".join(out) if out else "(no reply from Wes, Kelly, JP Sir or Manjunath Sir on this property since the previous sheet)"
 
-    def _investigate(self, pid: str) -> Dict[str, Any]:
+    def _standing_instructions(self, pid: str) -> str:
+        """Rakesh Sir's remember-notes for this property and the portfolio —
+        decisions from his calls ("update-only", "that is RKB's job, not Wes's",
+        "not an emergency"). They override the investigation and the records,
+        and they reach the writer directly so a note entered after the dossier
+        was built still governs the sheet without a re-investigation."""
+        rows = list(self.mongo.db["remember_notes"].find(
+            {"active": {"$ne": False}, "status": {"$ne": "pending"},
+             "$or": [{"scope": "global"}, {"scope": "property", "property_id": pid}]},
+            {"_id": 0, "text": 1, "scope": 1, "author": 1, "created_at": 1}).sort("created_at", -1).limit(30))
+        if not rows:
+            return "(none)"
+        return "\n".join(f"- [{r.get('scope')}] {r.get('text')} — {r.get('author')}, {str(r.get('created_at'))[:10]}" for r in rows)
+
+    def _investigate(self, pid: str, *, reuse: bool = False) -> Dict[str, Any]:
         """The morning dossier is THE investigation (admin directive 2026-09-16:
         one read per property, no second one). Today's dossier is used as is; a
         property with none from today is investigated now — the same 15-call
@@ -267,7 +281,9 @@ class NextSteps:
         # cycle: rebuild only if records changed since it was built, the question
         # changed, or it is older than a week. (Insisting on a same-day dossier
         # here re-investigated all fourteen on 2026-09-18 for nothing — $99.)
-        doc = dossier.refresh_if_changed(pid)
+        # reuse=True: a writer-only pass (the sheet is being rewritten after a
+        # standing instruction was entered) — today's dossier is used as it is.
+        doc = dossier.coll.find_one({"property_id": pid}, {"_id": 0}) if (reuse and before) else dossier.refresh_if_changed(pid)
         fresh = bool(before) and (doc or {}).get("built_at") == before.get("built_at")
         changed = None if fresh else (doc or {}).get("rebuild_reason") or "no dossier"
         if not fresh:
@@ -316,6 +332,9 @@ class NextSteps:
         deal = " | ".join(x for x in (f"deal type: {getattr(p, 'deal_type', None)}" if getattr(p, "deal_type", None) else "",
                                      f"registry notes: {getattr(p, 'notes', None)}" if getattr(p, "notes", None) else "") if x) or "(no registry notes)"
         user = (f"PROPERTY: {p.canonical_address} ({pid})\nDEAL: {deal}\nTODAY: {datetime.now(timezone.utc):%Y-%m-%d}\n\n"
+                f"STANDING INSTRUCTIONS FROM RAKESH SIR (his decisions; they override the investigation, the records and the previous sheet — "
+                f"a property he marked update-only gets one line asking for status; work he assigned to RKB never goes on Wes's list; "
+                f"a matter he said not to raise is not raised):\n{self._standing_instructions(pid)}\n\n"
                 f"PREVIOUS SHEET:\n{self._previous_block(prev)}\n\n"
                 f"RESPONSES SINCE THE PREVIOUS SHEET (what they actually said — judge every carried step against this first):\n{responses}\n\n"
                 f"INVESTIGATION:\n{inv['answer']}\n\nOpen items the analyst listed: {inv['open_items']}\nRisks: {inv['risks']}\n\n"
@@ -382,7 +401,10 @@ class NextSteps:
 
     # --------------------------------------------------------------- run
     def generate(self, *, by: str, emit: Optional[Callable[[str, Dict[str, Any]], None]] = None,
-                 property_ids: Optional[Sequence[str]] = None) -> Dict[str, Any]:
+                 property_ids: Optional[Sequence[str]] = None, reuse_dossiers: bool = False) -> Dict[str, Any]:
+        """reuse_dossiers=True rewrites the sheets from the dossiers as they are
+        (no refresh check) — for a rewrite after Rakesh Sir's instructions were
+        entered, when the records themselves have not changed."""
         from mangotree.briefing.morning import local_day
         say = emit or (lambda *_: None)
         props = [p for p in report_properties() if not property_ids or p.property_id in property_ids]
@@ -398,7 +420,7 @@ class NextSteps:
             t0 = time.time()
             try:
                 say("status", {"text": f"{p.canonical_address}: reading today's investigation…", "property_id": pid})
-                inv = self._investigate(pid)
+                inv = self._investigate(pid, reuse=reuse_dossiers)
                 say("status", {"text": f"{p.canonical_address}: writing next steps…", "property_id": pid})
                 steps = self._write(pid, inv)
                 result = {**steps, "address": p.canonical_address, "investigation": {k: inv.get(k) for k in ("steps", "elapsed_ms", "model", "budget", "dossier_built_at", "investigated_now")},
