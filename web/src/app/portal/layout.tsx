@@ -31,7 +31,7 @@ export default function PortalLayout({ children }: { children: React.ReactNode }
             <div className="text-[13px] font-semibold tracking-tight leading-none">RKB Consulting Group</div>
             <div className="text-[11px] text-faint mt-0.5 truncate">Next steps for {user.org_name || "ROI Blocks"} · signed in as {user.name}</div>
           </div>
-          <button onClick={async () => { await api.post("/auth/logout"); qc.clear(); router.replace("/login"); }} className="h-8 px-2.5 rounded-lg text-xs text-muted hover:bg-sunken flex items-center gap-1.5" title="Sign out">
+          <button onClick={async () => { await api.post("/auth/logout").catch(() => {}); qc.clear(); window.location.assign("/login"); }} className="h-8 px-2.5 rounded-lg text-xs text-muted hover:bg-sunken flex items-center gap-1.5" title="Sign out">
             <LogOut size={14} /> Sign out
           </button>
         </div>

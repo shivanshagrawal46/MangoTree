@@ -101,7 +101,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <div className="h-8 w-8 rounded-full bg-accent-soft text-accent grid place-items-center text-xs font-semibold">{initials(user.full_name || user.name)}</div>
           <div className="min-w-0 flex-1"><div className="text-xs font-medium truncate">{user.name}</div><div className="text-[10px] text-faint capitalize">{user.role}</div></div>
           <button onClick={toggleTheme} className="h-7 w-7 grid place-items-center rounded-lg text-muted hover:bg-sunken"><Sun size={14} className="dark:hidden" /><Moon size={14} className="hidden dark:block" /></button>
-          <button onClick={async () => { await api.post("/auth/logout"); qc.clear(); router.replace("/login"); }} className="h-7 w-7 grid place-items-center rounded-lg text-muted hover:bg-sunken" title="Sign out"><LogOut size={14} /></button>
+          <button onClick={async () => { await api.post("/auth/logout").catch(() => {}); qc.clear(); window.location.assign("/login"); }} className="h-7 w-7 grid place-items-center rounded-lg text-muted hover:bg-sunken" title="Sign out"><LogOut size={14} /></button>
         </div>
       </aside>
 

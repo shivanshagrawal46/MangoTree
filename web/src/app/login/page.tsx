@@ -1,14 +1,12 @@
-"use client";
+﻿"use client";
 
 import * as React from "react";
-import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { api } from "@/lib/api";
 import { Button, Input } from "@/components/ui";
 
 export default function LoginPage() {
-  const router = useRouter();
   const qc = useQueryClient();
   const [u, setU] = React.useState("");
   const [p, setP] = React.useState("");
@@ -17,10 +15,13 @@ export default function LoginPage() {
   const submit = async (e: React.FormEvent) => {
     e.preventDefault(); setBusy(true); setErr("");
     try {
-      const me = await api.post<{ home?: string }>("/auth/login", { user_id: u, password: p });
-      await qc.invalidateQueries({ queryKey: ["me"] });
+      const me = await api.post<{ home?: string; side?: string }>("/auth/login", { user_id: u, password: p });
+      // Seed the session from the login response, then do a full navigation:
+      // nothing cached for the previous person (a contractor who signed out a
+      // moment ago, say) can leak into this session's shell or redirects.
+      qc.setQueryData(["me"], me);
       // Contractor accounts have one home: the portal. RKB goes to the dashboard.
-      router.replace(me?.home === "portal" ? "/portal" : "/");
+      window.location.assign(me?.side === "contractor" || me?.home === "portal" ? "/portal" : "/");
     }
     catch (ex: any) { setErr(ex.message || "Sign-in failed"); } finally { setBusy(false); }
   };
@@ -33,7 +34,7 @@ export default function LoginPage() {
         <label className="block text-xs text-muted mb-1 mt-3">Password</label>
         <Input type="password" value={p} onChange={(e) => setP(e.target.value)} autoComplete="current-password" />
         {err && <div className="text-xs text-critical mt-2">{err}</div>}
-        <Button type="submit" variant="primary" size="lg" className="w-full mt-5" disabled={busy || !u || !p}>{busy ? "Signing in…" : "Sign in"}</Button>
+        <Button type="submit" variant="primary" size="lg" className="w-full mt-5" disabled={busy || !u || !p}>{busy ? "Signing inâ€¦" : "Sign in"}</Button>
         <div className="text-[11px] text-faint mt-4 text-center">Every number you see opens its source document.</div>
       </motion.form>
     </div>
