@@ -73,6 +73,7 @@ export function DocumentsTab({ doc, setDoc, running, onRerun }: TabProps & { onR
             <div key={d.doc_id} className={busyId === d.doc_id ? "opacity-60 pointer-events-none" : undefined}>
               <DocCard d={d} appliedFacts={doc.subject.fact_sources} defaultOpen={docs.length <= 3}
                 onApplyFacts={(keys) => act(d, "facts", keys)}
+                isBudget={doc.rehab?.mode === "lines" && doc.rehab?.source_doc_id === d.doc_id}
                 onApplyRehab={(d.extracted?.rehab_items.length || 0) > 0 ? () => act(d, "rehab") : undefined}
                 onApplyComps={(d.extracted?.comps.length || 0) > 0 ? () => act(d, "comps") : undefined}
                 onRemove={() => remove(d)} />

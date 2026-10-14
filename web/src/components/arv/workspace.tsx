@@ -219,17 +219,18 @@ function BudgetGap({ doc, setDoc, setTab }: { doc: AnalysisDoc; setDoc: (d: Anal
   const [busy, setBusy] = React.useState(false);
   const total = doc.rehab_budget?.total || 0;
   const mode = doc.rehab?.mode || doc.rehab_budget?.mode || "tier";
-  if (total > 0 || doc.status === "running") return null;
   const bids = (doc.documents || []).filter((d) => d.status === "done" && (d.extracted?.rehab_items.length || 0) > 0);
+  const ignoringBid = mode === "tier" && bids.length > 0;
+  if (doc.status === "running" || (total > 0 && !ignoringBid)) return null;
   const useBid = async (docId: string) => {
     setBusy(true);
     try { setDoc(await arvApi.applyDocument(doc.analysis_id, docId, "rehab")); toast.success("Budget now follows the bid; the deal recomputed"); }
     catch (e: any) { toast.error(e?.message || "Could not apply the bid"); } finally { setBusy(false); }
   };
   return (
-    <Alert type="warning" showIcon title="The rehab budget is $0, so the maximum offer and profit are overstated"
+    <Alert type="warning" showIcon title={total > 0 ? "A contractor bid is on file but the budget is a tier estimate" : "The rehab budget is $0, so the maximum offer and profit are overstated"}
       description={<div className="space-y-2">
-        <div className="text-[12px] text-muted">{mode === "tier" && !(doc.subject.sqft_after || doc.subject.sqft) ? "The tier estimate is a rate per square foot and the living area is unknown." : "No repair cost has been set."}</div>
+        <div className="text-[12px] text-muted">{total > 0 ? `The tier estimate is a rate per square foot (${money(total, true)}); the bid is a priced scope for this house.` : mode === "tier" && !(doc.subject.sqft_after || doc.subject.sqft) ? "The tier estimate is a rate per square foot and the living area is unknown." : "No repair cost has been set."}</div>
         <div className="flex flex-wrap gap-2">
           {bids.map((b) => <Button key={b.doc_id} size="sm" variant="primary" disabled={busy} onClick={() => useBid(b.doc_id)}>Use the bid on file · {money(b.extracted?.rehab_total, true)} ({b.filename.length > 28 ? b.filename.slice(0, 26) + "…" : b.filename})</Button>)}
           <Button size="sm" onClick={() => setTab("calculator")}>Enter a budget</Button>

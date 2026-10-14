@@ -37,7 +37,7 @@ type Form = {
   beds: number | null; baths: number | null; sqft: number | null; lot_sqft: number | null; stories: number | null; year_built: number | null; garage_spaces: number | null; parking: string;
   basement: string; pool: string; waterfront: string; foundation: string; exterior: string; roof_age_years: number | null; heating: string; cooling: string;
   condition_current: string; occupancy: string; hoa_monthly: number | null; zoning: string; view: string; known_issues: string[]; notes: string;
-  planned_work: string[]; scope: string; level: string; budget_mode: "tier" | "doc" | "lump"; budget_doc_id: string; lump_sum: number | null;
+  planned_work: string[]; scope: string; level: string; budget_mode: "tier" | "doc" | "lump"; budget_doc_id: string; budget_touched: boolean; lump_sum: number | null;
   beds_after: number | null; baths_after: number | null; sqft_after: number | null; condition_after: string;
   list_price: number | null; purchase_price: number | null; exit_strategy: string; months_held: number | null; rule_pct: number | null; profit_target_pct: number | null;
   finance: boolean; ltc_pct: number | null; ltarv_pct: number | null; rate_pct: number | null; points_pct: number | null;
@@ -49,7 +49,7 @@ const INITIAL: Form = {
   address: "", property_type: "single_family", property_id: "", label: "", acquisition_type: "mls", docs: [], fact_sources: {},
   beds: null, baths: null, sqft: null, lot_sqft: null, stories: null, year_built: null, garage_spaces: null, parking: "", basement: "unknown", pool: "unknown", waterfront: "unknown",
   foundation: "", exterior: "", roof_age_years: null, heating: "", cooling: "", condition_current: "", occupancy: "", hoa_monthly: null, zoning: "", view: "", known_issues: [], notes: "",
-  planned_work: [], scope: "moderate", level: "mid", budget_mode: "tier", budget_doc_id: "", lump_sum: null, beds_after: null, baths_after: null, sqft_after: null, condition_after: "C2",
+  planned_work: [], scope: "moderate", level: "mid", budget_mode: "tier", budget_doc_id: "", budget_touched: false, lump_sum: null, beds_after: null, baths_after: null, sqft_after: null, condition_after: "C2",
   list_price: null, purchase_price: null, exit_strategy: "flip", months_held: 8, rule_pct: 70, profit_target_pct: 15, finance: true, ltc_pct: 85, ltarv_pct: 70, rate_pct: 10.5, points_pct: 2,
   property_taxes_annual: null, insurance_annual: null, commission_pct: 5,
   use_web_search: true, use_rentcast: true, radius_mi: 1.0, months: 12, web_searches: 10,
@@ -94,7 +94,13 @@ export function Wizard({ status, initialAddress, initialPropertyId }: { status?:
   }, [addr]);
 
   // --------------------------------------------------------- documents
-  const upsertDoc = (d: ArvDocument) => setF((s) => { const i = s.docs.findIndex((x) => x.doc_id === d.doc_id); const docs = s.docs.slice(); if (i === -1) docs.push(d); else docs[i] = { ...docs[i], ...d }; return { ...s, docs }; });
+  const upsertDoc = (d: ArvDocument) => setF((s) => {
+    const i = s.docs.findIndex((x) => x.doc_id === d.doc_id); const docs = s.docs.slice(); if (i === -1) docs.push(d); else docs[i] = { ...docs[i], ...d };
+    // A priced scope on file is the budget unless the person already chose one; the tier estimate is only a placeholder.
+    const priced = d.status === "done" && (d.extracted?.rehab_items.length || 0) > 0;
+    if (priced && !s.budget_touched && s.budget_mode === "tier") return { ...s, docs, budget_mode: "doc", budget_doc_id: d.doc_id };
+    return { ...s, docs };
+  });
   const uploader = useDocUploader({ address: geo?.formatted || addr, onDocument: upsertDoc });
   const applyFacts = (d: ArvDocument, keys: string[]) => {
     const facts = d.extracted?.subject_facts || {};
@@ -296,7 +302,7 @@ export function Wizard({ status, initialAddress, initialPropertyId }: { status?:
               </Card>
               <Card className="p-6">
                 <Section title="Budget" sub="Three ways to set it. A contractor's bid is the strongest; a tier estimate is a placeholder the analyst will question." />
-                <Seg value={f.budget_mode} onChange={(v) => set("budget_mode", v)} className="mt-3"
+                <Seg value={f.budget_mode} onChange={(v) => setF((s) => ({ ...s, budget_mode: v, budget_touched: true, budget_doc_id: v === "doc" && !s.budget_doc_id ? (bidDocs[0]?.doc_id || "") : s.budget_doc_id }))} className="mt-3"
                   options={[["tier", "Tier estimate"], ["doc", bidDocs.length ? `Contractor bid (${bidDocs.length})` : "Contractor bid"], ["lump", "My own number"]]} />
                 {f.budget_mode === "tier" && (
                   <div className="mt-4 space-y-3">
@@ -317,6 +323,7 @@ export function Wizard({ status, initialAddress, initialPropertyId }: { status?:
                 )}
                 {f.budget_mode === "doc" && (
                   <div className="mt-4 space-y-2">
+                    {bidDocs.length > 0 && !f.budget_touched && <div className="text-[12px] text-muted">The bid on file is the budget. Pick a tier estimate or your own number to use something else.</div>}
                     {bidDocs.length === 0 ? <div className="text-[12.5px] text-muted">No uploaded document has priced items yet. <button className="text-accent underline" onClick={() => setStep("documents")}>Add a bid</button> or pick another budget source.</div>
                       : bidDocs.map((d) => (
                         <button key={d.doc_id} type="button" onClick={() => set("budget_doc_id", d.doc_id)} className={cn("w-full text-left rounded-xl border p-3 transition flex items-center justify-between gap-3", f.budget_doc_id === d.doc_id ? "border-accent bg-accent-soft/60" : "border-line hover:border-line-strong")}>

@@ -7,7 +7,7 @@
    (documents are staged before the analysis exists) and the workspace. */
 import * as React from "react";
 import { Select, Table, Upload } from "antd";
-import { AlertTriangle, Camera, ChevronDown, ChevronUp, ExternalLink, FileText, Loader2, Plus, Trash2, Upload as UploadIcon } from "lucide-react";
+import { AlertTriangle, Camera, Check, ChevronDown, ChevronUp, ExternalLink, FileText, Loader2, Plus, Trash2, Upload as UploadIcon } from "lucide-react";
 import { toast } from "sonner";
 import { cn, money } from "@/lib/utils";
 import { arvApi, subscribeArvJob, FACT_LABEL, fmtFact, type ArvDocument } from "@/lib/arv";
@@ -80,9 +80,9 @@ export function DropZone({ onFiles, busy, status, compact, className }: { onFile
 
 /* One document: header line always; details on demand. The action callbacks
    are optional so the card works both before and after an analysis exists. */
-export function DocCard({ d, onApplyFacts, onApplyRehab, onApplyComps, onRemove, appliedFacts, defaultOpen, className }: {
+export function DocCard({ d, onApplyFacts, onApplyRehab, onApplyComps, onRemove, appliedFacts, isBudget, defaultOpen, className }: {
   d: ArvDocument; onApplyFacts?: (keys: string[]) => void; onApplyRehab?: () => void; onApplyComps?: () => void; onRemove?: () => void;
-  appliedFacts?: Record<string, string>; defaultOpen?: boolean; className?: string;
+  appliedFacts?: Record<string, string>; isBudget?: boolean; defaultOpen?: boolean; className?: string;
 }) {
   const [open, setOpen] = React.useState(!!defaultOpen);
   const ex = d.extracted;
@@ -158,7 +158,8 @@ export function DocCard({ d, onApplyFacts, onApplyRehab, onApplyComps, onRemove,
           {ex.rehab_items.length > 0 && (
             <section className="md:col-span-2">
               <div className="flex items-center justify-between mb-1.5"><div className="text-[10.5px] uppercase tracking-wide text-muted font-medium">Priced work · {money(ex.rehab_total)}</div>
-                {onApplyRehab && <button onClick={onApplyRehab} className="text-[11px] text-accent hover:underline flex items-center gap-1"><Plus size={11} /> use as the rehab budget</button>}</div>
+                {isBudget ? <span className="text-[11px] text-accent flex items-center gap-1"><Check size={11} /> the rehab budget follows this bid</span>
+                  : onApplyRehab && <button onClick={onApplyRehab} className="text-[11px] text-accent hover:underline flex items-center gap-1"><Plus size={11} /> use as the rehab budget</button>}</div>
               <Table size="small" pagination={false} rowKey={(_, i) => String(i)} dataSource={ex.rehab_items}
                 columns={[{ title: "Item", dataIndex: "label" }, { title: "Trade", dataIndex: "category", render: (c: string) => c.replace(/_/g, " ") }, { title: "Amount", dataIndex: "amount", align: "right", render: (v: number) => <span className="tnum">{money(v)}</span> }]} />
             </section>

@@ -113,7 +113,7 @@ def budget(rehab: Dict[str, Any], *, sqft: float, state: Optional[str]) -> Dict[
         lines = [{"key": l.get("key") or ("line_%d" % i), "label": l.get("label") or l.get("key") or "Line", "amount": round(float(l.get("amount") or 0)), "estimated": False}
                  for i, l in enumerate(rehab["lines"])]
         subtotal = float(sum(l["amount"] for l in lines))
-        basis = "Line items entered by the user."
+        basis = ("Line items from the contractor bid on file: %s." % rehab["source"]) if (rehab or {}).get("source") else "Line items entered by the user."
     else:
         subtotal = float(est["subtotal"])
         lines = spread_lines(scope, subtotal)
@@ -125,6 +125,7 @@ def budget(rehab: Dict[str, Any], *, sqft: float, state: Optional[str]) -> Dict[
     contingency = located * float(adders.get("contingency_pct") or 0) / 100
     total = located + permit + ohp + contingency
     return {"mode": mode, "scope": scope, "level": level, "basis": basis, "tier": est, "lines": lines, "adders": adders,
+            "source": (rehab or {}).get("source") if mode == "lines" else None, "source_doc_id": (rehab or {}).get("source_doc_id") if mode == "lines" else None,
             "subtotal": round(subtotal), "location_adjustment": round(located - subtotal), "permit_cost": round(permit),
             "oh_and_p": round(ohp), "contingency": round(contingency), "total_adders": round(permit + ohp + contingency + (located - subtotal)),
             "total": round(total), "per_sqft": round(total / sqft, 1) if sqft else None}

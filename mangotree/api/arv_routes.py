@@ -79,6 +79,28 @@ def install(app, mongo, jobs) -> None:
         d["analysis_id"] = doc["analysis_id"]
         doc["documents"] = [x for x in (doc.get("documents") or []) if x.get("doc_id") != rec["doc_id"]] + [d]
 
+    def _adopt_bid(doc: Dict[str, Any], rec: Dict[str, Any]) -> bool:
+        """A contractor bid on file is the budget, unless a person already chose one.
+        The tier estimate is a placeholder; a priced scope replaces it the moment it is read.
+        A budget someone set by hand (lump sum, edited lines) or one already following a
+        bid is left alone; the Documents tab can switch to another bid at any time."""
+        rehab = doc.get("rehab") or {}
+        is_bid = ((rec.get("extracted") or {}).get("doc_type") == "contractor_bid")
+        if rehab.get("source_doc_id"):
+            # Already following a document: only a contractor's own bid may replace a budget that was
+            # adopted from some other kind of document (an investor pack quoting the bid), never a choice a person made.
+            prev = next((x for x in (doc.get("documents") or []) if x.get("doc_id") == rehab["source_doc_id"]), None)
+            prev_type = ((prev or {}).get("extracted") or {}).get("doc_type")
+            if not (rehab.get("auto") and is_bid and prev_type != "contractor_bid"):
+                return False
+        elif (rehab.get("mode") or "tier") != "tier":
+            return False
+        lines = documents_mod.rehab_lines_from(rec)
+        if not lines:
+            return False
+        doc["rehab"] = {**rehab, "mode": "lines", "lines": lines, "source_doc_id": rec["doc_id"], "source": rec.get("filename"), "auto": True}
+        return True
+
     def _get(aid: str) -> Dict[str, Any]:
         doc = store.get(aid)
         if not doc:
@@ -119,6 +141,7 @@ def install(app, mongo, jobs) -> None:
             if rec:
                 docs_coll.update_one({"doc_id": did}, {"$set": {"analysis_id": doc["analysis_id"]}})
                 _attach(doc, rec)
+                _adopt_bid(doc, rec)
         store.create(doc)
 
         def run(job):
@@ -271,6 +294,8 @@ def install(app, mongo, jobs) -> None:
                     fresh = store.get(target["analysis_id"])
                     if fresh:
                         _attach(fresh, out)
+                        if _adopt_bid(fresh, out):
+                            job.emit("status", {"text": "%s: its priced scope of $%s is now the rehab budget" % (out["filename"], format(int(sum(l["amount"] for l in fresh["rehab"]["lines"])), ","))})
                         pipeline.recompute(fresh)
                         store.save(fresh)
                 job.emit("partial", {"key": "document", "value": d})
@@ -334,7 +359,7 @@ def install(app, mongo, jobs) -> None:
             lines = documents_mod.rehab_lines_from(rec)
             if not lines:
                 raise HTTPException(422, "this document has no priced repair items")
-            doc["rehab"] = {**(doc.get("rehab") or {}), "mode": "lines", "lines": lines, "source_doc_id": doc_id, "source": rec.get("filename")}
+            doc["rehab"] = {**(doc.get("rehab") or {}), "mode": "lines", "lines": lines, "source_doc_id": doc_id, "source": rec.get("filename"), "auto": False}
         elif body.what == "comps":
             added = []
             for c in ex.get("comps") or []:

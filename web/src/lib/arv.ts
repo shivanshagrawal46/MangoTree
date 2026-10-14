@@ -67,10 +67,12 @@ export type Avm = { source: string; value: number | null; low?: number | null; h
 
 export type RehabLine = { key: string; label: string; amount: number; estimated?: boolean };
 export type RehabInput = { mode?: "tier" | "lines" | "lump"; scope?: string; level?: "low" | "mid" | "high"; lines?: RehabLine[]; lump_sum?: number | null;
+  source?: string | null; source_doc_id?: string | null; auto?: boolean;
   adders?: { location_multiplier?: number; permit_pct?: number; oh_and_p_pct?: number; contingency_pct?: number } };
 export type RehabBudget = {
   mode: string; scope: string; level: string; basis: string; tier: { label: string; rate_per_sqft: number; state_multiplier: number; subtotal: number; range: { low: number; high: number }; covers: string };
   lines: RehabLine[]; adders: Record<string, number>; subtotal: number; location_adjustment: number; permit_cost: number; oh_and_p: number; contingency: number; total_adders: number; total: number; per_sqft?: number | null;
+  source?: string | null; source_doc_id?: string | null;
 };
 
 export type Assumptions = Record<string, any>;
