@@ -160,7 +160,8 @@ export function Wizard({ status, initialAddress, initialPropertyId }: { status?:
   const canLeaveAddress = !!geo;
   const next = () => { if (idx < STEPS.length - 1) setStep(STEPS[idx + 1].key); };
   const back = () => { if (idx > 0) setStep(STEPS[idx - 1].key); };
-  const readingDocs = f.docs.some((d) => d.status === "reading") || uploader.busy;
+  const readingCount = f.docs.filter((d) => d.status === "reading").length;
+  const readingDocs = readingCount > 0 || uploader.busy;
 
   return (
     <div className="min-h-screen">
@@ -415,10 +416,10 @@ export function Wizard({ status, initialAddress, initialPropertyId }: { status?:
                 <div>
                   <div className="text-[15px] font-semibold tracking-tight">Run the analysis</div>
                   <div className="text-xs text-muted mt-0.5 max-w-xl">Locate · public records · market context · comparable sales · score, adjust, reconcile · MAO calculator · AI review. About {f.use_web_search ? "4–7" : "1–2"} minutes; roughly ${f.use_web_search ? (0.4 + 0.27 * (f.web_searches || 10)).toFixed(0) : "1"} of AI spend.</div>
-                  {readingDocs && <div className="text-xs text-high mt-1 flex items-center gap-1.5"><Loader2 size={12} className="animate-spin" /> A document is still being read; it will be attached when you start, but the analyst sees only what is finished.</div>}
+                  {readingDocs && <div className="text-xs text-high mt-1 flex items-center gap-1.5"><Loader2 size={12} className="animate-spin" /> {uploader.busy && readingCount === 0 ? "Uploading documents…" : `Reading ${readingCount} of ${f.docs.length} document${f.docs.length === 1 ? "" : "s"}…`} The run starts once every document has been read, so the AI review sees all of them.</div>}
                 </div>
-                <Button variant="primary" size="lg" disabled={!geo || create.isPending} onClick={() => create.mutate()} className="min-w-[200px]">
-                  {create.isPending ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />} Run the analysis
+                <Button variant="primary" size="lg" disabled={!geo || create.isPending || readingDocs} onClick={() => create.mutate()} className="min-w-[200px]">
+                  {create.isPending || readingDocs ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />} {readingDocs ? (readingCount ? `Reading ${readingCount} of ${f.docs.length}…` : "Uploading…") : "Run the analysis"}
                 </Button>
               </Card>
             </div>
