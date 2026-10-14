@@ -60,7 +60,7 @@ export function AnalystTab({ doc, patch, setDoc, running, onRerun }: TabProps & 
                 <div className="flex flex-wrap items-center gap-2">
                   {an.verdict && <Badge tone={VERDICT_TONE[an.verdict] || "neutral"} className="h-6 px-2.5 text-[12px]">{VERDICT_LABEL[an.verdict]}</Badge>}
                   <Badge tone={CONF_TONE[an.confidence] || "neutral"}>{an.confidence.replace("_", " ")} confidence</Badge>
-                  <span className="text-[11px] text-muted">AI{an.usage?.total_cost_usd ? ` · $${an.usage.total_cost_usd.toFixed(2)}` : ""}{an.at ? ` · ${ago(an.at)}` : ""}</span>
+                  <span className="text-[11px] text-muted">AI{an.at ? ` · ${ago(an.at)}` : ""}</span>
                   <button onClick={() => onRerun(["analyst"])} disabled={running} className="text-[11px] text-muted flex items-center gap-1 hover:text-fg"><RotateCcw size={11} /> re-run</button>
                 </div>
                 <div className="text-[15.5px] font-semibold tracking-tight leading-snug mt-2">{an.headline}</div>

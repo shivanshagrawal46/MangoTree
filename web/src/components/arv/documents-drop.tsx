@@ -108,7 +108,6 @@ export function DocCard({ d, onApplyFacts, onApplyRehab, onApplyComps, onRemove,
             <span>{d.filename} · {fileSize(d.size)}{d.pages ? ` · ${d.pages} page${d.pages > 1 ? "s" : ""}` : ""}{d.vision_pages ? ` · ${d.vision_pages} read as images` : ""}</span>
             {ex?.document_date && <span>· dated {ex.document_date}</span>}
             {ex?.prepared_by && <span>· {ex.prepared_by}</span>}
-            {d.cost_usd ? <span>· ${d.cost_usd.toFixed(2)}</span> : null}
           </div>
           {d.status === "failed" && <div className="text-[12px] text-critical mt-1.5 flex items-center gap-1.5"><AlertTriangle size={12} /> {d.error}</div>}
           {ex && <div className="text-[12.5px] mt-1.5 leading-snug">{ex.summary}</div>}

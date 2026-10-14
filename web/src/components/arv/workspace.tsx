@@ -134,7 +134,7 @@ export function Workspace({ id }: { id: string }) {
             <div className="text-xs text-muted mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
               {facts.map((f, i) => <span key={i}>{i > 0 && <span className="text-faint mr-2">·</span>}{f}</span>)}
               <button onClick={() => setEditing(true)} className="flex items-center gap-1 text-accent hover:underline ml-1"><Pencil size={11} /> edit subject</button>
-              <span className="text-faint">· by {doc.created_by_name || doc.created_by} {ago(doc.created_at)}{doc.cost_usd ? ` · AI spend $${doc.cost_usd.toFixed(2)}` : ""}</span>
+              <span className="text-faint">· by {doc.created_by_name || doc.created_by} {ago(doc.created_at)}</span>
             </div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
