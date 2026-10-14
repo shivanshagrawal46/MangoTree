@@ -1,0 +1,26 @@
+/* Small glue between Ant Design and the ARV layout. Tokens come from the
+   ConfigProvider in layout.tsx; this file only places things. */
+.arv-tabs .ant-tabs-nav { margin-bottom: 0; }
+.arv-tabs .ant-tabs-nav::before { border-bottom-color: var(--line); }
+.arv-tabs .ant-tabs-tab { padding: 10px 4px; }
+.arv-tabs .ant-tabs-tab + .ant-tabs-tab { margin-left: 20px; }
+.arv-tabs .ant-tabs-tab-btn { font-weight: 500; }
+
+.arv-steps .ant-steps-item-title { font-size: 12.5px; font-weight: 500; }
+.arv-steps .ant-steps-item-icon { margin-inline-end: 6px; }
+
+.arv-dragger .ant-upload.ant-upload-drag { border-radius: 16px; border-width: 2px; border-color: var(--line); background: transparent; }
+.arv-dragger .ant-upload.ant-upload-drag:hover,
+.arv-dragger .ant-upload.ant-upload-drag.ant-upload-drag-hover { border-color: var(--accent); background: color-mix(in srgb, var(--accent-soft) 40%, transparent); }
+.arv-dragger .ant-upload-btn { padding: 8px 16px !important; }
+.arv-dragger-compact .ant-upload-btn { padding: 4px 12px !important; }
+
+.arv-row-hover > td { background: color-mix(in srgb, var(--accent-soft) 40%, transparent) !important; }
+.ant-table-wrapper .ant-table-thead > tr > th { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600; }
+.ant-table-wrapper .ant-table-expanded-row > td { background: color-mix(in srgb, var(--bg-sunken) 60%, transparent); }
+
+.ant-statistic .ant-statistic-title { text-transform: uppercase; letter-spacing: 0.04em; font-weight: 500; font-size: 10.5px; }
+.ant-statistic .ant-statistic-content { font-weight: 600; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
+
+.ant-collapse-ghost > .ant-collapse-item > .ant-collapse-header { align-items: center; }
+.ant-card .ant-card-body { padding: 0; }

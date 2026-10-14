@@ -6,7 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Command } from "cmdk";
 import { motion } from "framer-motion";
-import { LayoutGrid, Building2, CheckSquare, Inbox, Users, MessageSquare, Search, LogOut, Moon, Sun, AlertTriangle, ChevronRight, HardHat, ClipboardList, BellRing, FileBadge } from "lucide-react";
+import { LayoutGrid, Building2, CheckSquare, Inbox, Users, MessageSquare, Search, LogOut, Moon, Sun, AlertTriangle, ChevronRight, HardHat, ClipboardList, BellRing, FileBadge, Calculator } from "lucide-react";
 import { api } from "@/lib/api";
 import { useUser } from "@/components/providers";
 import { Kbd } from "@/components/ui";
@@ -20,6 +20,7 @@ const NAV = [
   { href: "/followups", label: "Follow-ups", icon: BellRing },
   { href: "/tasks", label: "Tasks", icon: CheckSquare },
   { href: "/permits", label: "Permits", icon: FileBadge },
+  { href: "/arv", label: "ARV & underwriting", icon: Calculator },
   { href: "/review", label: "Review", icon: Inbox },
   { href: "/people", label: "People", icon: Users },
 ];

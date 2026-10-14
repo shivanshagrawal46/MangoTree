@@ -1,4 +1,4 @@
-# Secrets — NEVER commit
+# Secrets â€” NEVER commit
 .env
 client_secret.json
 gmail_token.json
@@ -27,3 +27,12 @@ exports/
 # OS
 Thumbs.db
 .DS_Store
+
+# personal / financial data and secrets backups - never commit
+.env.*
+!.env.example
+*.csv
+credit_card/
+Briardale Material List/
+*.zip
+

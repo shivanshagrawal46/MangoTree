@@ -1221,3 +1221,8 @@ permit_routes.install(app, mongo, jobs)
 # Cache warm-up starts last, once every function it calls exists: started at
 # the top of the module it raced the import and hit NameError on a slow boot.
 _threading.Thread(target=lambda: (data.portfolio(mongo), _warm_caches()), daemon=True, name="warm-caches").start()
+# ARV / underwriting (2026-10-14): address + details in, appraiser-style sales
+# comparison, the MAO calculator and a Claude Opus 5.5 review out. Own module,
+# own collection; nothing above is touched.
+from . import arv_routes  # noqa: E402
+arv_routes.install(app, mongo, jobs)
