@@ -1226,3 +1226,9 @@ _threading.Thread(target=lambda: (data.portfolio(mongo), _warm_caches()), daemon
 # own collection; nothing above is touched.
 from . import arv_routes  # noqa: E402
 arv_routes.install(app, mongo, jobs)
+# Notes analysis (2026-10-16): market research behind a note portfolio (ZIP,
+# metro and Texas price history and five-year outlook, rates, note-level risk),
+# served from JSON datasets to the web Notes section. Own module; nothing above
+# is touched.
+from mangotree.notes import routes as notes_routes  # noqa: E402
+notes_routes.install(app, mongo)

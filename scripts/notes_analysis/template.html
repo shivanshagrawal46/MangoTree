@@ -1,0 +1,310 @@
+<title>HK Homes Note Portfolio Outlook</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Serif:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: a single reading column (72ch) for prose, with data tables and charts allowed to run to a wider 1120px rail. Ledger look: hairline rules, tabular figures, no cards except the key-figure strip. */
+:root{
+  --bg:#f7f6f2; --fg:#1c1f23; --muted:#5d636b; --rule:#d9d6cd; --rail:#ecebe5;
+  --ink:#143d5c; --accent:#b4591c; --pos:#1f7a4d; --neg:#b3261e; --warn:#a8650c;
+  --th:#f0eee8;
+  --serif:"IBM Plex Serif",Georgia,"Times New Roman",serif; --sans:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif; --mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){ --bg:#15181c; --fg:#e8e6e0; --muted:#a3a7ad; --rule:#343a42; --rail:#1d2127; --ink:#8fb8d9; --accent:#e08a4a; --pos:#5cc08a; --neg:#f0776d; --warn:#e0a84a; --th:#1f242a; color-scheme:dark } }
+:root[data-theme="dark"]{ --bg:#15181c; --fg:#e8e6e0; --muted:#a3a7ad; --rule:#343a42; --rail:#1d2127; --ink:#8fb8d9; --accent:#e08a4a; --pos:#5cc08a; --neg:#f0776d; --warn:#e0a84a; --th:#1f242a; color-scheme:dark }
+body{background:var(--bg);color:var(--fg);font:15px/1.55 var(--sans);margin:0;padding-block:0 64px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.wrap{max-width:1120px;margin:0 auto}
+.prose{max-width:72ch}
+h1,h2,h3{font-family:var(--serif);font-weight:600;letter-spacing:-.01em;text-wrap:balance;margin:0}
+h1{font-size:clamp(28px,4vw,40px);line-height:1.1}
+h2{font-size:24px;margin-top:56px;padding-top:18px;border-top:2px solid var(--fg)}
+h3{font-size:17px;margin-top:28px;color:var(--ink)}
+p{margin:12px 0}
+.eyebrow{font:500 12px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+header{padding-block:40px 8px;display:grid;gap:14px}
+header .lede{font-size:18px;line-height:1.5;max-width:72ch}
+.kf{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:1px;background:var(--rule);border:1px solid var(--rule);margin:28px 0 8px}
+.kf div{background:var(--bg);padding:14px 14px 12px}
+.kf b{display:block;font:500 24px/1.1 var(--mono);font-variant-numeric:tabular-nums;margin-bottom:6px}
+.kf span{font-size:12px;color:var(--muted);line-height:1.35;display:block}
+.tbl{overflow-x:auto;margin:16px 0;border-top:1px solid var(--rule)}
+table{border-collapse:collapse;width:100%;font-size:13px;font-variant-numeric:tabular-nums}
+th,td{padding:7px 10px;border-bottom:1px solid var(--rule);text-align:left;vertical-align:top}
+thead th{background:var(--th);font:500 11px/1.3 var(--mono);letter-spacing:.04em;text-transform:uppercase;color:var(--muted);white-space:nowrap}
+tbody th{font-weight:500;white-space:nowrap}
+tbody th small{display:block;font-weight:400;color:var(--muted);font-size:11px}
+td.num{text-align:right;font-family:var(--mono);white-space:nowrap}
+thead th.num{text-align:right}
+td.path{font-size:11px;color:var(--muted)}
+td.flags{font-size:12px;color:var(--muted);min-width:180px}
+.pos{color:var(--pos)} .neg{color:var(--neg)}
+tr.agg th,tr.agg td{background:var(--rail);font-weight:500}
+.pill{display:inline-block;font:500 11px/1 var(--mono);padding:4px 7px;border-radius:3px;white-space:nowrap}
+.pill.ok{background:color-mix(in srgb,var(--pos) 14%,transparent);color:var(--pos)}
+.pill.warn{background:color-mix(in srgb,var(--warn) 16%,transparent);color:var(--warn)}
+.pill.bad{background:color-mix(in srgb,var(--neg) 14%,transparent);color:var(--neg)}
+.chart{position:relative;height:320px;margin:14px 0 6px}
+.chart.tall{height:380px}
+.cap{font-size:12px;color:var(--muted);margin:0 0 10px}
+.two{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:28px}
+.two>div{min-width:0}
+.note{border-left:3px solid var(--accent);padding:4px 14px;margin:18px 0;background:var(--rail)}
+.note p{margin:8px 0}
+ul,ol{padding-left:22px} li{margin:6px 0}
+.src li{font-size:13px;color:var(--muted)}
+.src a{color:var(--ink)}
+a{color:var(--ink)}
+select{font:14px var(--sans);padding:6px 10px;border:1px solid var(--rule);background:var(--bg);color:var(--fg);border-radius:4px}
+select:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.legend{display:flex;flex-wrap:wrap;gap:14px;font-size:12px;color:var(--muted);margin:4px 0}
+.legend i{display:inline-block;width:14px;height:3px;vertical-align:middle;margin-right:6px}
+dl.defs{display:grid;grid-template-columns:max-content 1fr;gap:6px 18px;font-size:14px}
+dl.defs dt{font-family:var(--mono);font-size:13px;color:var(--ink)}
+dl.defs dd{margin:0}
+@media (max-width:600px){ dl.defs{grid-template-columns:1fr} dl.defs dd{margin-bottom:8px} h2{font-size:21px} }
+@media (prefers-reduced-motion: reduce){ *{animation:none!important;transition:none!important} }
+</style>
+
+<div class="wrap">
+<header>
+  <div class="eyebrow">H &amp; K Homes · note portfolio · market analysis as of 16 October 2026</div>
+  <h1>Where the collateral behind the HK Homes notes is heading</h1>
+  <p class="lede">The 22 notes are secured on houses in 17 ZIP codes, 15 of them in the San Antonio area plus one each in Houston and the far-east Dallas suburbs. This report looks at how each ZIP has priced over the last five years, where it stands today, what the next five years are likely to bring at ZIP, metro and Texas level, and what the interest-rate picture means for the loans themselves.</p>
+  <div class="kf">
+    <div><b>{{N}}</b><span>notes, {{BAL}} outstanding, {{PAY}} due each month</span></div>
+    <div><b>{{WAR}}</b><span>weighted note rate, against 7.40% for a 30-year mortgage this week</span></div>
+    <div><b>{{LTV}}</b><span>balance against estimated collateral value of {{VAL}}</span></div>
+    <div><b>{{WYOY}}</b><span>value change over the last year in the collateral ZIPs, weighted by balance</span></div>
+    <div><b>{{BASE}}</b><span>base-case value change over the next five years, same weighting (bear {{BEAR}}, bull {{BULL}})</span></div>
+    <div><b>{{LATE_N}}</b><span>notes with an August payment still outstanding, {{LATE_BAL}} of balance</span></div>
+  </div>
+</header>
+
+<section class="prose">
+<h2>Summary</h2>
+<p><strong>The last five years were a round trip.</strong> San Antonio values rose 17% from August 2021 to a peak in August 2022, then fell {{SA_DD}} from that peak. Over the full five years the metro is up only {{SA_5Y}} in dollars, which is {{SA_REAL5}} after inflation. The portfolio ZIPs, weighted by loan balance, did slightly worse at {{W5Y}}. Texas as a whole is {{TX_5Y}} over five years and {{TX_YOY}} over the last twelve months; the United States is {{US_5Y}} and {{US_YOY}}.</p>
+<p><strong>Today San Antonio is roughly at fair value, but frozen by rates.</strong> Had prices only kept pace with inflation since 2019, the typical San Antonio home would be worth {{SA_FAIR}} today; it is worth {{SA_NOW}}. The correction in real terms is done. What stops a recovery is the monthly payment: the same 80%-financed typical home cost {{P19}} a month in 2019 and costs {{P26}} a month at this week's 7.40% rate. Inventory is {{INV_SA_CHG}} above 2019, homes take {{DOZ_SA}} days to go pending against {{DOZ_SA19}} in 2019, and {{PC_SA}} of listings have cut their price.</p>
+<p><strong>The next five years look flat in real terms and modestly up in dollars.</strong> The base case for the San Antonio metro is {{SA_BASE}} cumulative by 2031, with a soft first year while mortgage rates stay above 7%, then 3% to 4% a year as rates ease and incomes catch up. The bear case (rates above 7.5% into 2028 and a Texas job slowdown) is {{SA_BEAR}}; the bull case (rates back to 6% by late 2027) is {{SA_BULL}}. Texas overall is weaker than San Antonio in the base case at {{TX_BASE}}, because Dallas–Fort Worth and Austin still carry a pandemic premium that San Antonio has already given back.</p>
+<p><strong>Interest rates turned against borrowers in September.</strong> The Federal Reserve raised its rate on 16 September for the first time since 2023, the 30-year mortgage jumped from 6.7% to 7.40% in six weeks, and Fannie Mae now expects 7.5% through 2027. For this portfolio that cuts two ways. The 8% to 12% coupons will not be refinanced away, so the income holds. But every borrower who must sell or refinance faces a thin, slow market, which matters most for the three balloon notes ($1.95 million) and the seven notes with an August payment outstanding.</p>
+<p><strong>Collateral is sound in aggregate, weak in spots.</strong> The portfolio's loan-to-value is {{LTV}}. Six notes sit at 78% or higher: 917 Live Oak in Royse City is above 100% after a 16% ZIP decline since the note was written, and 315 Howard St shows an estimated value far below its sale price, which is almost certainly a data error worth fixing before anyone relies on the sheet.</p>
+</section>
+
+<section>
+<h2>1 · The last five years, ZIP by ZIP</h2>
+<div class="prose">
+<p>Values are Zillow's typical home value for the ZIP (the middle third of homes, smoothed and seasonally adjusted) at the end of August each year. Every San Antonio ZIP followed the same shape: a 15% to 25% jump in the twelve months to August 2022, then a slide. The size of the slide separates the ZIPs. The outer new-build belts, where builders kept adding supply and cutting prices, fell 12% to 19% from peak (Far West 78245, Converse 78109, Canyon Lake 78133, Royse City 75189). The established north-side ZIPs fell 4% to 8% (Northwest 78230, Garden Ridge 78266, North Central 78247). Two rural ZIPs, Adkins and Pleasanton, barely moved. The two inner-city ZIPs, 78201 and 78225, show the largest declines in Zillow's index but the FHFA index for the same ZIPs is still rising; with few sales a year, neither measure is reliable there.</p>
+</div>
+<div class="chart tall"><canvas id="c_metro"></canvas></div>
+<p class="cap">Zillow typical home value, indexed to August 2021 = 100. Texas and its big metros peaked in August 2022 and have drifted down since; the national index kept rising.</p>
+<div class="tbl"><table>
+<thead><tr><th>ZIP</th><th class="num">Aug 2016</th><th class="num">Aug 2019</th><th class="num">Aug 2021</th><th class="num">Aug 2022</th><th class="num">Aug 2024</th><th class="num">Aug 2025</th><th class="num">Aug 2026</th><th class="num">5 years</th><th class="num">1 year</th><th class="num">Peak</th><th class="num">From peak</th></tr></thead>
+<tbody>{{T_HIST}}</tbody></table></div>
+<div class="two">
+<div><div class="chart"><canvas id="c_hpi"></canvas></div><p class="cap">FHFA all-transactions index (includes refinance appraisals, lags sales). Texas is still printing small gains; San Antonio has been flat since mid-2022.</p></div>
+<div><div class="chart"><canvas id="c_inv"></canvas></div><p class="cap">Homes for sale, Zillow count. San Antonio listings are {{INV_SA}} against {{INV_SA19}} in August 2019.</p></div>
+</div>
+</section>
+
+<section>
+<h2>2 · Where each ZIP stands now</h2>
+<div class="prose">
+<p>"Vs fair" compares today's value with what the ZIP's August 2019 value would be had it only risen with inflation (30.5% since then, which is close to Texas wage growth over the period). A positive number means the ZIP still carries part of its pandemic premium; a negative number means it has given it all back and more. The Comal County ZIPs (Canyon Lake, New Braunfels, Garden Ridge) and Adkins still carry 9% to 13%; most of San Antonio proper is at or below fair. Gross rent yield is Zillow's observed rent for the ZIP times twelve, divided by value; above 7% the house roughly carries itself for an investor at today's rates, below 5% it does not.</p>
+</div>
+<div class="tbl"><table>
+<thead><tr><th>ZIP</th><th class="num">Value Aug 2026</th><th class="num">1 year</th><th class="num">From peak</th><th class="num">FHFA 2025</th><th class="num">Zillow 12-mo forecast</th><th class="num">Vs fair</th><th class="num">Rent yield</th><th class="num">Notes · balance</th></tr></thead>
+<tbody>{{T_NOW}}</tbody></table></div>
+<h3>One ZIP at a time</h3>
+<p class="cap">Pick a ZIP to see its history since 2016, the fair-value line, and the three five-year paths from section 3.</p>
+<p><label for="zipsel" class="eyebrow">ZIP </label> <select id="zipsel"></select> <span id="zipdesc" class="cap" style="display:inline"></span></p>
+<div class="chart"><canvas id="c_zip"></canvas></div>
+<div class="legend"><span><i style="background:var(--ink)"></i>Zillow value</span><span><i style="background:var(--muted)"></i>Fair value (2019 + inflation)</span><span><i style="background:var(--pos)"></i>Bull</span><span><i style="background:var(--accent)"></i>Base</span><span><i style="background:var(--neg)"></i>Bear</span></div>
+</section>
+
+<section>
+<h2>3 · The next five years</h2>
+<div class="prose">
+<p>No published source forecasts a ZIP code five years out, so the numbers below come from a model built for this report. It is deliberately simple so that every input can be argued with.</p>
+<dl class="defs">
+<dt>Year 1</dt><dd>Zillow's 12-month forecast for the ZIP (published late September, when rates were 6.7%), less 1.5 points for the jump to 7.4%. Bear case: less 4 points. Bull case: plus half a point.</dd>
+<dt>Years 2 to 5</dt><dd>An anchor of 3% a year for San Antonio and Houston and 2.5% for Dallas–Fort Worth (Texas incomes are forecast to grow 5% a year and population 1.1% to 1.5%; half of that reaches prices while payments stay high). The bear case runs −3%, 0%, +2%, +3%; the bull case +4%, +5%, +4.5%, +4%.</dd>
+<dt>Fair-value pull</dt><dd>Each year, a ZIP above its fair value loses 0.3 points for every 1% of premium (capped at 2 points); a ZIP below it gains at most 1 point, because cheap areas tend to stay cheap.</dd>
+<dt>Supply penalty</dt><dd>Half a point to one and a half points a year in years 2 and 3 for ZIPs where builders compete directly: Royse City the most, then Far West, Converse, Northeast, Canyon Lake, New Braunfels, Pleasanton.</dd>
+<dt>Expected</dt><dd>50% base, 30% bear, 20% bull. The bear weight is higher than usual because rates have just moved the wrong way.</dd>
+</dl>
+<p>Read the table as ranking, not prophecy. The ZIPs that look best are the ones that already fell to fair value and have no builder next door (Airport 78216, Far West 78245 despite its builders, Pleasanton, Converse). The ZIPs that look worst are the Comal County premium areas, which have further to give back if rates stay high, and Adkins, whose rise has outrun its income base.</p>
+</div>
+<div class="tbl"><table>
+<thead><tr><th>ZIP</th><th class="num">Now</th><th class="num">Base 2031</th><th class="num">Base value</th><th class="num">Bear</th><th class="num">Bull</th><th class="num">Expected</th><th class="num">Base path, % by year</th></tr></thead>
+<tbody>{{T_OUT}}</tbody></table></div>
+<div class="two">
+<div><div class="chart"><canvas id="c_saproj"></canvas></div><p class="cap">San Antonio metro: base {{SA_BASE}}, bear {{SA_BEAR}}, bull {{SA_BULL}} by August 2031.</p></div>
+<div><div class="chart"><canvas id="c_txproj"></canvas></div><p class="cap">Texas: base {{TX_BASE}}, bear {{TX_BEAR}}, bull {{TX_BULL}}. Houston base {{HOU_BASE}}; Dallas–Fort Worth base {{DFW_BASE}}.</p></div>
+</div>
+<div class="prose">
+<h3>What the outside forecasters say</h3>
+<ul>
+<li><strong>Zillow</strong> (September release): San Antonio −0.7%, Houston −0.2%, Dallas −0.3% over the twelve months to August 2027; the national index +1.4%. Fourteen of the 17 portfolio ZIPs are forecast between −1.5% and −0.2%.</li>
+<li><strong>Texas A&amp;M Real Estate Research Center</strong> (10 September): Texas median price +1.8% to $341,000 over the year to summer 2027, sales +2.5%, single-family permits flat at 149,000, rents flat near $2,200. Their mortgage assumption of 6% to 7% was overtaken by events a week later.</li>
+<li><strong>Reventure</strong>: scored San Antonio 35 of 100 and Texas 37 entering 2025 (below 45 means a declining market), called Texas 17.7% overvalued and forecast −4% statewide for the following year. Statewide prices did fall, by about 1.5%. In September 2026 its posts argue the national market is 25% above historical norms and that housing demand is at a 40-year low; its latest regional piece shows North Dallas ZIPs down nearly 20% from peak. It has published nothing new on San Antonio in 2026.</li>
+<li><strong>Dallas Fed</strong> (29 September): San Antonio median price −1.4% on the year, 5.7 months of supply, apartment rents −2.5%, payrolls down 0.4% year to date with construction the fastest-growing sector.</li>
+</ul>
+</div>
+</section>
+
+<section>
+<h2>4 · Texas at state level</h2>
+<div class="prose">
+<p>Texas is {{TX_NOW}} for the typical home, {{TX_5Y}} over five years, {{TX_10Y}} over ten, and {{TX_DD}} below its August 2022 peak. Over the last five years that is {{TX_REAL5}} after inflation. The state is still {{TX_OVER}} above its inflation-adjusted 2019 level, almost entirely because of Dallas–Fort Worth and Austin; San Antonio is at {{SA_OVER}}.</p>
+<h3>What is pushing values up</h3>
+<ul>
+<li>Population still grows 1.1% to 1.5% a year (TRERC), and Texas added 2.0 million people from 2020 to 2024, three quarters of them migrants. Comal County grew 28% from 2020 to 2025; Bexar 7.5%.</li>
+<li>Jobs: Texas payrolls forecast +1.1% to +1.7% in the year to August 2027 against +0.4% to +0.8% nationally; the Dallas Fed's 2026 Texas job forecast is 2.0%. Oil near $90 a barrel after the Strait of Hormuz disruption supports Houston and the Eagle Ford counties south of San Antonio.</li>
+<li>Prices have already corrected to fair value in San Antonio, Houston and much of the state outside the premium suburbs.</li>
+</ul>
+<h3>What is holding them down</h3>
+<ul>
+<li>Supply. Texas issued 15% of the nation's building permits in 2024 and builders still hold the most standing inventory of any state; new homes now sell for less than existing ones nationally. Dallas and Houston listings are above 2019 levels; San Antonio's are {{INV_SA_CHG}} above.</li>
+<li>Migration has halved from its 2021 to 2022 pace, and the new Reventure and Bank of America data show pandemic-boom metros losing net movers.</li>
+<li>Carrying costs. Texas homeowners' insurance averages about $4,600 a year on a $300,000 house and tripled in some counties since 2020; San Antonio is raising its property tax rate for the first time in 33 years because taxable values stopped rising.</li>
+<li>Rates. Every point on the mortgage rate is roughly 10% of the monthly payment; at 7.4% the typical San Antonio buyer pays twice what a 2019 buyer paid for a home worth 30% more.</li>
+</ul>
+<h3>Growth now and over five years</h3>
+<p>Now: the state is falling 1% to 1.5% a year in dollar terms and about 4% a year in real terms. Twelve months out, the published forecasts cluster between −1% (Zillow metros) and +1.8% (TRERC). Five years out, the base case here is {{TX_BASE}} cumulative, roughly 1% a year, with Dallas–Fort Worth the laggard ({{DFW_BASE}}) and San Antonio the leader ({{SA_BASE}}). The bear case is {{TX_BEAR}}: a Texas job slowdown with 7.5% mortgages into 2028 would push Dallas and the Comal County premium areas down another 8% to 11% before stabilising. The bull case is {{TX_BULL}}, and needs mortgage rates back near 6% by the end of 2027, which no major forecaster currently expects.</p>
+<p>Against other states: Texas's five-year gain of {{TX_5Y}} compares with Florida +18.5%, North Carolina +22.1%, Tennessee +23.5% and the national +19.6%. Texas and Florida are the two large states where values are below their 2022 peak; Arizona is the third. The states that boomed on migration are all flat to down on the year, while the national index is held up by the Northeast and Midwest.</p>
+</div>
+</section>
+
+<section>
+<h2>5 · Interest rates and what they mean for the loans</h2>
+<div class="two">
+<div><div class="chart"><canvas id="c_rates"></canvas></div><p class="cap">Freddie Mac 30-year fixed (weekly) and the effective federal funds rate (monthly). The mortgage rate hit 7.79% in October 2023, fell to 6.06% in January 2026, and is 7.40% this week.</p></div>
+<div class="prose">
+<h3>Where rates are</h3>
+<ul>
+<li>30-year fixed: 7.40% on 15 October, up from 6.27% a year ago and 6.67% in mid-August. Highest since late 2023.</li>
+<li>Fed funds: raised to 3.75% to 4.00% on 16 September, the first increase since 2023, on inflation running near 3.7%. The committee's median path has one more hike in December. The 10-year Treasury traded above 5.3% in early October, its highest since 2002.</li>
+<li>Forecasts: Fannie Mae (14 October) 7.4% in the fourth quarter and 7.5% through 2027, up from 6.7% a month earlier. MBA: 7.3% at year end, 7.1% by late 2027. TRERC assumed 6% to 7% before the hike.</li>
+<li>Investor money: 30-year DSCR rental loans were quoted at 6.1% to 7.4% in September before the move, so 7% to 8% now. Texas hard-money and fix-and-flip loans run 9% to 13.5% plus 1 to 3 points. Conventional investor loans price about three quarters of a point over owner-occupied.</li>
+</ul>
+<p>Working view for this report: 7% to 7.5% through most of 2027, drifting toward 6.5% in 2028 as the hikes slow inflation, averaging about 6.75% over the five years. The scenarios in section 3 bracket that.</p>
+</div>
+</div>
+<div class="prose">
+<h3>What it means for this portfolio</h3>
+<ol>
+<li><strong>The coupons are safe from refinancing.</strong> The weighted note rate is {{WAR}}. A borrower at 8% saves nothing by moving to a 7.4% mortgage after costs; a borrower at 10% saves about 2.5 points, but most seller-financed borrowers hold these notes because a bank would not lend to them at any rate. While mortgages stay above 7%, expect prepayments to stay rare and the income stream to hold. If the bull case arrives and rates fall to 6%, expect the strongest borrowers (low LTV, long payment history: Beechwood, East Byrd, Hialeah, Morning Glory) to refinance out first.</li>
+<li><strong>Balloon risk is the main rate exposure.</strong> 113 Crestline ($400,000 at 10%, 80% LTV) is due in full on 6 March 2027: the borrower must refinance or sell in a Pleasanton market with flat values and few buyers, at a 7.4% mortgage rate. 315 and 421 Howard St ($1.55 million at 12%, interest-only) are due in mid-2029; these are investor cash-out loans on high-value Monte Vista houses where the exit depends on a sale or a DSCR refinance at 7% to 8%. Plan the extension terms now rather than in the balloon month.</li>
+<li><strong>Delinquency clusters where values fell.</strong> Of the seven notes with an August payment outstanding, five are in ZIPs down 8% to 19% from peak (Far West 78245 three times, Northeast 78233, Houston 77061). Borrowers with little equity cannot sell their way out, so a missed payment is more likely to become a default than it was in 2022. The 60-day case, 7947 Glennscott at 12% in Houston, deserves a call this week.</li>
+<li><strong>Note values move inversely with rates.</strong> A performing 10% seller-finance note was worth a premium when buyers of such paper wanted 9%; with mortgage rates at 7.4% and hard money at 10% to 12%, buyers now want 10% to 12% yields, so the portfolio would sell near or slightly below par today. Holding to maturity avoids that; selling notes is the one thing not to do in this rate environment.</li>
+<li><strong>Collateral cover under stress.</strong> A 10% fall in values moves the portfolio LTV from {{LTV}} to about 69% and puts six notes above 85%. In the bear case for the ZIPs, two notes (Royse City, Menlo Blvd) sit above 90% in 2031 on today's balances, before any paydown. The rest stay below 80%.</li>
+<li><strong>Affordability sets the ceiling for new lending.</strong> The payment on the typical San Antonio home at 80% financing was {{P19}} in 2019, is {{P26}} today, and would be {{P26_6}} at a 6% rate. Buyers who can carry 10% seller financing on a $250,000 house are scarce; new notes written now should be at 70% LTV or less, with the rehab budget drawn from a contractor bid, because there is no price growth to cover a thin margin.</li>
+</ol>
+</div>
+</section>
+
+<section>
+<h2>6 · Note by note</h2>
+<div class="prose"><p>"ZIP since note" is how the ZIP's typical value has moved since the note was originated: a quick check on whether the collateral is likely worth more or less than when the loan was made. "LTV 2031" uses the base and bear ZIP paths on today's balance, so it is conservative: amortising notes will pay down. Payment status is read from the Next Due column as at the end of August; the sheet does not state its own date.</p></div>
+<div class="tbl"><table>
+<thead><tr><th>Property</th><th class="num">Rate</th><th class="num">Balance</th><th class="num">Est. value</th><th class="num">LTV</th><th class="num">ZIP 1 yr</th><th class="num">ZIP since note</th><th class="num">LTV 2031 base / bear</th><th>Payments</th><th>Flags</th></tr></thead>
+<tbody>{{T_NOTES}}</tbody></table></div>
+</section>
+
+<section class="prose">
+<h2>7 · What to do with this</h2>
+<ul>
+<li><strong>Fix the sheet first.</strong> 315 Howard St shows an estimated value of $253,920 against a $750,000 sale three months ago; the LTV column is meaningless until that is corrected. The Summary tab says 32 accounts and $7.26 million; the detail tab has 22 and $4.67 million. One of them is stale.</li>
+<li><strong>Open the 113 Crestline conversation now.</strong> Five months to a $400,000 balloon in a market where refinancing at 7.4% is hard for a borrower who took 10% seller financing. Decide the extension rate and term before March.</li>
+<li><strong>Work the seven August arrears this month</strong>, starting with 7947 Glennscott (two payments, 12%, Houston) and the three Far West notes, where the collateral has fallen the most.</li>
+<li><strong>Get broker opinions on the four thin-equity notes</strong> (Range Field, Menlo Blvd, Rock Creek Run, Live Oak in Royse City). The estimated values in the sheet have no date; Zillow suggests Menlo and Live Oak are below the sheet.</li>
+<li><strong>Underwrite new notes to the flat case.</strong> Assume zero appreciation for two years and 3% after. At 7.4% mortgages the exit buyer pool is small; a 70% LTV cap and a verified rehab bid are the margin.</li>
+<li><strong>Hold the paper.</strong> With rates up, the 8% to 12% coupons are the most valuable thing in the portfolio and would sell at a discount today.</li>
+<li><strong>Re-run this in April.</strong> Zillow's forecast and the FHFA ZIP index refresh then, and the December Fed decision will have shown whether 7.5% is the ceiling or the floor.</li>
+</ul>
+</section>
+
+<section class="prose">
+<h2>Sources and method</h2>
+<ul class="src">
+<li>Zillow Research: ZHVI by ZIP, metro and state (mid-tier, smoothed, seasonally adjusted) through 31 August 2026; ZHVF 12-month forecast, September release; ZORI rents by ZIP; for-sale inventory, days to pending and share of listings with a price cut by metro. Downloaded 16 October 2026.</li>
+<li>FHFA: annual five-digit ZIP house price index (developmental, not seasonally adjusted, updated 31 March 2026, data through 2025); quarterly all-transactions indexes for Texas and the San Antonio–New Braunfels metro through Q2 2026, via FRED.</li>
+<li>Freddie Mac Primary Mortgage Market Survey (weekly, through 15 October 2026), effective federal funds rate and CPI-U, all via FRED.</li>
+<li><a href="https://trerc.tamu.edu/reports/texas-real-estate-forecast-through-summer-2027/">Texas A&amp;M Real Estate Research Center, Texas Real Estate Forecast Through Summer 2027</a> (10 September 2026); <a href="https://www.dallasfed.org/research/indicators/sa/2026/sa2609">Dallas Fed San Antonio Economic Indicators</a> (29 September 2026); <a href="https://www.tpr.org/economy-and-labor/2026-09-16/san-antonio-home-sales-inch-up-in-august-compared-to-a-year-ago">SABOR August 2026 figures via Texas Public Radio</a>.</li>
+<li><a href="https://www.cnbc.com/2026/10/14/fannie-mae-sharply-raises-mortgage-rate-forecast-for-2027-.html">Fannie Mae October 2026 forecast via CNBC</a>; <a href="https://www.cnbc.com/2026/09/16/fed-rate-decision-september-2026.html">Fed decision 16 September 2026 via CNBC</a>; <a href="https://www.globenewswire.com/news-release/2026/10/15/3381991/0/en/mortgage-rates-hold-steady-at-7-40.html">Freddie Mac release 15 October 2026</a>; MBA October outlook via <a href="https://www.scotsmanguide.com/news/fannie-mae-predicts-little-change-in-mortgage-rates-for-a-very-long-time/">Scotsman Guide</a>.</li>
+<li><a href="https://reventureapp.blog/san-antonio-tx-homes-for-sale-reach-10563-in-2025/">Reventure, San Antonio score and inventory (February 2025)</a>; <a href="https://www.newsweek.com/texas-faces-major-housing-market-correction-prices-drop-across-state-2070190">Reventure Texas overvaluation and forecast via Newsweek (2025)</a>; <a href="https://reventureapp.blog/">Reventure News, September 2026 posts</a>.</li>
+<li>Census Bureau population estimates (Vintage 2025) for Bexar and Comal counties via QuickFacts and Community Impact; DSCR and hard-money pricing from lender rate sheets published August to October 2026; Texas insurance costs from TRERC "Covered but Costly" and Insurify.</li>
+<li>Fair value = August 2019 value × (CPI August 2026 ÷ CPI August 2019) = ×1.305. Real changes deflate by CPI-U. The five-year projection is described in section 3; the code and data extracts are kept with the project.</li>
+</ul>
+<p class="cap">Caveats: the FHFA ZIP index and Zillow disagree in the thin inner-city ZIPs (78201, 78225, 78212), and 78225 has no FHFA index at all. Zillow's ZIP value is for the middle third of homes and does not describe the Howard St houses. The 10-year Treasury figure comes from a single market recap. Reventure's Texas and San Antonio scores are from 2025; it has not published 2026 scores for these markets outside its paid app. The note sheet's own date is not stated; payment status assumes end of August.</p>
+</section>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+const DATA = {{CHART_DATA}};
+const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const C = () => ({ fg: css('--fg'), muted: css('--muted'), rule: css('--rule'), ink: css('--ink'), accent: css('--accent'), pos: css('--pos'), neg: css('--neg'), warn: css('--warn') });
+Chart.defaults.font.family = getComputedStyle(document.body).fontFamily;
+Chart.defaults.font.size = 12;
+const charts = [];
+function mk(id, cfg) { const el = document.getElementById(id); if (!el) return; const c = new Chart(el, cfg); charts.push(c); return c; }
+const money = (v) => '$' + Math.round(v / 1000) + 'K';
+function base(opts) {
+  const k = C();
+  return Object.assign({ responsive: true, maintainAspectRatio: false, animation: false, interaction: { mode: 'index', intersect: false },
+    plugins: { legend: { labels: { color: k.fg, boxWidth: 12, boxHeight: 3 } }, tooltip: { backgroundColor: k.fg, titleColor: css('--bg'), bodyColor: css('--bg') } },
+    scales: { x: { ticks: { color: k.muted, maxTicksLimit: 8, maxRotation: 0 }, grid: { color: k.rule } }, y: { ticks: { color: k.muted }, grid: { color: k.rule } } } }, opts);
+}
+const yrs = (s) => s.map(p => p[0].slice(0, 7));
+function build() {
+  charts.splice(0).forEach(c => c.destroy());
+  const k = C();
+  const cols = { 'San Antonio': k.accent, 'Houston': k.ink, 'Dallas–Fort Worth': k.warn, 'Texas': k.fg, 'United States': k.muted };
+  // metro index
+  const labels = yrs(DATA.metro['San Antonio']);
+  mk('c_metro', { type: 'line', data: { labels, datasets: Object.entries(DATA.metro).map(([n, s]) => ({ label: n, data: s.map(p => p[1]), borderColor: cols[n], borderWidth: n === 'San Antonio' ? 2.5 : 1.5, borderDash: n === 'United States' ? [4, 3] : [], pointRadius: 0, tension: .2 })) },
+    options: base({ scales: { x: { ticks: { color: k.muted, maxTicksLimit: 11, maxRotation: 0 }, grid: { color: k.rule } }, y: { ticks: { color: k.muted }, grid: { color: k.rule }, title: { display: true, text: 'Aug 2021 = 100', color: k.muted } } } }) });
+  // FHFA
+  const q = DATA.txhpi.map(p => p[0].slice(0, 7));
+  mk('c_hpi', { type: 'line', data: { labels: q, datasets: [{ label: 'Texas', data: DATA.txhpi.map(p => p[1]), borderColor: k.fg, borderWidth: 1.5, pointRadius: 0 }, { label: 'San Antonio metro', data: DATA.sahpi.map(p => p[1]), borderColor: k.accent, borderWidth: 2, pointRadius: 0 }] },
+    options: base({ scales: { x: { ticks: { color: k.muted, maxTicksLimit: 7, maxRotation: 0 }, grid: { color: k.rule } }, y: { ticks: { color: k.muted }, grid: { color: k.rule }, title: { display: true, text: 'FHFA index, 1980 Q1 = 100', color: k.muted } } } }) });
+  // inventory
+  const il = yrs(DATA.inv['San Antonio']);
+  mk('c_inv', { type: 'line', data: { labels: il, datasets: Object.entries(DATA.inv).map(([n, s]) => ({ label: n, data: s.map(p => p[1]), borderColor: cols[n], borderWidth: n === 'San Antonio' ? 2.5 : 1.5, pointRadius: 0, tension: .2 })) },
+    options: base({ scales: { x: { ticks: { color: k.muted, maxTicksLimit: 9, maxRotation: 0 }, grid: { color: k.rule } }, y: { ticks: { color: k.muted, callback: v => (v / 1000) + 'K' }, grid: { color: k.rule }, title: { display: true, text: 'homes for sale', color: k.muted } } } }) });
+  // rates
+  const ml = DATA.mort.map(p => p[0]);
+  const ffm = new Map(DATA.ff.map(p => [p[0].slice(0, 7), p[1]]));
+  mk('c_rates', { type: 'line', data: { labels: ml.map(d => d.slice(0, 7)), datasets: [{ label: '30-year mortgage', data: DATA.mort.map(p => p[1]), borderColor: k.accent, borderWidth: 2, pointRadius: 0 }, { label: 'Fed funds (effective)', data: ml.map(d => ffm.get(d.slice(0, 7)) ?? null), borderColor: k.ink, borderWidth: 1.5, pointRadius: 0, spanGaps: true }] },
+    options: base({ scales: { x: { ticks: { color: k.muted, maxTicksLimit: 11, maxRotation: 0, callback: (v, i) => (ml[i] && ml[i].endsWith('-01') && ml[i].slice(5, 7) === '01') ? ml[i].slice(0, 4) : (i % 52 === 0 ? ml[i].slice(0, 4) : null) }, grid: { color: k.rule } }, y: { ticks: { color: k.muted, callback: v => v + '%' }, grid: { color: k.rule }, min: 0 } } }) });
+  // projections
+  function proj(id, hist, now, pr, title) {
+    const h = hist.filter(p => p[0] >= '2019-01-01'); const lab = h.map(p => p[0].slice(0, 7)).concat(['2027-08', '2028-08', '2029-08', '2030-08', '2031-08']);
+    const pad = new Array(h.length - 1).fill(null);
+    const ds = [{ label: 'Zillow value', data: h.map(p => p[1]), borderColor: k.ink, borderWidth: 2, pointRadius: 0 }];
+    for (const [s, col] of [['bull', k.pos], ['base', k.accent], ['bear', k.neg]]) ds.push({ label: s[0].toUpperCase() + s.slice(1), data: pad.concat([now], pr[s]), borderColor: col, borderWidth: s === 'base' ? 2.5 : 1.5, borderDash: s === 'base' ? [] : [5, 4], pointRadius: 0, spanGaps: false });
+    mk(id, { type: 'line', data: { labels: lab, datasets: ds }, options: base({ plugins: { legend: { labels: { color: k.fg, boxWidth: 12, boxHeight: 3 } }, title: { display: true, text: title, color: k.fg, font: { weight: '500' } } }, scales: { x: { ticks: { color: k.muted, maxTicksLimit: 8, maxRotation: 0 }, grid: { color: k.rule } }, y: { ticks: { color: k.muted, callback: money }, grid: { color: k.rule } } } }) });
+  }
+  proj('c_saproj', DATA.sa_hist, DATA.sa_now, DATA.sa_proj, 'San Antonio metro, typical home value');
+  proj('c_txproj', DATA.tx_hist, DATA.tx_now, DATA.tx_proj, 'Texas, typical home value');
+  // zip picker
+  const sel = document.getElementById('zipsel');
+  if (!sel.options.length) { for (const z of Object.keys(DATA.zips)) { const o = document.createElement('option'); o.value = z; o.textContent = z + ' · ' + DATA.zips[z].name; sel.appendChild(o); } try { const s = localStorage.getItem('hk_zip'); if (s && DATA.zips[s]) sel.value = s; } catch (e) {} }
+  drawZip(sel.value);
+}
+let zipChart = null;
+function drawZip(z) {
+  const k = C(); const e = DATA.zips[z]; if (!e) return;
+  const h = e.series; const lab = h.map(p => p[0].slice(0, 7)).concat(['2027-08', '2028-08', '2029-08', '2030-08', '2031-08']);
+  const now = h[h.length - 1][1]; const pad = new Array(h.length - 1).fill(null);
+  const ds = [{ label: 'Zillow value', data: h.map(p => p[1]), borderColor: k.ink, borderWidth: 2, pointRadius: 0 },
+    { label: 'Fair value', data: lab.map((l, i) => i === h.length - 1 ? e.fair : null), borderColor: k.muted, pointRadius: 5, pointStyle: 'rectRot', showLine: false }];
+  for (const [s, col] of [['bull', k.pos], ['base', k.accent], ['bear', k.neg]]) ds.push({ label: s[0].toUpperCase() + s.slice(1), data: pad.concat([now], e.proj[s]), borderColor: col, borderWidth: s === 'base' ? 2.5 : 1.5, borderDash: s === 'base' ? [] : [5, 4], pointRadius: 0 });
+  if (zipChart) { zipChart.destroy(); charts.splice(charts.indexOf(zipChart), 1); }
+  zipChart = mk('c_zip', { type: 'line', data: { labels: lab, datasets: ds }, options: base({ plugins: { legend: { display: false }, tooltip: { backgroundColor: k.fg, titleColor: css('--bg'), bodyColor: css('--bg'), callbacks: { label: c => c.dataset.label + ': ' + (c.raw == null ? '' : '$' + Math.round(c.raw).toLocaleString()) } } }, scales: { x: { ticks: { color: k.muted, maxTicksLimit: 10, maxRotation: 0 }, grid: { color: k.rule } }, y: { ticks: { color: k.muted, callback: money }, grid: { color: k.rule } } } }) });
+  document.getElementById('zipdesc').textContent = ' ' + ({{ZIPDESC}})[z];
+}
+document.getElementById('zipsel').addEventListener('change', (ev) => { drawZip(ev.target.value); try { localStorage.setItem('hk_zip', ev.target.value); } catch (e) {} });
+build();
+if (window.matchMedia) { window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', build); }
+new MutationObserver(build).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+</script>
