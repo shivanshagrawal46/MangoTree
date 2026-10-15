@@ -138,7 +138,8 @@ def dossier_question() -> str:
 
 
 def report_properties():
-    return [p for p in PROPERTIES if p.property_id not in cfg.REPORT_EXCLUDED_PROPERTIES]
+    hidden = set(cfg.REPORT_EXCLUDED_PROPERTIES) | set(getattr(cfg, "NEXT_STEPS_HIDDEN_PROPERTIES", ()))
+    return [p for p in PROPERTIES if p.property_id not in hidden]
 
 
 class NextSteps:

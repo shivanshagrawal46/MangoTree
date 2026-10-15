@@ -262,6 +262,12 @@ WES_MAX_ISSUES = 2
 ANALYSIS_EXCLUDED_PROPERTIES = ("9th_st_nw", "chita_ct")
 REPORT_EXCLUDED_PROPERTIES = ANALYSIS_EXCLUDED_PROPERTIES
 
+#: Still analysed every morning (investigation, follow-ups, tasks, ledger,
+#: brief) but left off the next-steps sheets and the contractor portal
+#: (admin directive 2026-10-16: "hide 904 Bayshore from next steps" — the
+#: borrower is paying and RKB holds the first mortgage; nothing to ask anyone).
+NEXT_STEPS_HIDDEN_PROPERTIES = ("bayshore_904",)
+
 
 #: Where the web app is reachable from outside — the contractor portal link in
 #: Wes's daily email. Set MT_PUBLIC_URL in .env when a domain arrives.
