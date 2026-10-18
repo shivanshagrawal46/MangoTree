@@ -673,6 +673,83 @@ PROPERTIES: List[Property] = [
     ),
 ]
 
+
+# --------------------------------------------------------------------------
+# SOLD deals — the Deal Intelligence corpus (admin directive 2026-10-19).
+# Registered so their folders, emails and attachments are filed per property
+# and the post-mortems can read a clean per-deal file. status="sold": out of
+# every daily pass and off the sidebar (retrieve.config.SOLD_PROPERTY_IDS),
+# in search, "Ask anything" and the Deal Intelligence passes. Addresses and
+# dates are from "LP Remodeling Sold Properties Summary.xlsx"; folders from
+# E:\LP Remodeling Projects\Sold Properties. Aliases are deliberately the
+# number+street forms plus the distinctive street names — bare generic words
+# ("Lake", "Golden", "Elliott" — also a Lane Pl borrower's surname) are not
+# aliases, so a sold deal cannot claim a live property's mail.
+# --------------------------------------------------------------------------
+def _sold(pid: str, address: str, city: str, state: str, postal: str, folder: str, aliases, notes: str = "") -> Property:
+    return Property(property_id=pid, canonical_address=address, city=city, state=state, postal=postal,
+                    aliases=tuple(aliases), disk_folder=folder, status="sold", notes=notes)
+
+
+SOLD_PROPERTIES: List[Property] = [
+    _sold("bristol_pl", "10923 Bristol Pl", "Bealeton", "VA", "22712", "Z Closed - 10923 Bristol Pl., Bealeton, VA 22712",
+          ("10923 Bristol Pl", "10923 Bristol Place", "10923 Bristol", "Bristol Pl", "Bristol Place"), "Sold. Invested 2024-04-18, received 2024-07-09."),
+    _sold("baileys_ct", "15 Baileys Ct", "Silver Spring", "MD", "20906", "Z Closed - 15 Baileys Ct., Silver Spring, MD 20906",
+          ("15 Baileys Ct", "15 Baileys Court", "15 Baileys", "Baileys Ct", "Baileys Court", "Baileys"), "Sold. Invested 2024-05-20, received 2024-07-31."),
+    _sold("drew_st", "1015 Drew St", "Lantana", "FL", "33462", "Z Closed - 1015 Drew St., Lantana, FL 33462",
+          ("1015 Drew St", "1015 Drew Street", "1015 Drew", "Drew St", "Drew Street"), "Sold. Invested 2024-06-03, received 2024-08-08."),
+    _sold("canary_dr", "9483 Canary Dr", "Bel Alton", "MD", "20611", "Z Closed - 9483 Canary Dr., Bel Alton, MD 20611",
+          ("9483 Canary Dr", "9483 Canary Drive", "9483 Canary", "Canary Dr", "Canary Drive"), "Sold. Invested 2024-06-25, received 2024-09-12."),
+    _sold("farrell_ln", "20 Farrell Ln", "Fredericksburg", "VA", "22408", "Z Closed - 20 Farrell Ln., Fredericksburg, VA 22408",
+          ("20 Farrell Ln", "20 Farrell Lane", "20 Farrell", "Farrell Ln", "Farrell Lane", "Farrell"), "Sold. Invested 2024-07-15, received 2024-10-04."),
+    _sold("fort_donelson", "2105 Fort Donelson Ct", "Dumfries", "VA", "22026", "Z Closed - 2105 Fort Donelson Ct., Dumfries, VA 22026",
+          ("2105 Fort Donelson Ct", "2105 Fort Donelson", "Fort Donelson Ct", "Fort Donelson"), "Sold. Invested 2024-07-19, received 2024-10-16."),
+    _sold("dominion_reserve", "16600 Dominion Reserve Ct", "Broad Run", "VA", "20137", "Z Closed - 16600 Dominion Reserve Ct., Broad Run, VA 20137",
+          ("16600 Dominion Reserve Ct", "16600 Dominion Reserve", "16600 Dominion", "Dominion Reserve Ct", "Dominion Reserve"), "Sold. Invested 2024-06-24, received 2024-11-26."),
+    _sold("occoquan_forest", "6181 Occoquan Forest Dr", "Manassas", "VA", "20112", "Z Closed - 6181 Occoquan Forest Dr., Manassas, VA 20112",
+          ("6181 Occoquan Forest Dr", "6181 Occoquan Forest", "6181 Occoquan", "Occoquan Forest Dr", "Occoquan Forest", "Occ Forest", "Occoquan"), "Sold. Invested 2024-09-10, received 2025-03-06."),
+    _sold("hanson_oaks", "4080 Hanson Oaks Dr", "Hyattsville", "MD", "20784", "Z Closed - 4080 Hanson Oaks Dr., Hyattsville, MD 20784",
+          ("4080 Hanson Oaks Dr", "4080 Hanson Oaks", "Hanson Oaks Dr", "Hanson Oaks"), "Sold. Invested 2024-12-17, received 2025-04-15."),
+    _sold("metz_ct", "47 Metz Ct", "Germantown", "MD", "20874", "Z Closed - 47 Metz Ct., Germantown, MD 20874",
+          ("47 Metz Ct", "47 Metz Court", "47 Metz", "Metz Ct", "Metz Court"), "Sold. Invested 2024-12-18, received 2025-04-21. NGTC IRA funding."),
+    _sold("w_park_rd", "202 W Park Rd", "Stafford", "VA", "22554", "Z Closed - 202 W Park Rd, Stafford VA 22554",
+          ("202 W Park Rd", "202 W Park Dr", "202 W Park", "202 West Park", "W Park Rd", "W Park Dr", "W Park"), "Sold. Invested 2025-03-06, received 2025-05-29. Summary shows $0 collected."),
+    _sold("van_buren", "2115 Van Buren St", "Hyattsville", "MD", "20782", "Z Closed - 2115 Van Buren St., Hyattsville, MD 20782",
+          ("2115 Van Buren St", "2115 Van Buren", "Van Buren St", "Van Buren"), "Sold. Invested 2024-06-11, received 2025-06-25 (379 days)."),
+    _sold("woodland_dr", "940 Woodland Dr", "Palm Harbor", "FL", "34683", "Z Closed - 940 Woodland Dr., Palm Harbor, FL 34683",
+          ("940 Woodland Dr", "940 Woodland Drive", "940 Woodland", "Woodland Dr", "Woodland Drive"), "Sold. Invested 2024-12-10, received 2025-10-03 (297 days); short $2,643."),
+    _sold("keystone_ave", "11218 Keystone Ave", "Clinton", "MD", "20735", "Z Closed - 11218 Keystone Ave., Clinton, MD 20735",
+          ("11218 Keystone Ave", "11218 Keystone", "Keystone Ave", "Keystone Avenue", "Keystone"), "Sold. Invested 2025-07-14, received 2025-10-29."),
+    _sold("ready_ave", "5309 Ready Ave", "Baltimore", "MD", "21212", "Z Closed - 5309 Ready Ave., Baltimore, MD 21212",
+          ("5309 Ready Ave", "5309 Ready Avenue", "5309 Ready", "Ready Ave", "Ready Avenue"), "Sold. Invested 2025-04-30, received 2025-12-05."),
+    _sold("middlevale", "12912 Middlevale Ln", "Silver Spring", "MD", "20906", "Z Closed - 12912 Middlevale Ln., Silver Spring, MD 20906",
+          ("12912 Middlevale Ln", "12912 Middlevale", "Middlevale Ln", "Middlevale Lane", "Middlevale"), "Sold. Invested 2025-06-12, received 2025-12-12."),
+    _sold("beach_mill", "10618 Beach Mill Rd", "Great Falls", "VA", "22066", "Z Closed - 10618 Beach Mill Rd., Great Falls, VA 22066",
+          ("10618 Beach Mill Rd", "10618 Beach Mill", "Beach Mill Rd", "Beach Mill Road", "Beach Mill"), "Sold. Invested 2024-12-27, received 2026-01-05 (374 days); short $92,903 per summary; demand letter Sep 2025."),
+    _sold("bay_st", "1833 Bay St SE", "Washington", "DC", "20003", "Z Closed - 1833 Bay St. SE, Washington, DC 20003",
+          ("1833 Bay St SE", "1833 Bay St", "1833 Bay Street", "1833 Bay", "Bay St SE", "Bay Street SE", "Bay St"), "Sold. Invested 2024-02-27, received 2026-01-07 (680 days); short $123,382 per summary; foreclosure/DAST, estate of Rawleigh Fitzgerald."),
+    _sold("elliott_pl", "6412 Elliott Pl", "Hyattsville", "MD", "20783", "Z Closed - 6412 Elliott Pl., Hyattsville, MD 20783",
+          ("6412 Elliott Pl", "6412 Elliott Place", "6412 Elliott", "Elliott Pl", "Elliott Place", "Elliot Pl", "Elliot Place"), "Sold. Invested 2025-03-07, received 2026-01-30 (329 days). Fronted-equity change order."),
+    _sold("balboa_ave", "836 Balboa Ave", "Capitol Heights", "MD", "20743", "Z Closed - 836 Balboa Ave., Capitol Heights, MD 20743",
+          ("836 Balboa Ave", "836 Balboa Avenue", "836 Balboa", "Balboa Ave", "Balboa Avenue", "Balboa"), "Sold. Invested 2025-04-24, received 2026-02-09 (291 days)."),
+    _sold("golden_dr", "13206 Golden Dr", "Sumerduck", "VA", "22742", "Z Closed - 13206 Golden Dr., Summerduck, VA 22742",
+          ("13206 Golden Dr", "13206 Golden Drive", "13206 Golden", "Golden Dr", "Golden Drive"), "Sold. Invested 2025-08-20, received 2026-02-09. NGTC IRA funding; borrower Brewster."),
+    _sold("lake_dr", "116 Lake Dr", "Sterling", "VA", "20164", "Z Closed - 116 Lake Dr., Sterling, VA 20164",
+          ("116 Lake Dr", "116 Lake Drive", "116 Lake", "Lake Dr Sterling", "Lake Drive Sterling"), "Sold. Invested 2025-07-28, received 2026-03-05."),
+    _sold("k_st", "607 K St NE", "Washington", "DC", "20002", "ZClosed - K St. NE, Washington, DC 20002",
+          ("607 K St NE", "607 K Street NE", "607 K St", "607 K Street", "607 K", "607K", "K St NE", "K Street NE", "K St"), "Sold. Invested 2024-04-24, received 2026-07-07 (804 days); short $74,958 per summary. Tax sale, vacant-tax exemption (Gallagher), homeowner Pamela Graham."),
+    _sold("wood_st", "2820 Wood St", "Sarasota", "FL", "34237", None,
+          ("2820 Wood St", "2820 Wood Street", "2820 Wood", "Wood St Sarasota", "Wood Street Sarasota", "Wood St"), "Sold — LP sold and kept cash. Invested 2024-08-30, received 2025-07-24; short $67,310 per summary. No disk folder."),
+    _sold("linda_ln", "5715 Linda Ln", "Temple Hills", "MD", "20748", "Z Closed - 5715 Linda Ln., Temple Hills, MD 20748",
+          ("5715 Linda Ln", "5715 Linda Lane", "5715 Linda", "Linda Ln", "Linda Lane"), "Sold — LP sold and kept cash. Invested 2024-11-21, received 2025-07-24; short $64,685 per summary. NGTC IRA funding."),
+    _sold("redbird_ln", "10703 Redbird Ln", "Spotsylvania", "VA", "22553", "Z Closed - 10703 Redbird Ln., Spotsylvania, VA 22553",
+          ("10703 Redbird Ln", "10703 Redbird Lane", "10703 Redbird", "Redbird Ln", "Redbird Lane", "Redbird"), "Sold — LP sold and kept cash. Invested 2025-02-13, received 2025-07-24; $0 collected per summary."),
+    _sold("crimson_pl", "20428 Crimson Pl", "Leesburg", "VA", "20175", "Z Closed - 20428 Crimson Pl., Leesburg, VA 20175",
+          ("20428 Crimson Pl", "20428 Crimson Place", "20428 Crimson", "Crimson Pl", "Crimson Place", "Crimson"), "Sold — LP sold and kept cash. Invested 2025-04-11, received 2025-07-24; $0 collected per summary."),
+]
+PROPERTIES.extend(SOLD_PROPERTIES)
+SOLD_PROPERTY_IDS = frozenset(p.property_id for p in SOLD_PROPERTIES) | {"chita_ct", "9th_st_nw"}
+
 #: Admin-defined 2026-08-31, verbatim from Rakesh Sir. Held as one explicit set
 #: rather than scattered across the property constructors so it can be checked
 #: against his instruction at a glance. Everything not listed here is a new deal.

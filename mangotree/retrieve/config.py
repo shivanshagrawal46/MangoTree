@@ -259,7 +259,15 @@ WES_MAX_ISSUES = 2
 #: 9th St; no analysis"; 2026-10-08: Chita Ct is sold). Their records stay
 #: searchable; the property page works by URL; they are hidden from the sidebar
 #: and the dashboard grid; nothing is spent on them each morning.
-ANALYSIS_EXCLUDED_PROPERTIES = ("9th_st_nw", "chita_ct")
+#: The 27 sold deals registered 2026-10-19 for Deal Intelligence join the
+#: excluded set: searchable and askable, never part of the morning pass.
+SOLD_PROPERTY_IDS = (
+    "bristol_pl", "baileys_ct", "drew_st", "canary_dr", "farrell_ln", "fort_donelson", "dominion_reserve",
+    "occoquan_forest", "hanson_oaks", "metz_ct", "w_park_rd", "van_buren", "woodland_dr", "keystone_ave",
+    "ready_ave", "middlevale", "beach_mill", "bay_st", "elliott_pl", "balboa_ave", "golden_dr", "lake_dr",
+    "k_st", "wood_st", "linda_ln", "redbird_ln", "crimson_pl",
+)
+ANALYSIS_EXCLUDED_PROPERTIES = ("9th_st_nw", "chita_ct") + SOLD_PROPERTY_IDS
 REPORT_EXCLUDED_PROPERTIES = ANALYSIS_EXCLUDED_PROPERTIES
 
 #: Still analysed every morning (investigation, follow-ups, tasks, ledger,
