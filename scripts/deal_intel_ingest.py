@@ -421,7 +421,9 @@ def phase_postmortem(only: Sequence[str], workers: int = 2) -> None:
 # ================================================================== synthesis
 SYNTHESIS_PROMPT = """You are the Deal Intelligence analyst for RKB Consulting Group, a private lender that funded Listing Prophet /
 LP Remodeling (Wes Stone) on the residential renovation deals below. You have RKB's workbook row for every deal and a
-cited post-mortem for each. Write the cross-deal analysis for the CEO (Rakesh Bhargava). Be honest and specific; every
+cited post-mortem for each. THE WORKBOOK ROW IS THE AUTHORITATIVE ACCOUNTING for every deal (cash invested, points,
+interest, days, collected, shortage) — it is RKB's latest reconciled figure; where a post-mortem's documents show a
+different number, use the workbook and note the discrepancy. Write the cross-deal analysis for the CEO (Rakesh Bhargava). Be honest and specific; every
 finding must carry the count it rests on and name the deals ("4 of 6 Florida/Maryland deals…"); never a percentage that
 hides a small denominator. Groups of fewer than three deals are "too few to judge". No probabilities, no fitted model.
 
@@ -468,9 +470,13 @@ def phase_synthesis() -> Dict[str, Any]:
     corpus = "".join(parts)
     client = anthropic.Anthropic(api_key=SETTINGS.anthropic_api_key, max_retries=3)
     t0 = time.time()
-    resp = client.messages.create(model=SYNTHESIS_MODEL, max_tokens=16000, temperature=0,
-                                  system="You write precise, evidence-bound analysis for a lender's CEO. Counts over percentages. Name deals. No padding.",
-                                  messages=[{"role": "user", "content": SYNTHESIS_PROMPT + "\n\nTHE DEALS:\n" + corpus}])
+    # Adaptive thinking at medium effort with a large output budget: at 16k tokens
+    # and default effort Fable 5.1 spent the whole budget reasoning and returned
+    # no text (2026-10-19). "disabled" is not accepted by this model.
+    with client.messages.stream(model=SYNTHESIS_MODEL, max_tokens=48000, thinking={"type": "adaptive"}, output_config={"effort": "medium"},
+                                system="You write precise, evidence-bound analysis for a lender's CEO. Counts over percentages. Name deals. No padding.",
+                                messages=[{"role": "user", "content": SYNTHESIS_PROMPT + "\n\nTHE DEALS:\n" + corpus}]) as stream:
+        resp = stream.get_final_message()
     text = "".join(getattr(b, "text", "") for b in resp.content)
     u = resp.usage
     from mangotree.core.usage import cost_usd
