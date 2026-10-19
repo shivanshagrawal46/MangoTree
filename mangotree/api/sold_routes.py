@@ -60,16 +60,29 @@ def _ranking(synthesis_md: str) -> Dict[str, Dict[str, str]]:
     return out
 
 
+_WORD = re.compile(r"[a-z0-9]+")
+_NOISE = {"st", "ave", "dr", "ln", "ct", "pl", "rd", "way", "cir", "blvd", "ter", "nw", "ne", "se", "sw", "va", "md", "dc", "fl", "tx", "n", "s", "e", "w"}
+
+
 def _pid_for(name: str) -> Optional[str]:
-    n = (name or "").lower()
-    best = None
+    """'Farrell Ln (VA)', '3731 9th St NW' or '607 K St NE' → the property id whose
+    address contains those words. Street words count; a leading house number must
+    match if given; suffixes and state tags are ignored."""
+    words = _WORD.findall((name or "").lower())
+    if not words:
+        return None
+    number = words[0] if words[0].isdigit() else None
+    keys = [w for w in words if w not in _NOISE and not (number and w == number)]
+    if not keys:
+        keys = [w for w in words if not w.isdigit()]
+    best, best_score = None, 0
     for pid, p in PROPERTY_INDEX.items():
-        addr = p.canonical_address.lower()
-        num = addr.split(" ")[0]
-        street = " ".join(addr.split(" ")[1:3])
-        if n.startswith(num + " ") and street.split(" ")[0] in n:
-            best = pid
-            break
+        aw = set(_WORD.findall(p.canonical_address.lower()))
+        if number and number not in aw:
+            continue
+        score = sum(1 for k in keys if k in aw)
+        if score and keys[0] in aw and score > best_score:
+            best, best_score = pid, score
     return best
 
 
