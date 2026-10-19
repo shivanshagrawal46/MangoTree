@@ -673,6 +673,85 @@ def phase_synthesis2() -> None:
     say(f"synthesis2: {len(recs)} reconciled deals, ${cost:.2f}")
 
 
+# ======================================= point explanations (click-through)
+EXPLAIN_SECTIONS = ("in_plain_words", "biggest_mistakes", "what_worked", "checklist", "decisions")
+EXPLAIN_PROMPT = """The CEO clicked this point on his dashboard and wants the detail behind it, deal by deal, like a senior adviser
+would explain it across a desk.
+
+SECTION: {section}
+POINT: {point}
+
+Return this JSON:
+{
+  "title": "<= 10 words, the point restated as a heading",
+  "what_it_means": "<= 70 words, plain English: what this is and why it cost or saved money",
+  "deals": [
+    {"property_id": "<id from the list>", "headline": "<= 12 words: what happened on this deal",
+     "detail": "<= 80 words with the dates and dollar figures as they appear in the briefs",
+     "evidence": "<= 20 words: the document(s) that show it"}
+  ],
+  "why_it_matters": "<= 50 words: the consequence across the portfolio, with counts and dollars",
+  "rule": "<= 25 words: the instruction that prevents it next time"
+}
+Rules: only deals whose brief actually shows this point (3 to 6 for mistakes and good practice; for portfolio-level
+points use the deals that drive the numbers; [] if truly none). Use property_id values exactly as listed. Never invent.
+Use workbook figures for money. One voice; never mention analysts, reviews, models or a second pass. No markdown.
+
+DEALS (property_id · address · workbook figures · brief):
+{deals}
+"""
+
+
+def _compact_deals_for_explain() -> str:
+    wb = mongo.db["deal_intel_workbook"].find_one({"kind": "sold_workbook"}) or {}
+    rows = {r["property_id"]: r for r in wb.get("rows") or [] if r.get("property_id")}
+    out = []
+    for r in mongo.db["deal_reconciled"].find({}, {"_id": 0}):
+        pid = r["property_id"]; row = rows.get(pid) or {}
+        prop = PROPERTY_INDEX.get(pid)
+        fig = (f"invested ${row.get('cash_invested') or 0:,.2f}; due ${row.get('total_to_collect') or 0:,.2f}; collected ${row.get('cash_collected') or 0:,.2f}; "
+               f"excess/(shortage) ${row.get('excess_shortage') or 0:,.2f}; {row.get('days_invested')} days; funded {str(row.get('investment_date'))[:10]}; received {str(row.get('received_date'))[:10]}")
+        brief = {k: r.get(k) for k in ("one_line", "verdict", "verdict_reason", "what_happened", "mistakes", "went_right", "money_check", "lessons")}
+        out.append(f"### {pid} · {prop.canonical_address if prop else pid}\n{fig}\n{json.dumps(brief, ensure_ascii=False)}")
+    return "\n\n".join(out)
+
+
+def phase_explain(workers: int = 4, force: bool = False) -> None:
+    """A click-through explanation for every point of the CEO brief, stored in
+    ``deal_intel_reports`` (kind sold_point_explanations). Keyed by the point text,
+    so an unchanged point keeps its explanation and a reworded one is redone."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    ceo = mongo.db["deal_intel_reports"].find_one({"kind": "sold_ceo_brief"}) or {}
+    prev = mongo.db["deal_intel_reports"].find_one({"kind": "sold_point_explanations"}) or {}
+    have = {} if force else {(e["section"], e["point"]): e for e in prev.get("items") or []}
+    corpus = _compact_deals_for_explain()
+    valid = {d["property_id"] for d in mongo.db["deal_reconciled"].find({}, {"property_id": 1})}
+    todo = [(sec, pt) for sec in EXPLAIN_SECTIONS for pt in (ceo.get(sec) or []) if (sec, pt) not in have]
+    say(f"explain: {len(todo)} points to write, {len(have)} kept")
+    total = 0.0
+
+    def one(sec, pt):
+        prompt = EXPLAIN_PROMPT.replace("{section}", sec.replace("_", " ")).replace("{point}", pt).replace("{deals}", corpus)
+        data, cost = _brief_call(prompt, f"{sec}", system=BRIEF_SYSTEM, effort="medium", max_tokens=16000)
+        data["deals"] = [d for d in (data.get("deals") or []) if d.get("property_id") in valid]
+        for d in data["deals"]:
+            d["address"] = PROPERTY_INDEX[d["property_id"]].canonical_address
+        return {"section": sec, "point": pt, **data, "cost_usd": round(cost, 3)}, cost
+
+    items = list(have.values())
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        futs = [ex.submit(one, s, p) for s, p in todo]
+        for f in as_completed(futs):
+            try:
+                item, cost = f.result(); total += cost; items.append(item)
+                say(f"explain [{item['section']}] {item['point'][:50]}… ${cost:.2f}, {len(item['deals'])} deals")
+            except Exception as e:  # noqa: BLE001
+                say(f"explain FAILED: {e}")
+    mongo.db["deal_intel_reports"].replace_one({"kind": "sold_point_explanations"}, {"kind": "sold_point_explanations", "items": items, "model": SYNTHESIS_MODEL,
+                                                                                     "from_brief": ceo.get("built_at"), "built_at": datetime.now(timezone.utc)}, upsert=True)
+    say(f"explain: {len(items)} explanations stored, ${total:.2f}")
+
+
 # ======================================================= CEO briefs (short form)
 BRIEF_SYSTEM = ("You condense a lender's deal post-mortem for its CEO, who reads on a phone. Plain English, short sentences, "
                 "concrete names, dates and dollar figures from the text. Never invent; if the post-mortem does not say, leave it out. "
@@ -830,6 +909,7 @@ def main() -> int:
         elif ph == "second": phase_second(only, workers=args.workers, force=args.force)
         elif ph == "reconcile": phase_reconcile(only if args.only else None, workers=args.workers)
         elif ph == "synthesis2": phase_synthesis2()
+        elif ph == "explain": phase_explain(workers=args.workers, force=args.force)
         elif ph == "postmortem": phase_postmortem(only, workers=min(args.workers, 2))
         elif ph == "synthesis": phase_synthesis()
         else: say(f"unknown phase {ph}")

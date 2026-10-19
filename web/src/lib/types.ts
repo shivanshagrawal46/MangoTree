@@ -27,6 +27,10 @@ export type SoldBrief = {
   one_line?: string; verdict?: string; verdict_reason?: string; what_happened?: string[]; went_wrong?: string[]; went_right?: string[]; lessons?: string[];
   mistakes?: SoldMistake[]; missed_first_time?: string[]; disagreements?: SoldDisagreement[]; money_check?: string; reviewed?: boolean; analysts?: { A: string; B: string };
 };
+export type SoldExplanation = {
+  title?: string; what_it_means?: string; why_it_matters?: string; rule?: string;
+  deals?: { property_id: string; address?: string; headline?: string; detail?: string; evidence?: string }[];
+};
 export type SoldCeoBrief = {
   headline?: string; in_plain_words?: string[]; biggest_mistakes?: string[]; missed_first_time?: string[]; what_worked?: string[]; checklist?: string[];
   decisions?: string[]; verdict_changes?: string[]; version?: string; built_at?: string;
@@ -45,6 +49,7 @@ export type SoldPortfolio = {
   };
   verdict_counts: { good: number; mixed: number; bad: number };
   brief?: SoldCeoBrief | null;
+  explanations?: Record<string, (SoldExplanation | null)[]> | null;
   synthesis?: { model?: string; built_at?: string; deals?: number; sections: SoldSection[] } | null;
 };
 export type SoldDeal = {

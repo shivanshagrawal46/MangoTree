@@ -131,6 +131,8 @@ def install(app, mongo) -> None:
         recon_by = {b["property_id"]: b for b in recon.find({}, {"_id": 0})}
         second_ids = {d["property_id"] for d in pms2.find({"answer": {"$ne": ""}}, {"property_id": 1})}
         ceo = reps.find_one({"kind": "sold_ceo_brief"}, {"_id": 0})
+        expl = reps.find_one({"kind": "sold_point_explanations"}, {"_id": 0, "items": 1}) or {}
+        explanations = {(e["section"], e["point"]): e for e in expl.get("items") or []}
         rows = []
         for r in wb["rows"]:
             pid = r.get("property_id")
@@ -169,6 +171,8 @@ def install(app, mongo) -> None:
                 "totals_as_written": wb.get("totals"), "rows": rows, "derived": derived,
                 "verdict_counts": {v: sum(1 for r in deals if r["verdict"] == v) for v in ("good", "mixed", "bad")},
                 "brief": {k: ceo.get(k) for k in CEO_KEYS} if ceo else None,
+                "explanations": {sec: [explanations.get((sec, pt)) and {k: explanations[(sec, pt)].get(k) for k in ("title", "what_it_means", "deals", "why_it_matters", "rule")}
+                                       for pt in (ceo.get(sec) or [])] for sec in ("in_plain_words", "biggest_mistakes", "what_worked", "checklist", "decisions")} if ceo else None,
                 "synthesis": {"model": (syn or {}).get("model"), "built_at": (syn or {}).get("built_at"), "deals": (syn or {}).get("deals"),
                               "sections": _sections((syn or {}).get("answer") or "")} if syn else None}
 

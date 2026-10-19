@@ -13,11 +13,11 @@
 import * as React from "react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
-import { Alert, Card, Col, Collapse, Row, Segmented, Skeleton, Table, Tag, Timeline, Typography } from "antd";
+import { Alert, Card, Col, Collapse, Modal, Row, Segmented, Skeleton, Table, Tag, Timeline, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { api } from "@/lib/api";
 import { fmtDate } from "@/lib/utils";
-import type { SoldDeal, SoldPortfolio, SoldRow, SoldSection } from "@/lib/types";
+import type { SoldDeal, SoldExplanation, SoldPortfolio, SoldRow, SoldSection } from "@/lib/types";
 
 const { Text, Title } = Typography;
 
@@ -67,22 +67,58 @@ function splitLead(t: string): [string | null, string] {
   if (s) return [s[1].trim(), s[2].trim()];
   return [null, t];
 }
-const Points = ({ items, numbered = true }: { items?: string[] | null; numbered?: boolean }) => {
+const Points = ({ items, numbered = true, onPick }: { items?: string[] | null; numbered?: boolean; onPick?: (i: number) => void }) => {
   if (!items?.length) return <Text type="secondary">Nothing to report.</Text>;
   return (
     <ol className="pts">
       {items.map((t, i) => {
         const [lead, rest] = splitLead(t);
         return (
-          <li key={i} className="pt">
+          <li key={i} className={"pt" + (onPick ? " pt-click" : "")} onClick={onPick ? () => onPick(i) : undefined} role={onPick ? "button" : undefined} tabIndex={onPick ? 0 : undefined}
+            onKeyDown={onPick ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onPick(i); } } : undefined}>
             {numbered ? <span className="pt-n">{String(i + 1).padStart(2, "0")}</span> : <span><span className="pt-dot" /></span>}
-            <div>{lead && <><span className="pt-lead"><Rich text={lead} /></span>{" "}</>}<Rich text={rest} /></div>
+            <div>{lead && <><span className="pt-lead"><Rich text={lead} /></span>{" "}</>}<Rich text={rest} />{onPick && <span className="pt-more">Details</span>}</div>
           </li>
         );
       })}
     </ol>
   );
 };
+
+/** The detail behind one point, as a modal: what it means, deal by deal, why it matters, the rule. */
+function ExplainModal({ open, onClose, point, x, loading }: { open: boolean; onClose: () => void; point: string; x?: SoldExplanation | null; loading?: boolean }) {
+  return (
+    <Modal open={open} onCancel={onClose} footer={null} width={820} centered styles={{ body: { padding: "8px 8px 16px" } }}
+      title={<div style={{ paddingRight: 24 }}><div className="sold-eyebrow">In detail</div><div style={{ fontSize: 18, fontWeight: 650, letterSpacing: "-0.01em", lineHeight: 1.35, marginTop: 2 }}><Rich text={x?.title || point} /></div></div>}>
+      {!x ? (
+        <div style={{ padding: 12 }}>{loading ? <Skeleton active paragraph={{ rows: 6 }} /> : <Text type="secondary">The detailed note for this point is being written. Try again in a few minutes.</Text>}</div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 20, padding: "8px 12px" }}>
+          {x.what_it_means && <div className="pt" style={{ display: "block", fontSize: 14.5, lineHeight: 1.65 }}><Rich text={x.what_it_means} /></div>}
+          {x.deals?.length ? (
+            <div>
+              <div className="sold-eyebrow" style={{ marginBottom: 10 }}>Deal by deal</div>
+              <div style={{ display: "flex", flexDirection: "column" }}>
+                {x.deals.map((dl, i) => (
+                  <div key={i} style={{ padding: "14px 0", borderTop: "1px solid var(--line)" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
+                      <Link href={`/sold/${dl.property_id}`} onClick={onClose} style={{ fontWeight: 650, fontSize: 14.5 }}>{dl.address || dl.property_id}</Link>
+                      {dl.headline && <span style={{ fontSize: 13, color: "var(--fg-muted)" }}><Rich text={dl.headline} /></span>}
+                    </div>
+                    {dl.detail && <div className="pt" style={{ display: "block", fontSize: 14, lineHeight: 1.65, marginTop: 6 }}><Rich text={dl.detail} /></div>}
+                    {dl.evidence && <div className="pt-sub" style={{ marginTop: 4 }}>Shown by: {dl.evidence}</div>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+          {x.why_it_matters && <div style={{ borderTop: "1px solid var(--line)", paddingTop: 14 }}><div className="sold-eyebrow" style={{ marginBottom: 6 }}>Why it matters</div><div className="pt" style={{ display: "block", fontSize: 14, lineHeight: 1.65 }}><Rich text={x.why_it_matters} /></div></div>}
+          {x.rule && <div style={{ background: "var(--accent-soft)", borderRadius: 12, padding: "12px 16px" }}><div className="sold-eyebrow" style={{ marginBottom: 4 }}>The rule</div><div style={{ fontSize: 14.5, fontWeight: 600, lineHeight: 1.5 }}><Rich text={x.rule} /></div></div>}
+        </div>
+      )}
+    </Modal>
+  );
+}
 const Panel = ({ eyebrow, title, sub, children, extra, tone }: { eyebrow?: string; title: React.ReactNode; sub?: React.ReactNode; children: React.ReactNode; extra?: React.ReactNode; tone?: "review" }) => (
   <Card styles={{ body: { padding: "24px 28px 28px" } }} style={{ height: "100%", ...(tone === "review" ? { borderColor: "color-mix(in srgb, var(--accent) 45%, var(--line))", background: "color-mix(in srgb, var(--accent-soft) 35%, var(--bg-elev))" } : {}) }}>
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 18 }}>
@@ -139,15 +175,17 @@ function MoneyBars({ invested, billed, collected, owed, profit }: { invested: nu
 export function SoldDashboard() {
   const q = useQuery({ queryKey: ["sold-portfolio"], queryFn: () => api.get<SoldPortfolio>("/sold/portfolio"), staleTime: 60_000 });
   const [filter, setFilter] = React.useState<string>("all");
+  const [pick, setPick] = React.useState<{ section: string; i: number } | null>(null);
   if (q.isLoading || !q.data) return <Skeleton active paragraph={{ rows: 12 }} />;
   const d = q.data, dv = d.derived, b = d.brief;
+  const pickSec = (section: string) => (i: number) => setPick({ section, i });
+  const picked = pick ? { point: ((b as unknown as Record<string, string[]>)?.[pick.section] || [])[pick.i] || "", x: d.explanations?.[pick.section]?.[pick.i] } : null;
   const grand = d.totals_as_written.find((t) => t.which === "grand");
   const deals = d.rows.filter((r) => r.kind === "deal");
   const shown = filter === "all" ? deals : filter === "owed" ? deals.filter((r) => (r.excess_shortage ?? 0) < -1) : deals.filter((r) => r.verdict === filter);
   const dealsOwed = deals.filter((r) => (r.excess_shortage ?? 0) < -1).sort((a, b2) => (a.excess_shortage ?? 0) - (b2.excess_shortage ?? 0));
   const invested = grand?.cash_invested ?? dv.deals_cash_invested, collected = grand?.cash_collected ?? dv.deals_cash_collected;
   const owedTotal = -(grand?.excess_shortage ?? 0), billed = grand?.rkb_yield ?? dv.deals_yield_billed, profit = collected - invested;
-  const reviewed = dv.reviewed > 0;
 
   const cols: ColumnsType<SoldRow> = [
     { title: "Property", dataIndex: "address", key: "address", fixed: "left", width: 230, render: (v, r) => r.property_id ? <Link href={`/sold/${r.property_id}`} style={{ fontWeight: 500 }}>{v}</Link> : v, sorter: (a, b2) => a.address.localeCompare(b2.address) },
@@ -179,7 +217,7 @@ export function SoldDashboard() {
           <Text type="secondary">{dv.deals} finished deals with Listing Prophet · figures from {d.workbook.file}, dated {fmtDate(d.workbook.file_mtime, "d MMM yyyy")}</Text>
         </div>
         <div style={{ fontSize: 12, color: "var(--fg-muted)", textAlign: "right" }}>
-          Every deal read from its own emails, documents and photos{reviewed ? ` · ${dv.reviewed} of ${dv.deals} double-checked` : ""}
+          Every deal read from its own emails, documents and photos · click any point for the detail
         </div>
       </div>
       {b?.headline && <div className="pt" style={{ display: "block", fontSize: 20, lineHeight: 1.45, fontWeight: 500, letterSpacing: "-0.012em", maxWidth: 940, padding: "4px 0 2px" }}><Rich text={b.headline} /></div>}
@@ -196,7 +234,7 @@ export function SoldDashboard() {
       <Row gutter={[20, 20]}>
         <Col xs={24} lg={15}>
           <Panel eyebrow="The picture" title="In plain words" sub="what the money did, in five lines">
-            <Points items={b?.in_plain_words ?? [
+            <Points onPick={b?.in_plain_words ? pickSec("in_plain_words") : undefined} items={b?.in_plain_words ?? [
               `We put ${usd0(invested)} into ${dv.deals} deals and got ${usd0(collected)} back.`,
               `${usd0(owedTotal)} we billed never came in, across ${dealsOwed.length} deals.`,
               `Real profit ${usd0(profit)} — ${pct1(dv.cash_profit_annualised)} a year — against ${pct1(dv.billed_yield_annualised)} a year billed.`]} />
@@ -223,19 +261,14 @@ export function SoldDashboard() {
       {b && (
         <>
           <Row gutter={[20, 20]}>
-            <Col xs={24} lg={12}><Panel eyebrow="Mistakes" title="What we did wrong" sub="the repeated mistakes, ordered by money lost"><Points items={b.biggest_mistakes} /></Panel></Col>
-            <Col xs={24} lg={12}>
-              {b.missed_first_time?.length
-                ? <Panel tone="review" eyebrow="Second look" title="What we missed at first look" sub="found on the deeper read of the files"><Points items={b.missed_first_time} /></Panel>
-                : <Panel eyebrow="Good practice" title="What worked" sub="the controls that held"><Points items={b.what_worked} numbered={false} /></Panel>}
-            </Col>
+            <Col xs={24} lg={14}><Panel eyebrow="Mistakes" title="What we did wrong" sub="the repeated mistakes, ordered by money lost"><Points items={b.biggest_mistakes} onPick={pickSec("biggest_mistakes")} /></Panel></Col>
+            <Col xs={24} lg={10}><Panel eyebrow="Good practice" title="What worked" sub="the controls that held"><Points items={b.what_worked} numbered={false} onPick={pickSec("what_worked")} /></Panel></Col>
           </Row>
           <Row gutter={[20, 20]}>
-            {b.missed_first_time?.length ? <Col xs={24} lg={8}><Panel eyebrow="Good practice" title="What worked" sub="the controls that held"><Points items={b.what_worked} numbered={false} /></Panel></Col> : null}
-            <Col xs={24} lg={b.missed_first_time?.length ? 8 : 12}><Panel eyebrow="Rules" title="Before we fund the next one" sub="in order"><Points items={b.checklist} /></Panel></Col>
-            <Col xs={24} lg={b.missed_first_time?.length ? 8 : 12}><Panel eyebrow="Now" title="Decisions for the CEO"><Points items={b.decisions} /></Panel></Col>
+            <Col xs={24} lg={14}><Panel eyebrow="Rules" title="Before we fund the next one" sub="in order"><Points items={b.checklist} onPick={pickSec("checklist")} /></Panel></Col>
+            <Col xs={24} lg={10}><Panel eyebrow="Now" title="Decisions for Rakesh Sir"><Points items={b.decisions} onPick={pickSec("decisions")} /></Panel></Col>
           </Row>
-          {b.verdict_changes?.length ? <Panel eyebrow="Review" title="Verdicts that changed on the second look"><Points items={b.verdict_changes} numbered={false} /></Panel> : null}
+          <ExplainModal open={!!pick} onClose={() => setPick(null)} point={picked?.point || ""} x={picked?.x} />
         </>
       )}
 
@@ -247,10 +280,9 @@ export function SoldDashboard() {
         <Table<SoldRow> rowKey="label" size="small" columns={cols} dataSource={shown} pagination={false} scroll={{ x: 1100 }}
           expandable={{ expandedRowRender: (r) => (
             <div style={{ fontSize: 13, padding: "4px 8px", display: "flex", flexDirection: "column", gap: 6 }}>
-              {r.one_line && <div>{r.one_line}</div>}
-              {r.missed_first_time?.length ? <div><Text strong style={{ color: "var(--money-in)" }}>Missed at first look: </Text>{r.missed_first_time.join(" · ")}</div> : null}
+              {r.one_line && <div className="pt" style={{ display: "block" }}><Rich text={r.one_line} /></div>}
             </div>
-          ), rowExpandable: (r) => !!(r.one_line || r.missed_first_time?.length) }}
+          ), rowExpandable: (r) => !!r.one_line }}
           summary={() => (
             <Table.Summary fixed>
               <Table.Summary.Row style={{ fontWeight: 600 }}>
@@ -343,10 +375,6 @@ export function SoldDealView({ pid }: { pid: string }) {
               </Panel>
             </Col>
           </Row>
-
-          {b.missed_first_time?.length ? (
-            <Panel tone="review" eyebrow="Second look" title="What we missed at first look" sub="found on the deeper read of the files"><Points items={b.missed_first_time} /></Panel>
-          ) : null}
 
           <Row gutter={[20, 20]}>
             <Col xs={24} lg={12}><Panel eyebrow="Good practice" title="What went right"><Points items={b.went_right} numbered={false} /></Panel></Col>

@@ -137,6 +137,10 @@ body {
 .pt .pct { font-weight: 600; font-variant-numeric: tabular-nums; }
 .pt .deal { font-size: 12px; font-weight: 500; color: var(--fg-muted); background: var(--bg-sunken); border: 1px solid var(--line); padding: 0 7px; border-radius: 999px; margin: 0 2px; white-space: nowrap; line-height: 20px; display: inline-block; }
 .pt-sub { font-size: 12.5px; color: var(--fg-muted); margin-top: 2px; }
+.pt-click { cursor: pointer; border-radius: 10px; margin: -6px -10px; padding: 6px 10px; transition: background 120ms ease; }
+.pt-click:hover, .pt-click:focus-visible { background: var(--bg-sunken); outline: none; }
+.pt-more { display: inline-block; margin-left: 8px; font-size: 11px; font-weight: 600; color: var(--accent); opacity: 0; transition: opacity 120ms ease; vertical-align: 1px; }
+.pt-click:hover .pt-more, .pt-click:focus-visible .pt-more { opacity: 1; }
 .sold-eyebrow { font-size: 11px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent); }
 .sold-h { font-size: 17px; font-weight: 650; letter-spacing: -0.01em; margin-top: 2px; }
 .sold-sub { font-size: 12.5px; color: var(--fg-muted); margin-top: 2px; }
