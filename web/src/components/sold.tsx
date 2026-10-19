@@ -36,7 +36,6 @@ const V: Record<string, { color: string; label: string; css: string }> = {
 const VerdictTag = ({ v, size }: { v?: string | null; size?: "big" }) => v && V[v]
   ? <Tag color={V[v].color} style={{ marginInlineEnd: 0, ...(size === "big" ? { fontSize: 13, padding: "2px 10px", lineHeight: "22px" } : {}) }}>{V[v].label}</Tag>
   : <Tag style={{ marginInlineEnd: 0 }}>—</Tag>;
-const FOUND: Record<string, { label: string; color?: string }> = { both: { label: "both analysts" }, A: { label: "first analyst" }, B: { label: "found on review", color: "processing" } };
 
 const PAD = { body: { padding: 20 } };
 const Bullets = ({ items, numbered, size = 13.5 }: { items?: string[] | null; numbered?: boolean; size?: number }) => {
@@ -167,7 +166,7 @@ export function SoldDashboard() {
     { title: "Still owed", dataIndex: "excess_shortage", key: "owed", align: "right", width: 100, sorter: (a, b2) => (a.excess_shortage ?? 0) - (b2.excess_shortage ?? 0),
       render: (v: number) => v < -1 ? <Text type="danger" strong>{usd0(-v)}</Text> : v > 1 ? <Text type="success">+{usd0(v)}</Text> : <Text type="secondary">—</Text> },
     { title: "Return / yr", dataIndex: "annualized_roi", key: "roi", align: "right", width: 90, render: pct1, sorter: (a, b2) => (a.annualized_roi ?? 0) - (b2.annualized_roi ?? 0) },
-    { title: "Verdict", dataIndex: "verdict", key: "verdict", width: 110, render: (v, r) => <span style={{ display: "inline-flex", gap: 4, alignItems: "center" }}><VerdictTag v={v} />{r.first_verdict && r.reviewed && r.first_verdict !== v && <Tooltip title={`First analysis said ${V[r.first_verdict]?.label}; changed on review`}><span style={{ fontSize: 10, color: "var(--money-in)" }}>↻</span></Tooltip>}</span> },
+    { title: "Verdict", dataIndex: "verdict", key: "verdict", width: 90, render: (v) => <VerdictTag v={v} /> },
     { title: "Why", dataIndex: "reason", key: "reason", render: (v) => <Text type="secondary" style={{ fontSize: 12.5 }}>{v}</Text> },
   ];
 
@@ -179,7 +178,7 @@ export function SoldDashboard() {
           <Text type="secondary">{dv.deals} finished deals with Listing Prophet · figures from {d.workbook.file}, dated {fmtDate(d.workbook.file_mtime, "d MMM yyyy")}</Text>
         </div>
         <div style={{ fontSize: 12, color: "var(--fg-muted)", textAlign: "right" }}>
-          Analysed twice, independently: <b>Claude Fable 5.1</b> and <b>GPT-6 Astra</b>{reviewed ? <> · reviewed and reconciled on {dv.reviewed} of {dv.deals}</> : <> · second opinion on {dv.second_opinions} of {dv.deals} so far</>}
+          Every deal read from its own emails, documents and photos{reviewed ? ` · ${dv.reviewed} of ${dv.deals} double-checked` : ""}
         </div>
       </div>
       {b?.headline && <div style={{ fontSize: 19, lineHeight: 1.4, fontWeight: 500, letterSpacing: "-0.01em", maxWidth: 900 }}>{b.headline}</div>}
@@ -231,7 +230,7 @@ export function SoldDashboard() {
             <Col xs={24} lg={12}><Panel title="What we did wrong" sub="the repeated mistakes, ordered by money lost"><Bullets items={b.biggest_mistakes} numbered /></Panel></Col>
             <Col xs={24} lg={12}>
               {b.missed_first_time?.length ? (
-                <Panel tone="review" title="What the second analyst found that we missed" sub="surfaced by GPT-6 Astra's independent pass, confirmed on review"><Bullets items={b.missed_first_time} /></Panel>
+                <Panel tone="review" title="What we missed at first look" sub="found on the second, deeper read of the files"><Bullets items={b.missed_first_time} /></Panel>
               ) : (
                 <Panel title="What worked on the good deals"><Bullets items={b.what_worked} /></Panel>
               )}
@@ -242,7 +241,7 @@ export function SoldDashboard() {
             <Col xs={24} lg={b.missed_first_time?.length ? 8 : 12}><Panel title="Before we fund the next one" sub="rules, in order"><Bullets items={b.checklist} numbered /></Panel></Col>
             <Col xs={24} lg={b.missed_first_time?.length ? 8 : 12}><Panel title="Decisions for the CEO"><Bullets items={b.decisions} numbered size={14} /></Panel></Col>
           </Row>
-          {b.verdict_changes?.length ? <Alert type="info" showIcon message="Verdicts that changed after the second analysis" description={<Bullets items={b.verdict_changes} size={13} />} /> : null}
+          {b.verdict_changes?.length ? <Alert type="info" showIcon message="Verdicts that changed on the second look" description={<Bullets items={b.verdict_changes} size={13} />} /> : null}
         </>
       )}
 
@@ -255,7 +254,7 @@ export function SoldDashboard() {
           expandable={{ expandedRowRender: (r) => (
             <div style={{ fontSize: 13, padding: "4px 8px", display: "flex", flexDirection: "column", gap: 6 }}>
               {r.one_line && <div>{r.one_line}</div>}
-              {r.missed_first_time?.length ? <div><Text strong style={{ color: "var(--money-in)" }}>Found on review: </Text>{r.missed_first_time.join(" · ")}</div> : null}
+              {r.missed_first_time?.length ? <div><Text strong style={{ color: "var(--money-in)" }}>Missed at first look: </Text>{r.missed_first_time.join(" · ")}</div> : null}
             </div>
           ), rowExpandable: (r) => !!(r.one_line || r.missed_first_time?.length) }}
           summary={() => (
@@ -280,10 +279,9 @@ export function SoldDashboard() {
 export function SoldDealView({ pid }: { pid: string }) {
   const q = useQuery({ queryKey: ["sold-deal", pid], queryFn: () => api.get<SoldDeal>(`/sold/deals/${pid}`), staleTime: 60_000 });
   if (q.isLoading || !q.data) return <Skeleton active paragraph={{ rows: 10 }} />;
-  const d = q.data, r = d.row, b = d.brief, pm = d.postmortem, pm2 = d.second;
+  const d = q.data, r = d.row, b = d.brief, pm = d.postmortem;
   const owed = -(r?.excess_shortage ?? 0);
   const verdict = d.verdict || b?.verdict;
-  const changed = d.first_verdict && verdict && d.first_verdict !== verdict;
   const due = r?.total_to_collect ?? 0, got = r?.cash_collected ?? 0, inv = r?.cash_invested ?? 0;
   const scale = Math.max(due, got) || 1;
   return (
@@ -293,7 +291,6 @@ export function SoldDealView({ pid }: { pid: string }) {
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 4, flexWrap: "wrap" }}>
           <Title level={3} style={{ margin: 0 }}>{d.address}</Title>
           <VerdictTag v={verdict} size="big" />
-          {changed && <Tag color="processing" style={{ marginInlineEnd: 0 }}>was {V[d.first_verdict!]?.label} before review</Tag>}
           <Text type="secondary">{[d.city, d.state].filter(Boolean).join(", ")}{r?.section === "lp_sold_kept_cash" ? " · LP sold and kept the cash" : ""}</Text>
         </div>
         {b?.one_line && <Paragraph style={{ fontSize: 16, marginTop: 8, marginBottom: 0, maxWidth: 860 }}>{b.one_line}</Paragraph>}
@@ -332,12 +329,12 @@ export function SoldDealView({ pid }: { pid: string }) {
               </Panel>
             </Col>
             <Col xs={24} lg={14}>
-              <Panel title="What we did wrong" sub={b.reviewed ? "ordered by cost · who found it" : undefined}>
+              <Panel title="What we did wrong" sub={b.reviewed ? "ordered by cost, with the document that shows it" : undefined}>
                 {b.mistakes?.length ? (
                   <ol style={{ margin: 0, paddingLeft: 20, fontSize: 13.5, lineHeight: 1.55 }}>
                     {b.mistakes.map((m, i) => (
                       <li key={i} style={{ marginBottom: 9 }}>
-                        <div style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap" }}><span>{m.text}</span>{m.found_by && FOUND[m.found_by] && <Tag color={FOUND[m.found_by].color} style={{ fontSize: 10.5, lineHeight: "16px", marginInlineEnd: 0 }}>{FOUND[m.found_by].label}</Tag>}</div>
+                        <div>{m.text}</div>
                         {m.evidence && <div style={{ fontSize: 12, color: "var(--fg-muted)" }}>{m.evidence}</div>}
                       </li>
                     ))}
@@ -348,7 +345,7 @@ export function SoldDealView({ pid }: { pid: string }) {
           </Row>
 
           {b.missed_first_time?.length ? (
-            <Panel tone="review" title="What the second analyst found that we missed" sub="GPT-6 Astra's independent pass, checked against the first analysis and the files"><Bullets items={b.missed_first_time} /></Panel>
+            <Panel tone="review" title="What we missed at first look" sub="found on the second, deeper read of the files"><Bullets items={b.missed_first_time} /></Panel>
           ) : null}
 
           <Row gutter={[16, 16]}>
@@ -356,29 +353,14 @@ export function SoldDealView({ pid }: { pid: string }) {
             <Col xs={24} lg={12}><Panel title="Lessons for next time"><Bullets items={b.lessons} numbered /></Panel></Col>
           </Row>
 
-          {(b.disagreements?.length || b.money_check) ? (
-            <Card styles={{ body: { padding: "4px 8px" } }}>
-              <Collapse ghost items={[{ key: "rev", label: <Text strong>Review notes — where the two analysts disagreed, and the money check</Text>, children: (
-                <div style={{ display: "flex", flexDirection: "column", gap: 12, paddingBottom: 8 }}>
-                  {b.money_check && <Alert type="info" showIcon message="Money check" description={b.money_check} />}
-                  {b.disagreements?.length ? (
-                    <Table size="small" pagination={false} rowKey={(x) => x.topic} dataSource={b.disagreements} columns={[
-                      { title: "Topic", dataIndex: "topic", width: 160, render: (v) => <Text strong>{v}</Text> },
-                      { title: "Fable 5.1 said", dataIndex: "a" }, { title: "Astra said", dataIndex: "b" },
-                      { title: "Resolution", dataIndex: "resolution", render: (v) => <Text>{v}</Text> }]} />
-                  ) : null}
-                </div>
-              ) }]} />
-            </Card>
-          ) : null}
+          {b.money_check && <Alert type="info" showIcon message="Money check against the workbook" description={b.money_check} />}
         </>
       ) : <Alert type="info" showIcon message="Short brief not generated yet for this deal." />}
 
-      {(pm || pm2) && (
+      {pm && (
         <Card styles={{ body: { padding: "4px 8px" } }}>
           <div style={{ fontSize: 12, color: "var(--fg-muted)", padding: "8px 16px 0" }}>The files behind this: {d.counts.emails} emails, {d.counts.attachments} attachments, {d.counts.files} folder documents.</div>
-          {pm && <FullText sections={pm.sections} label={`Full post-mortem — first analyst, Claude Fable 5.1 (${pm.sections.length} sections, ${pm.sources.length} sources)`} />}
-          {pm2 && <FullText sections={pm2.sections} label={`Full post-mortem — second analyst, GPT-6 Astra (${pm2.sections.length} sections, ${pm2.sources.length} sources)`} />}
+          <FullText sections={pm.sections} label={`Read the full post-mortem (${pm.sections.length} sections, ${pm.sources.length} sources)`} />
         </Card>
       )}
     </div>

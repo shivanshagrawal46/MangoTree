@@ -578,12 +578,14 @@ RECONCILE_PROMPT = """Return this JSON:
   "what_happened": ["3 bullets, <= 20 words each, in order: funding -> what went on -> how RKB got paid (or not)"],
   "mistakes": [{"text": "<= 20 words, the mistake and its cost or risk", "found_by": "both" | "A" | "B", "evidence": "<= 16 words: the document or date that shows it"}],
   "went_right": ["up to 3 bullets, <= 18 words each"],
-  "missed_first_time": ["bullets, <= 24 words each: facts or mistakes B found that A missed, or A stated wrongly; [] if none. Say what A said vs what the files show"],
+  "missed_first_time": ["bullets, <= 24 words each: facts or mistakes B found that A missed or A stated wrongly; [] if none. Write them for the CEO in one voice — 'We missed …' / 'The files show …' — never the words analyst, A or B"],
   "disagreements": [{"topic": "<= 8 words", "a": "<= 18 words", "b": "<= 18 words", "resolution": "<= 20 words, which is better supported and why"}],
   "money_check": "<= 30 words: does the documents' money trail match the workbook row; name any gap in dollars",
   "lessons": ["3 to 4 bullets, <= 16 words each, rules phrased as instructions"]
 }
 Rules: "mistakes" holds up to 6, ordered by cost. Mark found_by honestly. Use the workbook row's figures for money. No citations like [#3]. No markdown.
+Every text the CEO reads (one_line, verdict_reason, what_happened, mistakes, went_right, missed_first_time, money_check, lessons) is your single final
+judgement in one voice: never write "Analyst A", "Analyst B", "A said", "B found". The disagreements field is the only place A and B may be named.
 
 WORKBOOK ROW (accounting of record):
 {facts}
@@ -635,13 +637,14 @@ workbook totals. Write the CEO's dashboard JSON:
   "headline": "<= 22 words: the one sentence the CEO should remember",
   "in_plain_words": ["4 to 5 bullets, <= 22 words each: what the money did overall (invested, collected, still owed, real return vs billed return)"],
   "biggest_mistakes": ["6 bullets, <= 20 words each: the repeated mistakes ordered by money lost, each naming example deals in brackets"],
-  "missed_first_time": ["4 to 6 bullets, <= 24 words each: what the second analyst / review surfaced that the first analysis missed, naming deals"],
+  "missed_first_time": ["4 to 6 bullets, <= 24 words each: what the second, deeper read surfaced that the first analysis missed, naming deals; one voice — 'We missed …' — never the words analyst, A or B"],
   "what_worked": ["3 to 4 bullets, <= 18 words each, the controls that held, naming deals in brackets"],
   "checklist": ["7 to 9 bullets, <= 14 words each, rules to apply before funding"],
   "decisions": ["3 bullets, <= 22 words each: decisions for the CEO now"],
   "verdict_changes": ["bullets: deals whose verdict changed after review, with the reason; [] if none"]
 }
 Counts over percentages; name deals; never invent. Use the workbook totals exactly as given. No markdown, no citations.
+One voice throughout — the CEO's own adviser — never "analyst A/B", "Fable", "Astra", "the models".
 
 WORKBOOK TOTALS:
 {totals}
