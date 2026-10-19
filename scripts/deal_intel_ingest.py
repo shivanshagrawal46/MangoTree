@@ -28,7 +28,7 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
@@ -507,6 +507,95 @@ def phase_deals() -> None:
     say(f"deals: {len(summary)} records written from the workbook")
 
 
+# ======================================================= CEO briefs (short form)
+BRIEF_SYSTEM = ("You condense a lender's deal post-mortem for its CEO, who reads on a phone. Plain English, short sentences, "
+                "concrete names, dates and dollar figures from the text. Never invent; if the post-mortem does not say, leave it out. "
+                "Reply with JSON only — no prose, no code fence.")
+
+DEAL_BRIEF_PROMPT = """From the post-mortem below, return this JSON:
+{
+  "one_line": "<= 22 words: what this deal was and how it ended",
+  "verdict": "good" | "mixed" | "bad",
+  "verdict_reason": "<= 18 words: the single deciding fact",
+  "what_happened": ["3 bullets, <= 20 words each, in order: funding -> what went on -> how RKB got paid (or not)"],
+  "went_wrong": ["up to 3 bullets, <= 18 words each, the mistakes that cost money or risk; [] if none"],
+  "went_right": ["up to 2 bullets, <= 18 words each, the controls that held; [] if none"],
+  "lessons": ["3 bullets, <= 16 words each, rules RKB should apply next time, phrased as instructions"]
+}
+Keep every bullet a single plain sentence. No citations like [#3]. No markdown.
+
+POST-MORTEM:
+"""
+
+PORTFOLIO_BRIEF_PROMPT = """From the cross-deal analysis below (29 sold deals), return this JSON for the CEO's dashboard:
+{
+  "headline": "<= 20 words: the one sentence the CEO should remember",
+  "in_plain_words": ["4 to 5 bullets, <= 22 words each: what the money did overall, said simply (invested, collected, still owed, real return vs billed return)"],
+  "biggest_mistakes": ["5 bullets, <= 18 words each, the repeated mistakes, each naming 1-2 example deals in brackets"],
+  "what_worked": ["3 to 4 bullets, <= 18 words each, the controls that held on the good deals, naming deals in brackets"],
+  "checklist": ["6 to 8 bullets, <= 14 words each, phrased as rules to apply before funding"],
+  "decisions": ["3 bullets, <= 20 words each: decisions for the CEO now"]
+}
+Plain sentences. No citations. No markdown. Use the figures as they appear in the analysis.
+
+ANALYSIS:
+"""
+
+
+def _brief_call(prompt: str, label: str) -> Tuple[Dict[str, Any], float]:
+    import anthropic
+    client = anthropic.Anthropic(api_key=SETTINGS.anthropic_api_key, max_retries=3)
+    with client.messages.stream(model=SYNTHESIS_MODEL, max_tokens=12000, thinking={"type": "adaptive"}, output_config={"effort": "low"},
+                                system=BRIEF_SYSTEM, messages=[{"role": "user", "content": prompt}]) as stream:
+        resp = stream.get_final_message()
+    text = "".join(getattr(b, "text", "") for b in resp.content).strip()
+    text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.S)
+    m = re.search(r"\{.*\}", text, re.S)
+    if not m:
+        raise RuntimeError(f"{label}: no JSON in reply ({len(text)} chars)")
+    data = json.loads(m.group(0))
+    u = resp.usage
+    from mangotree.core.usage import cost_usd
+    cost = cost_usd(SYNTHESIS_MODEL, input_tokens=u.input_tokens, output_tokens=u.output_tokens,
+                    cache_read=getattr(u, "cache_read_input_tokens", 0) or 0, cache_write=getattr(u, "cache_creation_input_tokens", 0) or 0)
+    return data, cost
+
+
+def phase_brief(only: Optional[List[str]] = None, workers: int = 4) -> None:
+    """Short-form briefs for the website: one per deal (from its post-mortem) and
+    one for the portfolio (from the synthesis). Stored in ``deal_briefs`` and
+    ``deal_intel_reports`` (kind sold_ceo_brief). Re-run after any post-mortem or
+    synthesis changes."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    pms = list(mongo.db["deal_postmortems"].find({"answer": {"$ne": ""}}, {"_id": 0, "property_id": 1, "answer": 1}))
+    if only:
+        pms = [p for p in pms if p["property_id"] in only]
+    coll = mongo.db["deal_briefs"]
+    total = 0.0
+
+    def one(pm):
+        data, cost = _brief_call(DEAL_BRIEF_PROMPT + pm["answer"], pm["property_id"])
+        coll.replace_one({"property_id": pm["property_id"]}, {"property_id": pm["property_id"], **data, "model": SYNTHESIS_MODEL, "cost_usd": round(cost, 3), "built_at": datetime.now(timezone.utc)}, upsert=True)
+        return pm["property_id"], cost
+
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        futs = [ex.submit(one, pm) for pm in pms]
+        for f in as_completed(futs):
+            try:
+                pid, cost = f.result(); total += cost
+                say(f"brief {pid}: done ${cost:.2f}")
+            except Exception as e:  # noqa: BLE001
+                say(f"brief FAILED: {e}")
+    if not only:
+        syn = mongo.db["deal_intel_reports"].find_one({"kind": "sold_portfolio_synthesis", "answer": {"$ne": ""}}, sort=[("built_at", -1)])
+        if syn:
+            data, cost = _brief_call(PORTFOLIO_BRIEF_PROMPT + syn["answer"], "portfolio"); total += cost
+            mongo.db["deal_intel_reports"].replace_one({"kind": "sold_ceo_brief"}, {"kind": "sold_ceo_brief", **data, "model": SYNTHESIS_MODEL, "from_synthesis": syn.get("built_at"),
+                                                                                    "cost_usd": round(cost, 3), "built_at": datetime.now(timezone.utc)}, upsert=True)
+            say(f"brief portfolio: done ${cost:.2f}")
+    say(f"briefs: {len(pms)} deals, ${total:.2f}")
+
+
 # ============================================================ workbook, verbatim
 def phase_workbook() -> None:
     """The summary workbook, row for row, into ``deal_intel_workbook`` — deal rows,
@@ -570,6 +659,7 @@ def main() -> int:
         elif ph == "timeline": phase_timeline(only)
         elif ph == "deals": phase_deals(); phase_workbook()
         elif ph == "workbook": phase_workbook()
+        elif ph == "brief": phase_brief(only if args.only else None, workers=args.workers)
         elif ph == "postmortem": phase_postmortem(only, workers=min(args.workers, 2))
         elif ph == "synthesis": phase_synthesis()
         else: say(f"unknown phase {ph}")

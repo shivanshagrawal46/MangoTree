@@ -90,6 +90,8 @@ def install(app, mongo) -> None:
     wbk = mongo.db["deal_intel_workbook"]
     pms = mongo.db["deal_postmortems"]
     reps = mongo.db["deal_intel_reports"]
+    briefs = mongo.db["deal_briefs"]
+    BRIEF_KEYS = ("one_line", "verdict", "verdict_reason", "what_happened", "went_wrong", "went_right", "lessons")
 
     @app.get("/sold/portfolio")
     def sold_portfolio(user=CurrentUser):
@@ -99,6 +101,8 @@ def install(app, mongo) -> None:
         syn = reps.find_one({"kind": "sold_portfolio_synthesis", "answer": {"$ne": ""}}, {"_id": 0}, sort=[("built_at", -1)])
         rank = _ranking((syn or {}).get("answer") or "")
         have_pm = {d["property_id"]: {"built_at": d.get("built_at"), "cost_usd": d.get("cost_usd")} for d in pms.find({}, {"property_id": 1, "built_at": 1, "cost_usd": 1})}
+        brief_by = {b["property_id"]: b for b in briefs.find({}, {"_id": 0})}
+        ceo = reps.find_one({"kind": "sold_ceo_brief"}, {"_id": 0})
         rows = []
         for r in wb["rows"]:
             pid = r.get("property_id")
@@ -107,6 +111,7 @@ def install(app, mongo) -> None:
                                                   "extension_fee_billed", "rkb_yield", "roi", "days_invested", "annualized_roi", "total_to_collect", "cash_collected", "excess_shortage")},
                          "property_id": pid, "address": prop.canonical_address if prop else r.get("label"), "city": prop.city if prop else None, "state": prop.state if prop else None,
                          "verdict": (rank.get(pid) or {}).get("verdict") if pid else None, "reason": (rank.get(pid) or {}).get("reason") if pid else None,
+                         "one_line": (brief_by.get(pid) or {}).get("one_line") if pid else None,
                          "postmortem": have_pm.get(pid) if pid else None})
         deals = [r for r in rows if r["kind"] == "deal"]
         inv = sum(r["cash_invested"] or 0 for r in deals); col = sum(r["cash_collected"] or 0 for r in deals)
@@ -129,6 +134,7 @@ def install(app, mongo) -> None:
         return {"workbook": {"file": wb.get("file"), "sheet": wb.get("sheet"), "file_mtime": wb.get("file_mtime"), "loaded_at": wb.get("built_at"), "header": wb.get("header")},
                 "totals_as_written": wb.get("totals"), "rows": rows, "derived": derived,
                 "verdict_counts": {v: sum(1 for r in deals if r["verdict"] == v) for v in ("good", "mixed", "bad")},
+                "brief": {k: ceo.get(k) for k in ("headline", "in_plain_words", "biggest_mistakes", "what_worked", "checklist", "decisions", "built_at")} if ceo else None,
                 "synthesis": {"model": (syn or {}).get("model"), "built_at": (syn or {}).get("built_at"), "deals": (syn or {}).get("deals"),
                               "sections": _sections((syn or {}).get("answer") or "")} if syn else None}
 
@@ -142,8 +148,10 @@ def install(app, mongo) -> None:
         pm = pms.find_one({"property_id": pid}, {"_id": 0})
         syn = reps.find_one({"kind": "sold_portfolio_synthesis", "answer": {"$ne": ""}}, {"_id": 0, "answer": 1}, sort=[("built_at", -1)])
         rank = _ranking((syn or {}).get("answer") or "").get(pid)
+        brief = briefs.find_one({"property_id": pid}, {"_id": 0})
         return {"property_id": pid, "address": prop.canonical_address, "city": prop.city, "state": prop.state, "notes": prop.notes,
                 "row": row, "verdict": (rank or {}).get("verdict"), "reason": (rank or {}).get("reason"),
+                "brief": {k: brief.get(k) for k in BRIEF_KEYS} if brief else None,
                 "postmortem": {"model": pm.get("model"), "built_at": pm.get("built_at"), "cost_usd": pm.get("cost_usd"), "tool_calls": (pm.get("budget") or {}).get("tool_calls_used"),
                                "sections": _sections(pm.get("answer") or ""), "sources": pm.get("sources") or []} if pm else None,
                 "counts": {"emails": mongo.artifacts.count_documents({"source_type": "email", "property_ids": pid}),

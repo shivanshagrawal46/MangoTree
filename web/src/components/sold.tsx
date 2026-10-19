@@ -1,205 +1,152 @@
 "use client";
 
 /**
- * Sold deals — the Deal Intelligence dashboard.
+ * Sold deals — what the CEO needs on one screen.
  *
- * Money is RKB's summary workbook, row for row, with the sheet's own Total rows
- * shown as written; the derived lines (cash profit, annualised) are labelled as
- * derived. Verdicts and one-line reasons come from the cross-deal ranking; the
- * long text (post-mortem sections, synthesis sections) is collapsed by default.
+ * Four numbers, the story in plain words, one table, the lessons. Every dollar
+ * figure is RKB's summary workbook as written. The short text comes from the
+ * briefs (deal_briefs / sold_ceo_brief); the full post-mortems and the cross-deal
+ * analysis sit behind a single "Read the full analysis" fold.
  */
 import * as React from "react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronDown, ChevronRight, Archive, ArrowLeft, Info } from "lucide-react";
+import { Alert, Card, Col, Collapse, Row, Segmented, Skeleton, Statistic, Table, Tag, Typography } from "antd";
+import type { ColumnsType } from "antd/es/table";
 import { api } from "@/lib/api";
-import { Badge, Card, CardHeader, Empty, Skeleton } from "@/components/ui";
-import { cn, fmtDate } from "@/lib/utils";
+import { fmtDate } from "@/lib/utils";
 import type { SoldDeal, SoldPortfolio, SoldRow, SoldSection } from "@/lib/types";
 
-const usd = (n?: number | null, cents = false) => (n === null || n === undefined || isNaN(n)) ? "—" : n.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: cents ? 2 : 0, minimumFractionDigits: cents ? 2 : 0 });
-const pct = (n?: number | null, d = 1) => (n === null || n === undefined || isNaN(n)) ? "—" : `${(n * 100).toFixed(d)}%`;
-const VERDICT_TONE: Record<string, "good" | "high" | "critical" | "neutral"> = { good: "good", mixed: "high", bad: "critical" };
-const VERDICT_LABEL: Record<string, string> = { good: "Good", mixed: "Mixed", bad: "Bad" };
+const { Text, Title, Paragraph } = Typography;
 
-function Verdict({ v }: { v?: string | null }) {
-  if (!v) return <Badge tone="neutral">not ranked</Badge>;
-  return <Badge tone={VERDICT_TONE[v] || "neutral"}>{VERDICT_LABEL[v] || v}</Badge>;
-}
+const usd0 = (n?: number | null) => (n === null || n === undefined || isNaN(n)) ? "—" : n.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
+const usd2 = (n?: number | null) => (n === null || n === undefined || isNaN(n)) ? "—" : n.toLocaleString("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const pct1 = (n?: number | null) => (n === null || n === undefined || isNaN(n)) ? "—" : `${(n * 100).toFixed(1)}%`;
+const VERDICT: Record<string, { color: string; label: string }> = { good: { color: "success", label: "Good" }, mixed: { color: "warning", label: "Mixed" }, bad: { color: "error", label: "Bad" } };
+const VerdictTag = ({ v }: { v?: string | null }) => v && VERDICT[v] ? <Tag color={VERDICT[v].color} style={{ marginInlineEnd: 0 }}>{VERDICT[v].label}</Tag> : <Tag style={{ marginInlineEnd: 0 }}>—</Tag>;
 
-function Num({ label, value, sub, tone }: { label: string; value: React.ReactNode; sub?: React.ReactNode; tone?: "critical" | "good" | "muted" }) {
-  return (
-    <div className="rounded-2xl border border-line bg-elev px-4 py-3 min-w-0">
-      <div className="text-[10.5px] uppercase tracking-wide text-faint">{label}</div>
-      <div className={cn("text-[22px] font-semibold tracking-tight tnum mt-0.5 leading-tight", tone === "critical" && "text-critical", tone === "good" && "text-good", tone === "muted" && "text-muted")}>{value}</div>
-      {sub && <div className="text-[11.5px] text-muted mt-1">{sub}</div>}
-    </div>
-  );
-}
-
-function Section({ s, open: openDefault = false }: { s: SoldSection; open?: boolean }) {
-  const [open, setOpen] = React.useState(openDefault);
-  return (
-    <div className="rounded-xl border border-line bg-elev">
-      <button onClick={() => setOpen((v) => !v)} className="w-full text-left px-4 py-3 flex items-center gap-2 hover:bg-sunken/50 rounded-xl">
-        {open ? <ChevronDown size={14} className="text-faint shrink-0" /> : <ChevronRight size={14} className="text-faint shrink-0" />}
-        <span className="text-[11px] font-bold text-accent w-5">{s.n}</span>
-        <span className="text-[13.5px] font-semibold">{s.title}</span>
-      </button>
-      {open && <div className="px-5 pb-4 prose-mt text-[13px] sold-md" dangerouslySetInnerHTML={{ __html: s.html }} />}
-    </div>
-  );
-}
+const PAD = { body: { padding: 20 } };
+const Bullets = ({ items, numbered }: { items?: string[] | null; numbered?: boolean }) => {
+  if (!items?.length) return <Text type="secondary">—</Text>;
+  const Tagname = numbered ? "ol" : "ul";
+  return <Tagname style={{ margin: 0, paddingLeft: 20, fontSize: 13.5, lineHeight: 1.6 }}>{items.map((t, i) => <li key={i} style={{ marginBottom: 6 }}>{t}</li>)}</Tagname>;
+};
+const Section = ({ title, children, extra }: { title: React.ReactNode; children: React.ReactNode; extra?: React.ReactNode }) => (
+  <Card title={title} extra={extra} styles={PAD} style={{ height: "100%" }}>{children}</Card>
+);
+const FullText = ({ sections, label }: { sections: SoldSection[]; label: string }) => (
+  <Collapse ghost items={[{ key: "full", label: <Text strong>{label}</Text>, children: (
+    <Collapse size="small" items={sections.map((s) => ({ key: s.n, label: `${s.n}. ${s.title}`, children: <div className="prose-mt sold-md" style={{ fontSize: 13 }} dangerouslySetInnerHTML={{ __html: s.html }} /> }))} />
+  ) }]} />
+);
 
 // ------------------------------------------------------------------ portfolio
-type SortKey = keyof SoldRow;
-
 export function SoldDashboard() {
   const q = useQuery({ queryKey: ["sold-portfolio"], queryFn: () => api.get<SoldPortfolio>("/sold/portfolio"), staleTime: 60_000 });
-  const [sort, setSort] = React.useState<{ k: SortKey; asc: boolean }>({ k: "investment_date", asc: true });
-  const [showCols, setShowCols] = React.useState(false);
-  if (q.isLoading) return <div className="space-y-3"><Skeleton className="h-24" /><Skeleton className="h-96" /></div>;
-  if (!q.data) return <Empty title="Sold deals not loaded" sub="Run the Deal Intelligence ingest to load the summary workbook." />;
-  const d = q.data; const dv = d.derived;
+  const [filter, setFilter] = React.useState<string>("all");
+  if (q.isLoading || !q.data) return <Skeleton active paragraph={{ rows: 10 }} />;
+  const d = q.data, dv = d.derived, b = d.brief;
   const grand = d.totals_as_written.find((t) => t.which === "grand");
   const deals = d.rows.filter((r) => r.kind === "deal");
-  const advances = d.rows.filter((r) => r.kind === "advance");
-  const sorted = [...deals].sort((a, b) => {
-    const x = a[sort.k] as unknown, y = b[sort.k] as unknown;
-    const c = typeof x === "number" && typeof y === "number" ? x - y : String(x ?? "").localeCompare(String(y ?? ""));
-    return sort.asc ? c : -c;
-  });
-  const owed = d.rows.filter((r) => (r.excess_shortage ?? 0) < -1).sort((a, b) => (a.excess_shortage ?? 0) - (b.excess_shortage ?? 0));
-  const th = (k: SortKey, label: string, right = false) => (
-    <th onClick={() => setSort((s) => ({ k, asc: s.k === k ? !s.asc : true }))} className={cn("px-3 py-2 text-[10.5px] uppercase tracking-wide text-faint font-semibold cursor-pointer select-none whitespace-nowrap hover:text-fg", right && "text-right")}>
-      {label}{sort.k === k && <span className="ml-1 text-accent">{sort.asc ? "↑" : "↓"}</span>}
-    </th>
-  );
-  const syn = d.synthesis;
-  const keySections = new Set([2, 5, 7, 10]);
+  const shown = filter === "all" ? deals : filter === "owed" ? deals.filter((r) => (r.excess_shortage ?? 0) < -1) : deals.filter((r) => r.verdict === filter);
+  const owed = d.rows.filter((r) => (r.excess_shortage ?? 0) < -1).sort((a, b2) => (a.excess_shortage ?? 0) - (b2.excess_shortage ?? 0));
+  const dealsOwed = owed.filter((r) => r.kind === "deal");
+  const advancesOwed = -dv.advances_outstanding;
+  const dealsNet = (grand?.excess_shortage ?? 0) - advancesOwed;
+
+  const cols: ColumnsType<SoldRow> = [
+    { title: "Property", dataIndex: "address", key: "address", fixed: "left", render: (v, r) => r.property_id ? <Link href={`/sold/${r.property_id}`} style={{ fontWeight: 500 }}>{v}</Link> : v, sorter: (a, b2) => a.address.localeCompare(b2.address) },
+    { title: "St", dataIndex: "state", key: "state", width: 50 },
+    { title: "Funded", dataIndex: "investment_date", key: "investment_date", width: 95, render: (v) => fmtDate(v, "MMM yyyy"), sorter: (a, b2) => String(a.investment_date).localeCompare(String(b2.investment_date)), defaultSortOrder: "ascend" },
+    { title: "Days", dataIndex: "days_invested", key: "days", width: 65, align: "right", sorter: (a, b2) => (a.days_invested ?? 0) - (b2.days_invested ?? 0) },
+    { title: "Put in", dataIndex: "cash_invested", key: "in", align: "right", width: 110, render: usd0, sorter: (a, b2) => (a.cash_invested ?? 0) - (b2.cash_invested ?? 0) },
+    { title: "Got back", dataIndex: "cash_collected", key: "out", align: "right", width: 110, render: usd0, sorter: (a, b2) => (a.cash_collected ?? 0) - (b2.cash_collected ?? 0) },
+    { title: "Still owed", dataIndex: "excess_shortage", key: "owed", align: "right", width: 110, sorter: (a, b2) => (a.excess_shortage ?? 0) - (b2.excess_shortage ?? 0),
+      render: (v: number) => v < -1 ? <Text type="danger" strong>{usd0(-v)}</Text> : v > 1 ? <Text type="success">+{usd0(v)}</Text> : <Text type="secondary">paid in full</Text> },
+    { title: "Return / yr", dataIndex: "annualized_roi", key: "roi", align: "right", width: 95, render: pct1, sorter: (a, b2) => (a.annualized_roi ?? 0) - (b2.annualized_roi ?? 0) },
+    { title: "Verdict", dataIndex: "verdict", key: "verdict", width: 80, render: (v) => <VerdictTag v={v} /> },
+    { title: "Why", dataIndex: "reason", key: "reason", render: (v) => <Text type="secondary" style={{ fontSize: 12.5 }}>{v}</Text> },
+  ];
+
   return (
-    <div className="space-y-6">
+    <div style={{ display: "flex", flexDirection: "column", gap: 20, maxWidth: 1240 }}>
       <div>
-        <div className="flex items-center gap-2 text-[11px] font-bold tracking-[0.18em] text-accent uppercase"><Archive size={12} /> Deal intelligence</div>
-        <h1 className="text-2xl font-semibold tracking-tight mt-1">Sold deals</h1>
-        <p className="text-[13px] text-muted mt-1">{dv.deals} completed deals and {dv.advances} advance rows, from <span className="font-medium text-fg">{d.workbook.file}</span> (sheet “{d.workbook.sheet}”, file dated {fmtDate(d.workbook.file_mtime, "d MMM yyyy")}). Every figure below is from that sheet; the three derived lines are marked.</p>
+        <Title level={3} style={{ margin: 0 }}>Sold deals</Title>
+        <Text type="secondary">{dv.deals} finished deals · figures from {d.workbook.file} ({fmtDate(d.workbook.file_mtime, "d MMM yyyy")})</Text>
+        {b?.headline && <Paragraph style={{ fontSize: 15, marginTop: 10, marginBottom: 0 }}>{b.headline}</Paragraph>}
       </div>
 
-      {/* 1. the sheet's own grand total, as written */}
-      <section>
-        <div className="text-[12px] font-semibold text-muted mb-2">The sheet’s Grand Total, as written (29 deals + 5 DC advances)</div>
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-          <Num label="Cash invested" value={usd(grand?.cash_invested)} />
-          <Num label="Yield billed" value={usd(grand?.rkb_yield)} sub={`points ${usd(grand?.points_billed)} · interest ${usd(grand?.interest_billed)} · ext. fees ${usd(grand?.extension_fee_billed)}`} />
-          <Num label="Total to be collected" value={usd(grand?.total_to_collect)} sub="= invested + yield" />
-          <Num label="Cash collected" value={usd(grand?.cash_collected)} />
-          <Num label="Still to collect (net)" value={usd(grand?.excess_shortage)} tone="critical" sub={`DC advances ${usd(-dv.advances_outstanding)} + the 29 deals net ${usd((grand?.excess_shortage ?? 0) + dv.advances_outstanding)} · gross shortages ${usd(-dv.still_to_collect_all)}`} />
-        </div>
-      </section>
+      <Row gutter={[16, 16]}>
+        <Col xs={12} lg={6}><Card styles={PAD}><Statistic title="We put in" value={grand?.cash_invested ?? 0} formatter={(v) => usd0(Number(v))} /><Text type="secondary" style={{ fontSize: 12 }}>29 deals + 5 DC advances</Text></Card></Col>
+        <Col xs={12} lg={6}><Card styles={PAD}><Statistic title="We got back" value={grand?.cash_collected ?? 0} formatter={(v) => usd0(Number(v))} /><Text type="secondary" style={{ fontSize: 12 }}>cash actually received</Text></Card></Col>
+        <Col xs={12} lg={6}><Card styles={PAD}><Statistic title="Still owed to us" value={-(grand?.excess_shortage ?? 0)} formatter={(v) => usd0(Number(v))} valueStyle={{ color: "var(--ant-color-error)" }} /><Text type="secondary" style={{ fontSize: 12 }}>{usd0(-dealsNet)} on {dealsOwed.length} deals + {usd0(-advancesOwed)} DC advances</Text></Card></Col>
+        <Col xs={12} lg={6}><Card styles={PAD}><Statistic title="Profit actually made" value={dv.deals_cash_profit} formatter={(v) => usd0(Number(v))} valueStyle={{ color: dv.deals_cash_profit >= 0 ? "var(--ant-color-success)" : "var(--ant-color-error)" }} /><Text type="secondary" style={{ fontSize: 12 }}>{pct1(dv.cash_profit_annualised)} a year · we billed {pct1(dv.billed_yield_annualised)}</Text></Card></Col>
+      </Row>
 
-      {/* 2. the 29 deals: what was actually made */}
-      <section>
-        <div className="text-[12px] font-semibold text-muted mb-2">The 29 deals only — derived from the rows (labelled; not on the sheet)</div>
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-          <Num label="Cash profit realised" value={usd(dv.deals_cash_profit)} tone={dv.deals_cash_profit >= 0 ? "good" : "critical"} sub={`collected − invested · ${pct(dv.deals_cash_profit_pct)} on cash`} />
-          <Num label="Cash profit, per year" value={pct(dv.cash_profit_annualised)} sub={`capital out ${Math.round(dv.capital_weighted_days)} days on average (capital-weighted)`} />
-          <Num label="Yield billed, per year" value={pct(dv.billed_yield_annualised)} sub={`${pct(dv.deals_yield_pct)} billed on cash — if it had all been collected`} />
-          <Num label="Shortages" value={usd(dv.deals_shortage_sum)} tone="critical" sub={`${owed.filter((r) => r.kind === "deal").length} deals not fully collected`} />
-          <Num label="Over-collections" value={usd(dv.deals_excess_sum)} sub="rows where collected exceeds the amount due — JP to attribute" />
-        </div>
-        <div className="mt-2 text-[12px] text-muted flex items-start gap-1.5"><Info size={13} className="mt-0.5 shrink-0" /><span>A negative in “Excess / (shortage)” is <b>collected minus the amount due</b>: that deal still owes RKB. “Yield” is what was <b>billed</b> (points + interest + fees), not what came in — which is why billed return is {pct(dv.billed_yield_annualised)} a year and cash return is {pct(dv.cash_profit_annualised)}.</span></div>
-      </section>
-
-      {/* 3. verdicts */}
-      <section className="grid grid-cols-3 gap-3 max-w-xl">
-        <Num label="Good" value={d.verdict_counts.good} tone="good" sub="full collection, ≤125 days, a control that held" />
-        <Num label="Mixed" value={d.verdict_counts.mixed} sub="money back, but the file shows the control would not have held" />
-        <Num label="Bad" value={d.verdict_counts.bad} tone="critical" sub="material shortage or LP kept the proceeds" />
-      </section>
-
-      {/* 4. every deal */}
-      <Card>
-        <CardHeader title="Every deal" sub="The workbook's columns, as on the sheet. Click a column to sort; click an address for its post-mortem." right={<button onClick={() => setShowCols((v) => !v)} className="text-[12px] text-muted hover:text-fg">{showCols ? "Fewer columns" : "All columns"}</button>} />
-        <div className="overflow-x-auto -mx-1">
-          <table className="w-full text-[12.5px]">
-            <thead><tr className="border-b border-line">
-              {th("address", "Property")}{th("state", "St")}{th("investment_date", "Invested")}{th("received_date", "Received")}{th("days_invested", "Days", true)}
-              {th("cash_invested", "Cash invested", true)}{showCols && th("points_billed", "Points", true)}{showCols && th("interest_billed", "Interest", true)}{showCols && th("extension_fee_billed", "Ext. fee", true)}
-              {th("rkb_yield", "Yield", true)}{showCols && th("roi", "ROI", true)}{th("annualized_roi", "Ann. ROI", true)}{showCols && th("total_to_collect", "To collect", true)}
-              {th("cash_collected", "Collected", true)}{th("excess_shortage", "Excess / (short)", true)}{th("section", "Category")}{th("verdict", "Verdict")}
-            </tr></thead>
-            <tbody>
-              {sorted.map((r) => {
-                const es = r.excess_shortage ?? 0;
-                return (
-                  <tr key={r.label} className={cn("border-b border-line/60", r.verdict === "bad" && "bg-critical-soft/40", r.verdict === "good" && "bg-good-soft/30")}>
-                    <td className="px-3 py-2 font-medium whitespace-nowrap">{r.property_id ? <Link href={`/sold/${r.property_id}`} className="hover:underline">{r.address}</Link> : r.address}</td>
-                    <td className="px-3 py-2 text-muted">{r.state}</td>
-                    <td className="px-3 py-2 whitespace-nowrap">{fmtDate(r.investment_date, "d MMM yy")}</td>
-                    <td className="px-3 py-2 whitespace-nowrap">{fmtDate(r.received_date, "d MMM yy")}</td>
-                    <td className="px-3 py-2 text-right tnum">{r.days_invested ?? ""}</td>
-                    <td className="px-3 py-2 text-right tnum">{usd(r.cash_invested, true)}</td>
-                    {showCols && <td className="px-3 py-2 text-right tnum">{usd(r.points_billed, true)}</td>}
-                    {showCols && <td className="px-3 py-2 text-right tnum">{usd(r.interest_billed, true)}</td>}
-                    {showCols && <td className="px-3 py-2 text-right tnum">{usd(r.extension_fee_billed, true)}</td>}
-                    <td className="px-3 py-2 text-right tnum">{usd(r.rkb_yield, true)}</td>
-                    {showCols && <td className="px-3 py-2 text-right tnum">{pct(r.roi)}</td>}
-                    <td className="px-3 py-2 text-right tnum">{pct(r.annualized_roi)}</td>
-                    {showCols && <td className="px-3 py-2 text-right tnum">{usd(r.total_to_collect, true)}</td>}
-                    <td className="px-3 py-2 text-right tnum">{usd(r.cash_collected, true)}</td>
-                    <td className={cn("px-3 py-2 text-right tnum font-medium", es < -1 && "text-critical", es > 1 && "text-good")}>{usd(r.excess_shortage, true)}</td>
-                    <td className="px-3 py-2 text-muted whitespace-nowrap">{r.section === "lp_sold_kept_cash" ? "LP sold, kept cash" : "Paid from sale"}</td>
-                    <td className="px-3 py-2"><Verdict v={r.verdict} /></td>
-                  </tr>
-                );
-              })}
-            </tbody>
-            <tfoot>
-              {d.totals_as_written.map((t) => (
-                <tr key={t.which} className="border-t border-line bg-sunken/60 font-semibold">
-                  <td className="px-3 py-2" colSpan={5}>{t.which === "grand" ? "Grand Total (sheet)" : t.which === "paid_from_sale" ? "Total — paid from sale (sheet)" : "Total — LP sold and kept cash + DC advances (sheet)"}</td>
-                  <td className="px-3 py-2 text-right tnum">{usd(t.cash_invested, true)}</td>
-                  {showCols && <td className="px-3 py-2 text-right tnum">{usd(t.points_billed, true)}</td>}
-                  {showCols && <td className="px-3 py-2 text-right tnum">{usd(t.interest_billed, true)}</td>}
-                  {showCols && <td className="px-3 py-2 text-right tnum">{usd(t.extension_fee_billed, true)}</td>}
-                  <td className="px-3 py-2 text-right tnum">{usd(t.rkb_yield, true)}</td>
-                  {showCols && <td />}<td />
-                  {showCols && <td className="px-3 py-2 text-right tnum">{usd(t.total_to_collect, true)}</td>}
-                  <td className="px-3 py-2 text-right tnum">{usd(t.cash_collected, true)}</td>
-                  <td className={cn("px-3 py-2 text-right tnum", (t.excess_shortage ?? 0) < 0 && "text-critical")}>{usd(t.excess_shortage, true)}</td>
-                  <td colSpan={2} />
-                </tr>
+      <Row gutter={[16, 16]}>
+        <Col xs={24} lg={14}>
+          <Section title="In plain words">
+            <Bullets items={b?.in_plain_words ?? [
+              `We put ${usd0(grand?.cash_invested)} into these deals and got ${usd0(grand?.cash_collected)} back.`,
+              `${usd0(-(grand?.excess_shortage ?? 0))} is still owed: ${usd0(-dealsNet)} across ${dealsOwed.length} deals and ${usd0(-advancesOwed)} of DC advances.`,
+              `On the ${dv.deals} finished deals we made ${usd0(dv.deals_cash_profit)} — ${pct1(dv.cash_profit_annualised)} a year — against ${pct1(dv.billed_yield_annualised)} a year we billed.`,
+            ]} />
+          </Section>
+        </Col>
+        <Col xs={24} lg={10}>
+          <Section title="Still owed to RKB">
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {dealsOwed.map((r) => (
+                <div key={r.label} style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 13.5 }}>
+                  <Link href={`/sold/${r.property_id}`}>{r.address}</Link>
+                  <Text type="danger" strong style={{ whiteSpace: "nowrap" }}>{usd0(-(r.excess_shortage ?? 0))}</Text>
+                </div>
               ))}
-            </tfoot>
-          </table>
-        </div>
-        {advances.length > 0 && (
-          <div className="mt-3 text-[12px] text-muted">Also on the sheet, not properties: {advances.length} “Advance against DC properties” rows totalling {usd(dv.advances_outstanding)} — nothing billed, nothing collected.</div>
-        )}
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 13.5, borderTop: "1px solid var(--line)", paddingTop: 8 }}>
+                <Text>Advances against DC properties ({dv.advances})</Text><Text type="danger" strong>{usd0(-advancesOwed)}</Text>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 13.5, fontWeight: 600 }}>
+                <span>Total still owed</span><Text type="danger" strong>{usd0(-(grand?.excess_shortage ?? 0))}</Text>
+              </div>
+              <Text type="secondary" style={{ fontSize: 12 }}>Net of {usd0(dv.deals_excess_sum)} collected above the amount due on other deals.</Text>
+            </div>
+          </Section>
+        </Col>
+      </Row>
+
+      <Card title="Every deal" styles={{ body: { padding: 0 } }} extra={
+        <Segmented size="small" value={filter} onChange={(v) => setFilter(String(v))} options={[
+          { label: `All ${deals.length}`, value: "all" }, { label: `Good ${d.verdict_counts.good}`, value: "good" },
+          { label: `Mixed ${d.verdict_counts.mixed}`, value: "mixed" }, { label: `Bad ${d.verdict_counts.bad}`, value: "bad" }, { label: `Owed ${dealsOwed.length}`, value: "owed" }]} />
+      }>
+        <Table<SoldRow> rowKey="label" size="small" columns={cols} dataSource={shown} pagination={false} scroll={{ x: 1000 }}
+          summary={() => (
+            <Table.Summary fixed>
+              <Table.Summary.Row style={{ fontWeight: 600 }}>
+                <Table.Summary.Cell index={0} colSpan={4}>{filter === "all" ? "29 deals (sheet total)" : `${shown.length} shown`}</Table.Summary.Cell>
+                <Table.Summary.Cell index={4} align="right">{usd0(shown.reduce((s, r) => s + (r.cash_invested ?? 0), 0))}</Table.Summary.Cell>
+                <Table.Summary.Cell index={5} align="right">{usd0(shown.reduce((s, r) => s + (r.cash_collected ?? 0), 0))}</Table.Summary.Cell>
+                <Table.Summary.Cell index={6} align="right"><Text type="danger" strong>{usd0(-shown.reduce((s, r) => s + Math.min(r.excess_shortage ?? 0, 0), 0))}</Text></Table.Summary.Cell>
+                <Table.Summary.Cell index={7} colSpan={3} />
+              </Table.Summary.Row>
+            </Table.Summary>
+          )} />
       </Card>
 
-      {/* 5. still to collect */}
-      <Card>
-        <CardHeader title="Still to collect" sub="Rows where collected is below the amount due, largest first." />
-        <ul className="divide-y divide-line">
-          {owed.map((r) => (
-            <li key={r.label} className="py-2 flex items-center justify-between gap-3 text-[13px]">
-              <div className="min-w-0"><span className="font-medium">{r.property_id ? <Link href={`/sold/${r.property_id}`} className="hover:underline">{r.address}</Link> : r.label}</span><span className="text-muted"> · due {usd(r.total_to_collect, true)} · collected {usd(r.cash_collected, true)}</span>{r.reason && <div className="text-[12px] text-muted truncate">{r.reason}</div>}</div>
-              <div className="text-critical font-semibold tnum whitespace-nowrap">{usd(r.excess_shortage, true)}</div>
-            </li>
-          ))}
-        </ul>
-      </Card>
-
-      {/* 6. what the deals say together */}
-      {syn && (
-        <Card>
-          <CardHeader title="What the deals say together" sub={`Cross-deal analysis over ${syn.deals} deals · ${syn.model} · ${fmtDate(syn.built_at, "d MMM yyyy")}. The four sections that matter are open; the rest are a click away.`} />
-          <div className="space-y-2">
-            {syn.sections.map((s) => <Section key={s.n} s={s} open={keySections.has(s.n)} />)}
-          </div>
-        </Card>
+      {b && (
+        <>
+          <Row gutter={[16, 16]}>
+            <Col xs={24} lg={12}><Section title="The mistakes we kept repeating"><Bullets items={b.biggest_mistakes} numbered /></Section></Col>
+            <Col xs={24} lg={12}><Section title="What worked on the good deals"><Bullets items={b.what_worked} /></Section></Col>
+          </Row>
+          <Row gutter={[16, 16]}>
+            <Col xs={24} lg={12}><Section title="Before we fund the next one"><Bullets items={b.checklist} numbered /></Section></Col>
+            <Col xs={24} lg={12}><Section title="Decisions for the CEO"><Bullets items={b.decisions} numbered /></Section></Col>
+          </Row>
+        </>
       )}
+
+      {d.synthesis && <Card styles={{ body: { padding: "4px 8px" } }}><FullText sections={d.synthesis.sections} label={`Read the full cross-deal analysis (${d.synthesis.sections.length} sections)`} /></Card>}
     </div>
   );
 }
@@ -207,42 +154,53 @@ export function SoldDashboard() {
 // ------------------------------------------------------------------- deal page
 export function SoldDealView({ pid }: { pid: string }) {
   const q = useQuery({ queryKey: ["sold-deal", pid], queryFn: () => api.get<SoldDeal>(`/sold/deals/${pid}`), staleTime: 60_000 });
-  if (q.isLoading) return <div className="space-y-3"><Skeleton className="h-20" /><Skeleton className="h-96" /></div>;
-  if (!q.data) return <Empty title="Deal not found" />;
-  const d = q.data; const r = d.row; const pm = d.postmortem;
-  const key = new Set([6, 7, 8, 9]);
-  const ordered = pm ? [...pm.sections.filter((s) => key.has(s.n)), ...pm.sections.filter((s) => !key.has(s.n))] : [];
+  if (q.isLoading || !q.data) return <Skeleton active paragraph={{ rows: 8 }} />;
+  const d = q.data, r = d.row, b = d.brief, pm = d.postmortem;
+  const owed = -(r?.excess_shortage ?? 0);
   return (
-    <div className="space-y-5">
+    <div style={{ display: "flex", flexDirection: "column", gap: 20, maxWidth: 1100 }}>
       <div>
-        <Link href="/sold" className="text-[12px] text-muted hover:text-fg inline-flex items-center gap-1"><ArrowLeft size={12} /> Sold deals</Link>
-        <div className="flex flex-wrap items-center gap-3 mt-1">
-          <h1 className="text-2xl font-semibold tracking-tight">{d.address}</h1>
-          <Verdict v={d.verdict} />
-          <span className="text-[13px] text-muted">{d.city}{d.city && d.state ? ", " : ""}{d.state}{r?.section === "lp_sold_kept_cash" ? " · LP sold and kept the cash" : ""}</span>
+        <Link href="/sold" style={{ fontSize: 12.5 }}>← Sold deals</Link>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 4, flexWrap: "wrap" }}>
+          <Title level={3} style={{ margin: 0 }}>{d.address}</Title>
+          <VerdictTag v={d.verdict || b?.verdict} />
+          <Text type="secondary">{[d.city, d.state].filter(Boolean).join(", ")}{r?.section === "lp_sold_kept_cash" ? " · LP sold and kept the cash" : ""}</Text>
         </div>
-        {d.reason && <p className="text-[13.5px] mt-1.5">{d.reason}</p>}
+        {b?.one_line && <Paragraph style={{ fontSize: 15, marginTop: 8, marginBottom: 0 }}>{b.one_line}</Paragraph>}
       </div>
+
       {r && (
-        <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
-          <Num label="Cash invested" value={usd(r.cash_invested, true)} sub={fmtDate(r.investment_date, "d MMM yyyy")} />
-          <Num label="Yield billed" value={usd(r.rkb_yield, true)} sub={`pts ${usd(r.points_billed)} · int ${usd(r.interest_billed)} · ext ${usd(r.extension_fee_billed)}`} />
-          <Num label="Total to collect" value={usd(r.total_to_collect, true)} />
-          <Num label="Collected" value={usd(r.cash_collected, true)} sub={fmtDate(r.received_date, "d MMM yyyy")} />
-          <Num label="Excess / (shortage)" value={usd(r.excess_shortage, true)} tone={(r.excess_shortage ?? 0) < -1 ? "critical" : "good"} />
-          <Num label="Days · ann. ROI" value={`${r.days_invested ?? "—"} · ${pct(r.annualized_roi)}`} sub={`ROI ${pct(r.roi)} (billed)`} />
-        </div>
+        <Row gutter={[16, 16]}>
+          <Col xs={12} lg={6}><Card styles={PAD}><Statistic title="We put in" value={r.cash_invested ?? 0} formatter={(v) => usd2(Number(v))} /><Text type="secondary" style={{ fontSize: 12 }}>funded {fmtDate(r.investment_date, "d MMM yyyy")}</Text></Card></Col>
+          <Col xs={12} lg={6}><Card styles={PAD}><Statistic title="We were due" value={r.total_to_collect ?? 0} formatter={(v) => usd2(Number(v))} /><Text type="secondary" style={{ fontSize: 12 }}>principal + {usd0(r.rkb_yield)} billed</Text></Card></Col>
+          <Col xs={12} lg={6}><Card styles={PAD}><Statistic title="We got back" value={r.cash_collected ?? 0} formatter={(v) => usd2(Number(v))} /><Text type="secondary" style={{ fontSize: 12 }}>received {fmtDate(r.received_date, "d MMM yyyy")}</Text></Card></Col>
+          <Col xs={12} lg={6}><Card styles={PAD}>
+            {owed > 1 ? <Statistic title="Still owed" value={owed} formatter={(v) => usd2(Number(v))} valueStyle={{ color: "var(--ant-color-error)" }} />
+              : owed < -1 ? <Statistic title="Collected above due" value={-owed} formatter={(v) => "+" + usd2(Number(v))} valueStyle={{ color: "var(--ant-color-success)" }} />
+              : <Statistic title="Still owed" value="Paid in full" valueStyle={{ color: "var(--ant-color-success)" }} />}
+            <Text type="secondary" style={{ fontSize: 12 }}>{r.days_invested} days · {pct1(r.annualized_roi)} a year billed</Text>
+          </Card></Col>
+        </Row>
       )}
-      <div className="text-[12px] text-muted">File read for the post-mortem: {d.counts.emails} emails, {d.counts.attachments} attachments, {d.counts.files} folder documents{pm ? ` · ${pm.model} · ${pm.tool_calls} retrievals · $${pm.cost_usd}` : ""}.</div>
-      {pm ? (
-        <div className="space-y-2">
-          <div className="text-[12px] font-semibold text-muted">Best 3, worst 3, verdict and lessons first; the full account below.</div>
-          {ordered.map((s) => <Section key={s.n} s={s} open={key.has(s.n)} />)}
-          <details className="rounded-xl border border-line bg-elev px-4 py-2 text-[12.5px]"><summary className="cursor-pointer font-semibold">Sources read ({pm.sources.length})</summary>
-            <ol className="mt-2 space-y-0.5 text-muted">{pm.sources.map((s, i) => <li key={s.sha256}><span className="cite">[#{i + 1}]</span> {s.name || s.sha256.slice(0, 12)} <span className="text-faint">{fmtDate(s.date, "d MMM yyyy")}</span></li>)}</ol>
-          </details>
-        </div>
-      ) : <Empty title="No post-mortem yet for this deal" />}
+
+      {(b?.verdict_reason || d.reason) && <Alert type={d.verdict === "bad" ? "error" : d.verdict === "good" ? "success" : "warning"} showIcon message={<Text strong>Why {VERDICT[d.verdict || b?.verdict || "mixed"]?.label.toLowerCase()}</Text>} description={b?.verdict_reason || d.reason} />}
+
+      {b ? (
+        <>
+          <Section title="What happened"><Bullets items={b.what_happened} numbered /></Section>
+          <Row gutter={[16, 16]}>
+            <Col xs={24} lg={12}><Section title="What went wrong"><Bullets items={b.went_wrong} /></Section></Col>
+            <Col xs={24} lg={12}><Section title="What went right"><Bullets items={b.went_right} /></Section></Col>
+          </Row>
+          <Section title="Lessons for next time"><Bullets items={b.lessons} numbered /></Section>
+        </>
+      ) : <Alert type="info" showIcon message="Short brief not generated yet for this deal." />}
+
+      {pm && (
+        <Card styles={{ body: { padding: "4px 8px" } }}>
+          <FullText sections={pm.sections} label={`Read the full post-mortem (${pm.sections.length} sections · ${d.counts.emails} emails, ${d.counts.attachments} attachments, ${d.counts.files} documents read)`} />
+        </Card>
+      )}
     </div>
   );
 }
