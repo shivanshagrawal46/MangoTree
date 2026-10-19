@@ -507,6 +507,169 @@ def phase_deals() -> None:
     say(f"deals: {len(summary)} records written from the workbook")
 
 
+# ================================================ second analyst: GPT-6 Astra
+SECOND_MODEL = "gpt-6-astra"
+
+
+def phase_second(only: Sequence[str], workers: int = 3, force: bool = False) -> None:
+    """An independent post-mortem per deal by GPT-6 Astra: the same question, the
+    same retrieval tools, its own searches — it never sees Fable's answer. Stored
+    in ``deal_postmortems_second`` so the two can be reconciled."""
+    from mangotree.agent.agent import Agent
+    from mangotree.agent.scratchpad import BudgetTracker
+    from mangotree.retrieve.scope import Scope
+    summary = read_summary()
+    coll = mongo.db["deal_postmortems_second"]
+    coll.create_index("property_id", name="ix_pm2_pid")
+
+    def one(pid: str):
+        if not force and done(pid, "second"):
+            return
+        prop = PROPERTY_INDEX[pid]
+        t0 = time.time()
+        say(f"second {pid}: start ({prop.canonical_address})")
+        agent = Agent(mongo, anthropic_api_key=SETTINGS.anthropic_api_key, voyage_api_key=SETTINGS.voyage_api_key,
+                      openai_api_key=SETTINGS.openai_api_key or "", model=SECOND_MODEL)
+        budget = BudgetTracker(max_tool_calls=POSTMORTEM_MAX_TOOL_CALLS, max_wall_clock_s=12 * 60)
+        q = POSTMORTEM_QUESTION.format(facts=facts_block(summary.get(pid)))
+        try:
+            res = agent.run(q, Scope.for_property(pid), critique=False, skeptic=False, budget=budget)
+        except Exception as exc:
+            say(f"second {pid}: FAILED {type(exc).__name__}: {exc}")
+            traceback.print_exc()
+            PROG.update_one({"property_id": pid}, {"$set": {"second_error": f"{type(exc).__name__}: {exc}"[:400]}}, upsert=True)
+            return
+        b = res.budget or {}
+        try:
+            cost = float(b.get("planner_cost_usd") or 0) + float((b.get("run") or {}).get("total_cost_usd") or 0)
+        except Exception:
+            cost = 0.0
+        sources, seen = [], set()
+        for h in res.chunks[:80]:
+            sha = getattr(h, "artifact_sha", None)
+            if sha and sha not in seen:
+                seen.add(sha)
+                sources.append({"sha256": sha, "name": getattr(h, "display_name", None) or getattr(h, "filename", None), "date": getattr(h, "date", None)})
+        doc = {"property_id": pid, "address": prop.canonical_address, "model": agent.model, "question_version": "pm-v1",
+               "answer": res.answer, "open_items": list(res.open_items or []), "outcome": res.outcome, "steps": len(res.steps or []),
+               "elapsed_ms": res.elapsed_ms, "sources": sources[:60],
+               "budget": {k: b.get(k) for k in ("tool_calls_used", "max_tool_calls", "input_tokens", "output_tokens", "planner_cost_usd", "elapsed_s", "run")},
+               "cost_usd": round(cost, 2), "summary_row": summary.get(pid), "built_at": datetime.now(timezone.utc)}
+        coll.update_one({"property_id": pid}, {"$set": doc}, upsert=True)
+        mark(pid, "second", cost_usd=round(cost, 2), tool_calls=b.get("tool_calls_used"), secs=round(time.time() - t0), chars=len(res.answer or ""))
+        say(f"second {pid}: done — {b.get('tool_calls_used')} calls, ${cost:.2f}, {round(time.time()-t0)}s, {len(res.answer or '')} chars, outcome={res.outcome}")
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        list(pool.map(one, only))
+
+
+# ============================================== reconcile the two analysts
+RECONCILE_SYSTEM = ("You are the senior reviewer at a private lender. Two analysts (A and B) independently wrote a post-mortem of the "
+                    "same deal from the same files. You have both, plus the lender's reconciled workbook row, which is the accounting of "
+                    "record. Your job: the single truthful account for the CEO, and — above all — what the first analyst (A) missed or got "
+                    "wrong. Be concrete: names, dates, dollar figures as they appear in the analyses. Never invent. Plain English, short "
+                    "sentences, a CEO reading on a phone. Reply with JSON only — no prose, no code fence.")
+
+RECONCILE_PROMPT = """Return this JSON:
+{
+  "verdict": "good" | "mixed" | "bad",
+  "verdict_reason": "<= 20 words: the deciding fact",
+  "one_line": "<= 22 words: what the deal was and how it ended",
+  "what_happened": ["3 bullets, <= 20 words each, in order: funding -> what went on -> how RKB got paid (or not)"],
+  "mistakes": [{"text": "<= 20 words, the mistake and its cost or risk", "found_by": "both" | "A" | "B", "evidence": "<= 16 words: the document or date that shows it"}],
+  "went_right": ["up to 3 bullets, <= 18 words each"],
+  "missed_first_time": ["bullets, <= 24 words each: facts or mistakes B found that A missed, or A stated wrongly; [] if none. Say what A said vs what the files show"],
+  "disagreements": [{"topic": "<= 8 words", "a": "<= 18 words", "b": "<= 18 words", "resolution": "<= 20 words, which is better supported and why"}],
+  "money_check": "<= 30 words: does the documents' money trail match the workbook row; name any gap in dollars",
+  "lessons": ["3 to 4 bullets, <= 16 words each, rules phrased as instructions"]
+}
+Rules: "mistakes" holds up to 6, ordered by cost. Mark found_by honestly. Use the workbook row's figures for money. No citations like [#3]. No markdown.
+
+WORKBOOK ROW (accounting of record):
+{facts}
+
+ANALYST A:
+{a}
+
+ANALYST B:
+{b}
+"""
+
+
+def phase_reconcile(only: Optional[Sequence[str]] = None, workers: int = 4) -> None:
+    """One reconciled brief per deal from both post-mortems and the current
+    workbook row, written by Fable 5.1 as reviewer. Stored in ``deal_reconciled``;
+    the website prefers it over the single-analyst brief."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    summary = read_summary()
+    first = {d["property_id"]: d for d in mongo.db["deal_postmortems"].find({"answer": {"$ne": ""}}, {"_id": 0, "property_id": 1, "answer": 1})}
+    second = {d["property_id"]: d for d in mongo.db["deal_postmortems_second"].find({"answer": {"$ne": ""}}, {"_id": 0, "property_id": 1, "answer": 1})}
+    pids = [p for p in (only or list(first)) if p in first and p in second]
+    missing = [p for p in (only or list(first)) if p not in second]
+    if missing:
+        say(f"reconcile: no second opinion yet for {missing}")
+    coll = mongo.db["deal_reconciled"]
+    total = 0.0
+
+    def one(pid):
+        prompt = RECONCILE_PROMPT.replace("{facts}", facts_block(summary.get(pid))).replace("{a}", first[pid]["answer"]).replace("{b}", second[pid]["answer"])
+        data, cost = _brief_call(prompt, pid, system=RECONCILE_SYSTEM, effort="medium", max_tokens=20000)
+        coll.replace_one({"property_id": pid}, {"property_id": pid, **data, "model": SYNTHESIS_MODEL, "analysts": {"A": POSTMORTEM_MODEL, "B": SECOND_MODEL},
+                                                "cost_usd": round(cost, 3), "built_at": datetime.now(timezone.utc)}, upsert=True)
+        return pid, cost, len(data.get("missed_first_time") or [])
+
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        futs = [ex.submit(one, p) for p in pids]
+        for f in as_completed(futs):
+            try:
+                pid, cost, n_missed = f.result(); total += cost
+                say(f"reconcile {pid}: done ${cost:.2f}, {n_missed} missed-first-time items")
+            except Exception as e:  # noqa: BLE001
+                say(f"reconcile FAILED: {e}")
+    say(f"reconcile: {len(pids)} deals, ${total:.2f}")
+
+
+PORTFOLIO2_PROMPT = """You have, for each of a private lender's 29 sold deals, the reconciled brief (two analysts, reviewed) and the
+workbook totals. Write the CEO's dashboard JSON:
+{
+  "headline": "<= 22 words: the one sentence the CEO should remember",
+  "in_plain_words": ["4 to 5 bullets, <= 22 words each: what the money did overall (invested, collected, still owed, real return vs billed return)"],
+  "biggest_mistakes": ["6 bullets, <= 20 words each: the repeated mistakes ordered by money lost, each naming example deals in brackets"],
+  "missed_first_time": ["4 to 6 bullets, <= 24 words each: what the second analyst / review surfaced that the first analysis missed, naming deals"],
+  "what_worked": ["3 to 4 bullets, <= 18 words each, the controls that held, naming deals in brackets"],
+  "checklist": ["7 to 9 bullets, <= 14 words each, rules to apply before funding"],
+  "decisions": ["3 bullets, <= 22 words each: decisions for the CEO now"],
+  "verdict_changes": ["bullets: deals whose verdict changed after review, with the reason; [] if none"]
+}
+Counts over percentages; name deals; never invent. Use the workbook totals exactly as given. No markdown, no citations.
+
+WORKBOOK TOTALS:
+{totals}
+
+RECONCILED BRIEFS:
+{briefs}
+"""
+
+
+def phase_synthesis2() -> None:
+    """Portfolio brief rebuilt from the reconciled briefs (both analysts)."""
+    wb = mongo.db["deal_intel_workbook"].find_one({"kind": "sold_workbook"}) or {}
+    totals = "\n".join(f"{t.get('which')}: invested ${t.get('cash_invested',0):,.2f}; yield billed ${t.get('rkb_yield',0):,.2f}; total to collect ${t.get('total_to_collect',0):,.2f}; "
+                       f"collected ${t.get('cash_collected',0):,.2f}; excess/(shortage) ${t.get('excess_shortage',0):,.2f}" for t in wb.get("totals") or [])
+    recs = list(mongo.db["deal_reconciled"].find({}, {"_id": 0, "model": 0, "analysts": 0, "cost_usd": 0, "built_at": 0}))
+    rows = {r["property_id"]: r for r in wb.get("rows") or []}
+    parts = []
+    for r in recs:
+        row = rows.get(r["property_id"]) or {}
+        head = f"{row.get('label', r['property_id'])}: invested ${row.get('cash_invested') or 0:,.0f}, collected ${row.get('cash_collected') or 0:,.0f}, excess/(shortage) ${row.get('excess_shortage') or 0:,.0f}, {row.get('days_invested')} days"
+        parts.append(head + "\n" + json.dumps(r, ensure_ascii=False, default=str))
+    prompt = PORTFOLIO2_PROMPT.replace("{totals}", totals).replace("{briefs}", "\n\n".join(parts))
+    data, cost = _brief_call(prompt, "portfolio2", system=BRIEF_SYSTEM, effort="medium", max_tokens=20000)
+    mongo.db["deal_intel_reports"].replace_one({"kind": "sold_ceo_brief"}, {"kind": "sold_ceo_brief", **data, "model": SYNTHESIS_MODEL, "version": "v2-reconciled",
+                                                                            "deals": len(recs), "cost_usd": round(cost, 3), "built_at": datetime.now(timezone.utc)}, upsert=True)
+    say(f"synthesis2: {len(recs)} reconciled deals, ${cost:.2f}")
+
+
 # ======================================================= CEO briefs (short form)
 BRIEF_SYSTEM = ("You condense a lender's deal post-mortem for its CEO, who reads on a phone. Plain English, short sentences, "
                 "concrete names, dates and dollar figures from the text. Never invent; if the post-mortem does not say, leave it out. "
@@ -542,11 +705,11 @@ ANALYSIS:
 """
 
 
-def _brief_call(prompt: str, label: str) -> Tuple[Dict[str, Any], float]:
+def _brief_call(prompt: str, label: str, *, system: str = BRIEF_SYSTEM, effort: str = "low", max_tokens: int = 12000) -> Tuple[Dict[str, Any], float]:
     import anthropic
     client = anthropic.Anthropic(api_key=SETTINGS.anthropic_api_key, max_retries=3)
-    with client.messages.stream(model=SYNTHESIS_MODEL, max_tokens=12000, thinking={"type": "adaptive"}, output_config={"effort": "low"},
-                                system=BRIEF_SYSTEM, messages=[{"role": "user", "content": prompt}]) as stream:
+    with client.messages.stream(model=SYNTHESIS_MODEL, max_tokens=max_tokens, thinking={"type": "adaptive"}, output_config={"effort": effort},
+                                system=system, messages=[{"role": "user", "content": prompt}]) as stream:
         resp = stream.get_final_message()
     text = "".join(getattr(b, "text", "") for b in resp.content).strip()
     text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.S)
@@ -642,8 +805,9 @@ def main() -> int:
     ap.add_argument("--phase", default="all", help="store|extract|index|summaries|mail|timeline|postmortem|deals|synthesis|all")
     ap.add_argument("--only", default="", help="comma-separated property ids")
     ap.add_argument("--workers", type=int, default=3)
+    ap.add_argument("--force", action="store_true", help="re-run a stage even if marked done")
     args = ap.parse_args()
-    only = [p.strip() for p in args.only.split(",") if p.strip()] or SOLD_IDS
+    only = [p.strip() for p in args.only.split(",") if p.strip()] or (SOLD_IDS + ["9th_st_nw", "chita_ct"])
     phases = [p.strip() for p in args.phase.split(",")]
     if "all" in phases:
         phases = ["store", "extract", "index", "summaries", "mail", "timeline", "deals", "postmortem", "synthesis"]
@@ -660,6 +824,9 @@ def main() -> int:
         elif ph == "deals": phase_deals(); phase_workbook()
         elif ph == "workbook": phase_workbook()
         elif ph == "brief": phase_brief(only if args.only else None, workers=args.workers)
+        elif ph == "second": phase_second(only, workers=args.workers, force=args.force)
+        elif ph == "reconcile": phase_reconcile(only if args.only else None, workers=args.workers)
+        elif ph == "synthesis2": phase_synthesis2()
         elif ph == "postmortem": phase_postmortem(only, workers=min(args.workers, 2))
         elif ph == "synthesis": phase_synthesis()
         else: say(f"unknown phase {ph}")

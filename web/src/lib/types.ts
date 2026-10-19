@@ -18,11 +18,21 @@ export type SoldRow = {
   rkb_yield?: number | null; roi?: number | null; days_invested?: number | null; annualized_roi?: number | null;
   total_to_collect?: number | null; cash_collected?: number | null; excess_shortage?: number | null;
   property_id?: string | null; address: string; city?: string | null; state?: string | null;
-  verdict?: "good" | "mixed" | "bad" | null; reason?: string | null; one_line?: string | null; postmortem?: { built_at?: string; cost_usd?: number } | null;
+  verdict?: "good" | "mixed" | "bad" | null; reason?: string | null; one_line?: string | null; first_verdict?: string | null;
+  missed_first_time?: string[]; reviewed?: boolean; second_opinion?: boolean;
 };
-export type SoldBrief = { one_line?: string; verdict?: string; verdict_reason?: string; what_happened?: string[]; went_wrong?: string[]; went_right?: string[]; lessons?: string[] };
-export type SoldCeoBrief = { headline?: string; in_plain_words?: string[]; biggest_mistakes?: string[]; what_worked?: string[]; checklist?: string[]; decisions?: string[]; built_at?: string };
+export type SoldMistake = { text: string; found_by?: "both" | "A" | "B"; evidence?: string };
+export type SoldDisagreement = { topic: string; a: string; b: string; resolution: string };
+export type SoldBrief = {
+  one_line?: string; verdict?: string; verdict_reason?: string; what_happened?: string[]; went_wrong?: string[]; went_right?: string[]; lessons?: string[];
+  mistakes?: SoldMistake[]; missed_first_time?: string[]; disagreements?: SoldDisagreement[]; money_check?: string; reviewed?: boolean; analysts?: { A: string; B: string };
+};
+export type SoldCeoBrief = {
+  headline?: string; in_plain_words?: string[]; biggest_mistakes?: string[]; missed_first_time?: string[]; what_worked?: string[]; checklist?: string[];
+  decisions?: string[]; verdict_changes?: string[]; version?: string; built_at?: string;
+};
 export type SoldSection = { n: number; title: string; md: string; html: string };
+export type SoldPostmortem = { model?: string; built_at?: string; cost_usd?: number; tool_calls?: number; sections: SoldSection[]; sources: { sha256: string; name?: string; date?: string }[] };
 export type SoldPortfolio = {
   workbook: { file: string; sheet: string; file_mtime?: string; loaded_at?: string; header: string[] };
   totals_as_written: (Partial<SoldRow> & { which: string })[];
@@ -31,6 +41,7 @@ export type SoldPortfolio = {
     deals: number; advances: number; deals_cash_invested: number; deals_cash_collected: number; deals_yield_billed: number; deals_total_to_collect: number;
     deals_shortage_sum: number; deals_excess_sum: number; deals_cash_profit: number; deals_cash_profit_pct?: number | null; deals_yield_pct?: number | null;
     capital_weighted_days: number; billed_yield_annualised?: number | null; cash_profit_annualised?: number | null; advances_outstanding: number; still_to_collect_all: number;
+    principal_lost: number; deals_below_principal: number; reviewed: number; second_opinions: number;
   };
   verdict_counts: { good: number; mixed: number; bad: number };
   brief?: SoldCeoBrief | null;
@@ -38,8 +49,8 @@ export type SoldPortfolio = {
 };
 export type SoldDeal = {
   property_id: string; address: string; city?: string; state?: string; notes?: string;
-  row?: SoldRow | null; verdict?: "good" | "mixed" | "bad" | null; reason?: string | null; brief?: SoldBrief | null;
-  postmortem?: { model?: string; built_at?: string; cost_usd?: number; tool_calls?: number; sections: SoldSection[]; sources: { sha256: string; name?: string; date?: string }[] } | null;
+  row?: SoldRow | null; verdict?: "good" | "mixed" | "bad" | null; reason?: string | null; first_verdict?: string | null; brief?: SoldBrief | null;
+  postmortem?: SoldPostmortem | null; second?: SoldPostmortem | null;
   counts: { emails: number; attachments: number; files: number };
 };
 

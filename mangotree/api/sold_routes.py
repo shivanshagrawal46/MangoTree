@@ -86,12 +86,39 @@ def _pid_for(name: str) -> Optional[str]:
     return best
 
 
+ROW_KEYS = ("n", "label", "kind", "section", "investment_date", "received_date", "cash_invested", "points_billed", "interest_billed",
+            "extension_fee_billed", "rkb_yield", "roi", "days_invested", "annualized_roi", "total_to_collect", "cash_collected", "excess_shortage")
+BRIEF_KEYS = ("one_line", "verdict", "verdict_reason", "what_happened", "went_wrong", "went_right", "lessons")
+RECON_KEYS = BRIEF_KEYS + ("mistakes", "missed_first_time", "disagreements", "money_check", "analysts", "built_at")
+CEO_KEYS = ("headline", "in_plain_words", "biggest_mistakes", "missed_first_time", "what_worked", "checklist", "decisions", "verdict_changes", "version", "built_at")
+
+
+def _pm_view(pm: Optional[dict]) -> Optional[dict]:
+    if not pm:
+        return None
+    return {"model": pm.get("model"), "built_at": pm.get("built_at"), "cost_usd": pm.get("cost_usd"), "tool_calls": (pm.get("budget") or {}).get("tool_calls_used"),
+            "sections": _sections(pm.get("answer") or ""), "sources": pm.get("sources") or []}
+
+
 def install(app, mongo) -> None:
     wbk = mongo.db["deal_intel_workbook"]
     pms = mongo.db["deal_postmortems"]
-    reps = mongo.db["deal_intel_reports"]
+    pms2 = mongo.db["deal_postmortems_second"]
+    recon = mongo.db["deal_reconciled"]
     briefs = mongo.db["deal_briefs"]
-    BRIEF_KEYS = ("one_line", "verdict", "verdict_reason", "what_happened", "went_wrong", "went_right", "lessons")
+    reps = mongo.db["deal_intel_reports"]
+
+    def _deal_brief(pid: str, brief_by: dict, recon_by: dict) -> Optional[dict]:
+        """The reconciled (two-analyst) brief when it exists, else the single-analyst one.
+        `went_wrong` is derived from `mistakes` so the UI has one shape."""
+        r = recon_by.get(pid)
+        if r:
+            out = {k: r.get(k) for k in RECON_KEYS}
+            out["went_wrong"] = [m.get("text") for m in (r.get("mistakes") or []) if m.get("text")]
+            out["reviewed"] = True
+            return out
+        b = brief_by.get(pid)
+        return {**{k: b.get(k) for k in BRIEF_KEYS}, "reviewed": False} if b else None
 
     @app.get("/sold/portfolio")
     def sold_portfolio(user=CurrentUser):
@@ -100,19 +127,23 @@ def install(app, mongo) -> None:
             raise HTTPException(404, "the sold-properties workbook has not been loaded")
         syn = reps.find_one({"kind": "sold_portfolio_synthesis", "answer": {"$ne": ""}}, {"_id": 0}, sort=[("built_at", -1)])
         rank = _ranking((syn or {}).get("answer") or "")
-        have_pm = {d["property_id"]: {"built_at": d.get("built_at"), "cost_usd": d.get("cost_usd")} for d in pms.find({}, {"property_id": 1, "built_at": 1, "cost_usd": 1})}
         brief_by = {b["property_id"]: b for b in briefs.find({}, {"_id": 0})}
+        recon_by = {b["property_id"]: b for b in recon.find({}, {"_id": 0})}
+        second_ids = {d["property_id"] for d in pms2.find({"answer": {"$ne": ""}}, {"property_id": 1})}
         ceo = reps.find_one({"kind": "sold_ceo_brief"}, {"_id": 0})
         rows = []
         for r in wb["rows"]:
             pid = r.get("property_id")
             prop = PROPERTY_INDEX.get(pid) if pid else None
-            rows.append({**{k: r.get(k) for k in ("n", "label", "kind", "section", "investment_date", "received_date", "cash_invested", "points_billed", "interest_billed",
-                                                  "extension_fee_billed", "rkb_yield", "roi", "days_invested", "annualized_roi", "total_to_collect", "cash_collected", "excess_shortage")},
+            b = _deal_brief(pid, brief_by, recon_by) if pid else None
+            verdict = (b or {}).get("verdict") if (b or {}).get("reviewed") else ((rank.get(pid) or {}).get("verdict") if pid else None)
+            reason = (b or {}).get("verdict_reason") if (b or {}).get("reviewed") else ((rank.get(pid) or {}).get("reason") if pid else None)
+            rows.append({**{k: r.get(k) for k in ROW_KEYS},
                          "property_id": pid, "address": prop.canonical_address if prop else r.get("label"), "city": prop.city if prop else None, "state": prop.state if prop else None,
-                         "verdict": (rank.get(pid) or {}).get("verdict") if pid else None, "reason": (rank.get(pid) or {}).get("reason") if pid else None,
-                         "one_line": (brief_by.get(pid) or {}).get("one_line") if pid else None,
-                         "postmortem": have_pm.get(pid) if pid else None})
+                         "verdict": verdict, "reason": reason, "one_line": (b or {}).get("one_line"),
+                         "first_verdict": (rank.get(pid) or {}).get("verdict") if pid else None,
+                         "missed_first_time": (b or {}).get("missed_first_time") or [],
+                         "reviewed": bool((b or {}).get("reviewed")), "second_opinion": pid in second_ids})
         deals = [r for r in rows if r["kind"] == "deal"]
         inv = sum(r["cash_invested"] or 0 for r in deals); col = sum(r["cash_collected"] or 0 for r in deals)
         yld = sum(r["rkb_yield"] or 0 for r in deals)
@@ -130,11 +161,14 @@ def install(app, mongo) -> None:
             "cash_profit_annualised": ((col - inv) / inv) * 365 / wdays if inv and wdays else None,
             "advances_outstanding": sum(r["total_to_collect"] or 0 for r in rows if r["kind"] == "advance"),
             "still_to_collect_all": -sum(min(r["excess_shortage"] or 0, 0) for r in rows),
+            "principal_lost": -sum(min((r["cash_collected"] or 0) - (r["cash_invested"] or 0), 0) for r in deals),
+            "deals_below_principal": sum(1 for r in deals if (r["cash_collected"] or 0) < (r["cash_invested"] or 0) - 1),
+            "reviewed": sum(1 for r in deals if r["reviewed"]), "second_opinions": sum(1 for r in deals if r["second_opinion"]),
         }
         return {"workbook": {"file": wb.get("file"), "sheet": wb.get("sheet"), "file_mtime": wb.get("file_mtime"), "loaded_at": wb.get("built_at"), "header": wb.get("header")},
                 "totals_as_written": wb.get("totals"), "rows": rows, "derived": derived,
                 "verdict_counts": {v: sum(1 for r in deals if r["verdict"] == v) for v in ("good", "mixed", "bad")},
-                "brief": {k: ceo.get(k) for k in ("headline", "in_plain_words", "biggest_mistakes", "what_worked", "checklist", "decisions", "built_at")} if ceo else None,
+                "brief": {k: ceo.get(k) for k in CEO_KEYS} if ceo else None,
                 "synthesis": {"model": (syn or {}).get("model"), "built_at": (syn or {}).get("built_at"), "deals": (syn or {}).get("deals"),
                               "sections": _sections((syn or {}).get("answer") or "")} if syn else None}
 
@@ -146,14 +180,17 @@ def install(app, mongo) -> None:
         wb = wbk.find_one({"kind": "sold_workbook"}, {"_id": 0, "rows": 1}) or {}
         row = next((r for r in wb.get("rows") or [] if r.get("property_id") == pid), None)
         pm = pms.find_one({"property_id": pid}, {"_id": 0})
+        pm2 = pms2.find_one({"property_id": pid}, {"_id": 0})
         syn = reps.find_one({"kind": "sold_portfolio_synthesis", "answer": {"$ne": ""}}, {"_id": 0, "answer": 1}, sort=[("built_at", -1)])
-        rank = _ranking((syn or {}).get("answer") or "").get(pid)
-        brief = briefs.find_one({"property_id": pid}, {"_id": 0})
+        rank = _ranking((syn or {}).get("answer") or "").get(pid) or {}
+        b = _deal_brief(pid, {pid: briefs.find_one({"property_id": pid}, {"_id": 0}) or {}} if briefs.count_documents({"property_id": pid}) else {},
+                        {pid: recon.find_one({"property_id": pid}, {"_id": 0})} if recon.count_documents({"property_id": pid}) else {})
+        verdict = b.get("verdict") if b and b.get("reviewed") else rank.get("verdict")
+        reason = b.get("verdict_reason") if b and b.get("reviewed") else rank.get("reason")
         return {"property_id": pid, "address": prop.canonical_address, "city": prop.city, "state": prop.state, "notes": prop.notes,
-                "row": row, "verdict": (rank or {}).get("verdict"), "reason": (rank or {}).get("reason"),
-                "brief": {k: brief.get(k) for k in BRIEF_KEYS} if brief else None,
-                "postmortem": {"model": pm.get("model"), "built_at": pm.get("built_at"), "cost_usd": pm.get("cost_usd"), "tool_calls": (pm.get("budget") or {}).get("tool_calls_used"),
-                               "sections": _sections(pm.get("answer") or ""), "sources": pm.get("sources") or []} if pm else None,
+                "row": row, "verdict": verdict, "reason": reason, "first_verdict": rank.get("verdict"), "brief": b,
+                "postmortem": _pm_view(pm), "second": _pm_view(pm2),
                 "counts": {"emails": mongo.artifacts.count_documents({"source_type": "email", "property_ids": pid}),
                            "attachments": mongo.artifacts.count_documents({"source_type": "attachment", "property_ids": pid}),
                            "files": mongo.artifacts.count_documents({"source_type": "disk_file", "property_ids": pid})}}
+
