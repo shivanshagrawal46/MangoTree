@@ -1226,6 +1226,10 @@ _threading.Thread(target=lambda: (data.portfolio(mongo), _warm_caches()), daemon
 # own collection; nothing above is touched.
 from . import arv_routes  # noqa: E402
 arv_routes.install(app, mongo, jobs)
+# Sold deals — Deal Intelligence (2026-10-19): the summary workbook verbatim, a
+# cited post-mortem per deal and the cross-deal analysis. Own module; read-only.
+from . import sold_routes  # noqa: E402
+sold_routes.install(app, mongo)
 # Notes analysis (2026-10-16): market research behind a note portfolio (ZIP,
 # metro and Texas price history and five-year outlook, rates, note-level risk),
 # served from JSON datasets to the web Notes section. Own module; nothing above

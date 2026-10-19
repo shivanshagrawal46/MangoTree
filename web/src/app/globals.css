@@ -1,4 +1,4 @@
-@import "tailwindcss";
+﻿@import "tailwindcss";
 
 /* ------------------------------------------------------------------------
    MangoTree design tokens.
@@ -14,7 +14,7 @@
   --fg-faint: #9a9aa6;
   --line: #e6e3dc;
   --line-strong: #d3cfc5;
-  --accent: #1f6f5f;          /* mango leaf — the one brand colour */
+  --accent: #1f6f5f;          /* mango leaf â€” the one brand colour */
   --accent-soft: #e3f1ec;
   --critical: #c2410c;
   --critical-soft: #fff1ea;
@@ -119,6 +119,14 @@ body {
 
 /* thin scrollbars */
 * { scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+
+/* sold-deal post-mortem / synthesis sections (server-rendered markdown) */
+.sold-md h3, .sold-md h4 { font-size: 0.95em; font-weight: 600; margin: 0.8rem 0 0.25rem; }
+.sold-md ol { margin: 0.4rem 0 0.4rem 1.2rem; list-style: decimal; }
+.sold-md table { width: 100%; border-collapse: collapse; font-size: 0.92em; margin: 0.5rem 0; }
+.sold-md th { text-align: left; font-size: 0.78em; text-transform: uppercase; letter-spacing: 0.04em; color: var(--fg-muted); padding: 0.35rem 0.5rem; border-bottom: 1px solid var(--line); }
+.sold-md td { padding: 0.35rem 0.5rem; border-bottom: 1px solid color-mix(in srgb, var(--line) 60%, transparent); vertical-align: top; }
+.sold-md blockquote { border-left: 3px solid var(--accent); margin: 0.4rem 0; padding: 0.2rem 0.7rem; color: var(--fg-muted); }
 
 /* prose for answers */
 .prose-mt p { margin: 0.4rem 0; line-height: 1.55; }

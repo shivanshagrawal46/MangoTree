@@ -507,6 +507,46 @@ def phase_deals() -> None:
     say(f"deals: {len(summary)} records written from the workbook")
 
 
+# ============================================================ workbook, verbatim
+def phase_workbook() -> None:
+    """The summary workbook, row for row, into ``deal_intel_workbook`` — deal rows,
+    advance rows and the sheet's own Total / Grand Total rows exactly as written —
+    so the website shows RKB's accounting of record, not a recomputation."""
+    import openpyxl
+    wb = openpyxl.load_workbook(SUMMARY_XLSX, data_only=True)
+    ws = wb.worksheets[0]
+    cols = ["n", "label", "investment_date", "received_date", "_", "cash_invested", "points_billed", "interest_billed", "extension_fee_billed",
+            "rkb_yield", "roi", "days_invested", "annualized_roi", "total_to_collect", "cash_collected", "excess_shortage"]
+    rows, totals, header = [], [], None
+    section = "paid_from_sale"
+    for r in ws.iter_rows(values_only=True):
+        c = list(r) + [None] * 16
+        if header is None and c[1] == "Property Address":
+            header = [str(x) for x in c[:16]]
+            continue
+        if header is None:
+            continue
+        label = str(c[1] or "").strip()
+        if not label:
+            continue
+        if label.startswith("LP sold and kept"):
+            section = "lp_sold_kept_cash"
+            continue
+        rec = {k: c[i] for i, k in enumerate(cols) if k != "_"}
+        rec["section"] = section
+        if label in ("Total", "Grand Total"):
+            rec["which"] = "grand" if label == "Grand Total" else section
+            totals.append(rec)
+            continue
+        rec["kind"] = "advance" if label.startswith("Advance against") else "deal"
+        rec["property_id"] = next((p for k, p in _ADDR_TO_PID.items() if label.startswith(k)), None)
+        rows.append(rec)
+    doc = {"kind": "sold_workbook", "file": SUMMARY_XLSX.name, "sheet": ws.title, "file_mtime": datetime.fromtimestamp(SUMMARY_XLSX.stat().st_mtime, tz=timezone.utc),
+           "header": header, "rows": rows, "totals": totals, "built_at": datetime.now(timezone.utc)}
+    mongo.db["deal_intel_workbook"].replace_one({"kind": "sold_workbook"}, doc, upsert=True)
+    say(f"workbook: {len(rows)} rows ({sum(1 for r in rows if r['kind']=='deal')} deals, {sum(1 for r in rows if r['kind']=='advance')} advances), {len(totals)} total rows stored verbatim")
+
+
 # ======================================================================= main
 def main() -> int:
     ap = argparse.ArgumentParser()
@@ -528,7 +568,8 @@ def main() -> int:
         elif ph == "summaries": phase_summaries()
         elif ph == "mail": phase_mail(only)
         elif ph == "timeline": phase_timeline(only)
-        elif ph == "deals": phase_deals()
+        elif ph == "deals": phase_deals(); phase_workbook()
+        elif ph == "workbook": phase_workbook()
         elif ph == "postmortem": phase_postmortem(only, workers=min(args.workers, 2))
         elif ph == "synthesis": phase_synthesis()
         else: say(f"unknown phase {ph}")

@@ -10,6 +10,36 @@ export type PortalStep = {
   step_id: string; index: number; title: string; detail: string; due?: string | null; urgency: "critical" | "high";
   first_seen?: string | null; carried_days?: number; replies: PortalReply[]; reported_done: boolean;
 };
+// ---- Sold deals (Deal Intelligence) ----
+export type SoldRow = {
+  n?: number | null; label: string; kind: "deal" | "advance"; section: "paid_from_sale" | "lp_sold_kept_cash";
+  investment_date?: string | null; received_date?: string | null;
+  cash_invested?: number | null; points_billed?: number | null; interest_billed?: number | null; extension_fee_billed?: number | null;
+  rkb_yield?: number | null; roi?: number | null; days_invested?: number | null; annualized_roi?: number | null;
+  total_to_collect?: number | null; cash_collected?: number | null; excess_shortage?: number | null;
+  property_id?: string | null; address: string; city?: string | null; state?: string | null;
+  verdict?: "good" | "mixed" | "bad" | null; reason?: string | null; postmortem?: { built_at?: string; cost_usd?: number } | null;
+};
+export type SoldSection = { n: number; title: string; md: string; html: string };
+export type SoldPortfolio = {
+  workbook: { file: string; sheet: string; file_mtime?: string; loaded_at?: string; header: string[] };
+  totals_as_written: (Partial<SoldRow> & { which: string })[];
+  rows: SoldRow[];
+  derived: {
+    deals: number; advances: number; deals_cash_invested: number; deals_cash_collected: number; deals_yield_billed: number; deals_total_to_collect: number;
+    deals_shortage_sum: number; deals_excess_sum: number; deals_cash_profit: number; deals_cash_profit_pct?: number | null; deals_yield_pct?: number | null;
+    capital_weighted_days: number; billed_yield_annualised?: number | null; cash_profit_annualised?: number | null; advances_outstanding: number; still_to_collect_all: number;
+  };
+  verdict_counts: { good: number; mixed: number; bad: number };
+  synthesis?: { model?: string; built_at?: string; deals?: number; sections: SoldSection[] } | null;
+};
+export type SoldDeal = {
+  property_id: string; address: string; city?: string; state?: string; notes?: string;
+  row?: SoldRow | null; verdict?: "good" | "mixed" | "bad" | null; reason?: string | null;
+  postmortem?: { model?: string; built_at?: string; cost_usd?: number; tool_calls?: number; sections: SoldSection[]; sources: { sha256: string; name?: string; date?: string }[] } | null;
+  counts: { emails: number; attachments: number; files: number };
+};
+
 export type PortalTask = {
   task_id: string; title: string; priority: "critical" | "high" | "normal" | "low"; due?: string | null; created_at?: string;
   property_id?: string | null; address?: string | null; replies: PortalReply[]; reported_done?: { at: string; by?: string; note?: string } | null;
