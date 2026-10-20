@@ -15,13 +15,14 @@ import { Button, Card, Dialog, DialogContent, Input } from "@/components/arv/ui"
 import { cn, money, fmtDate } from "@/lib/utils";
 import { arvApi, SOURCE_LABEL, num, pct, signed, type AnalysisDoc, type Comp } from "@/lib/arv";
 import { CONDITION_OPTIONS, H, NumField, Pill, SelectField } from "./bits";
+import { CompEvidence, CompFeedPills, ConditionSource, ShortlistPanel } from "./feeds-ui";
 
 const CompMap = dynamic(() => import("./comp-map"), { ssr: false, loading: () => <div className="h-[420px] rounded-xl bg-sunken animate-pulse" /> });
 
-export type TabProps = { doc: AnalysisDoc; patch: (body: Parameters<typeof arvApi.patch>[1]) => Promise<void>; setDoc: (d: AnalysisDoc) => void; saving: boolean; running: boolean };
+export type TabProps = { doc: AnalysisDoc; patch: (body: Parameters<typeof arvApi.patch>[1]) => Promise<void>; setDoc: (d: AnalysisDoc) => void; saving: boolean; running: boolean; onRerun?: (stages: string[]) => void };
 type Note = NonNullable<AnalysisDoc["analysis"]>["comp_notes"][number];
 
-export function CompsTab({ doc, patch, setDoc, saving, running }: TabProps) {
+export function CompsTab({ doc, patch, setDoc, saving, running, onRerun }: TabProps) {
   const [hover, setHover] = React.useState<string | null>(null);
   const [open, setOpen] = React.useState<string[]>([]);
   const [showAll, setShowAll] = React.useState(false);
@@ -54,6 +55,7 @@ export function CompsTab({ doc, patch, setDoc, saving, running }: TabProps) {
           <div className="flex flex-wrap items-center gap-1 mt-0.5">
             <Pill tone={c.source === "web" ? "high" : c.source === "manual" || c.source === "document" ? "info" : "neutral"}>{SOURCE_LABEL[c.source] || c.source}</Pill>
             {c.price_basis !== "closed" && <Pill tone="high">{c.price_basis} price</Pill>}
+            <CompFeedPills c={c} />
             {c.forced && <Pill tone="critical"><Lock size={9} /> forced in</Pill>}
             {n && <Pill tone={n.verdict === "drop" ? "critical" : n.verdict === "caution" ? "high" : "good"}>analyst: {n.verdict}</Pill>}
             {a?.flags?.map((f, i) => <Pill key={i} tone="high">{f}</Pill>)}
@@ -72,6 +74,7 @@ export function CompsTab({ doc, patch, setDoc, saving, running }: TabProps) {
       <span onClick={(e) => e.stopPropagation()}>
         <Select size="small" value={c.condition || ""} disabled={busy} onChange={(val) => setCond(c, val)} popupMatchSelectWidth={false} className="!w-[72px]"
           options={[{ value: "", label: "C3?" }, ...CONDITION_OPTIONS.map(([val]) => ({ value: val, label: val }))]} />
+        <ConditionSource c={c} />
       </span>
     ) },
     { title: "Fit", key: "fit", align: "right", width: 54, sorter: (a, b) => (a.similarity || 0) - (b.similarity || 0), render: (_, c) => <span className="tnum">{c.similarity ?? "—"}</span> },
@@ -89,6 +92,7 @@ export function CompsTab({ doc, patch, setDoc, saving, running }: TabProps) {
 
   return (
     <div className="space-y-4">
+      <ShortlistPanel doc={doc} onRerun={onRerun} running={busy} />
       <div className="grid gap-4 xl:grid-cols-[1fr_1.35fr]">
         <Card className="p-3">
           <CompMap subject={{ lat: doc.geocode?.lat ?? doc.subject.lat, lon: doc.geocode?.lon ?? doc.subject.lon, address: doc.geocode?.formatted || doc.subject.address }} comps={comps} hovered={hover} onHover={setHover} onSelect={(id) => setOpen((o) => (o.includes(id) ? o : [...o, id]))} height={440} />
@@ -127,7 +131,7 @@ export function CompsTab({ doc, patch, setDoc, saving, running }: TabProps) {
         {rest.length > 0 && (
           <div className="border-t border-line">
             <button onClick={() => setShowAll((x) => !x)} className="w-full text-left px-4 py-2.5 text-xs text-muted hover:bg-sunken flex items-center gap-2">
-              {showAll ? "▾" : "▸"} {rest.length} more candidate{rest.length === 1 ? "" : "s"} not used — distance, age of sale, size or type ruled them out; include one to force it in
+              {showAll ? "▾" : "▸"} {rest.length} more candidate{rest.length === 1 ? "" : "s"} not used — {doc.shortlist ? "set aside by the analyst, or ruled out by distance, age of sale, size or type" : "distance, age of sale, size or type ruled them out"}; include one to force it in
             </button>
             {showAll && table(rest, true)}
           </div>
@@ -160,7 +164,8 @@ function CompDetail({ c, note, onRemove, busy }: { c: Comp; note?: Note; onRemov
       </div>
       <div className="space-y-2">
         {c.deductions?.length ? <div><div className="text-[11px] uppercase tracking-wide text-muted font-medium mb-1">Why the fit is {c.similarity}/100</div><ul className="space-y-0.5 text-muted">{c.deductions.map((d, i) => <li key={i}>−{d.points} {d.reason}</li>)}</ul></div> : null}
-        {note && <div className="rounded-lg border border-line bg-elev p-2.5"><div className="text-[11px] uppercase tracking-wide text-muted font-medium mb-1">Analyst</div><div>{note.note}</div>{note.suggested_adjustments?.length ? <ul className="mt-1 text-muted">{note.suggested_adjustments.map((sa, i) => <li key={i}>• {sa.label}: {signed(sa.amount)} — {sa.why}</li>)}</ul> : null}</div>}
+        <CompEvidence c={c} />
+        {note && <div className="rounded-lg border border-line bg-elev p-2.5"><div className="text-[11px] uppercase tracking-wide text-muted font-medium mb-1">Analyst review</div><div>{note.note}</div>{note.suggested_adjustments?.length ? <ul className="mt-1 text-muted">{note.suggested_adjustments.map((sa, i) => <li key={i}>• {sa.label}: {signed(sa.amount)} — {sa.why}</li>)}</ul> : null}</div>}
         {c.note && <div className="text-muted">{c.note}</div>}
         <div className="flex items-center gap-2 text-[11px] text-faint">
           {c.lot_sqft ? <span>lot {num(c.lot_sqft)} sqft</span> : null}{c.garage_spaces !== null && c.garage_spaces !== undefined ? <span>· garage {c.garage_spaces}</span> : null}{c.basement && c.basement !== "unknown" ? <span>· basement {c.basement}</span> : null}{c.dom ? <span>· {c.dom} DOM</span> : null}

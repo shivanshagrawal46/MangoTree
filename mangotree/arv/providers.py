@@ -164,7 +164,7 @@ def dedupe(comps: List[Dict[str, Any]], subject: Dict[str, Any]) -> List[Dict[st
     price over listed, data feed over web), merge what the other knew."""
     seen: Dict[str, Dict[str, Any]] = {}
     rank = {"closed": 2, "listed": 1, "estimated": 0}
-    srank = {"manual": 3, "document": 3, "rentcast": 2, "attom": 2, "web": 1}
+    srank = {"manual": 3, "document": 3, "reapi": 2, "rentcast": 2, "attom": 2, "web": 1}
     out: List[Dict[str, Any]] = []
     for c in comps:
         key = " ".join(str(c.get("address") or "").lower().replace(",", " ").split())[:40]

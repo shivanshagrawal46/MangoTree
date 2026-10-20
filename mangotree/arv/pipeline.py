@@ -14,7 +14,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from mangotree.core.logging import logger
 
-from . import analyst, config as cfg, engine, market as market_mod, providers, rehab as rehab_mod
+from . import analyst, config as cfg, engine, feeds, market as market_mod, providers, rehab as rehab_mod
 from .geocode import GeocodeError, geocode
 from .store import ArvStore
 
@@ -81,10 +81,17 @@ def as_repaired(subject: Dict[str, Any]) -> Dict[str, Any]:
 def new_document(*, subject: Dict[str, Any], assumptions: Dict[str, Any], rehab: Dict[str, Any], settings: Dict[str, Any], user: Dict[str, Any],
                  property_id: Optional[str] = None, label: Optional[str] = None) -> Dict[str, Any]:
     st = {"use_rentcast": bool(cfg.RENTCAST_API_KEY), "use_web_search": True, "radius_mi": cfg.COMP_RADIUS_MILES, "months": cfg.COMP_MONTHS,
-          "target": cfg.COMP_TARGET, "run_analyst": True, "web_searches": 10}
+          "target": cfg.COMP_TARGET, "run_analyst": True, "web_searches": 10,
+          # 2026-10-20: recorded sales + subject file (RealEstateAPI), analyst shortlist, HouseCanary condition on the shortlist
+          "use_reapi": bool(cfg.REALESTATEAPI_KEY), "use_shortlist": True, "shortlist_size": cfg.SHORTLIST_SIZE,
+          "use_housecanary": bool(cfg.HOUSECANARY_API_KEY and cfg.HOUSECANARY_API_SECRET)}
     st.update({k: v for k, v in (settings or {}).items() if v is not None})
     if not cfg.RENTCAST_API_KEY:
         st["use_rentcast"] = False
+    if not cfg.REALESTATEAPI_KEY:
+        st["use_reapi"] = False
+    if not (cfg.HOUSECANARY_API_KEY and cfg.HOUSECANARY_API_SECRET):
+        st["use_housecanary"] = False
     return {"analysis_id": ArvStore.new_id(), "status": "queued", "created_by": user.get("user_id"), "created_by_name": user.get("name"),
             "property_id": property_id, "label": label, "subject_input": clean_subject(subject), "subject": clean_subject(subject),
             "assumptions": dict(assumptions or {}), "rehab": dict(rehab or {}), "settings": st, "comps": [], "documents": [], "answers": [], "chat": [],
@@ -136,6 +143,106 @@ def recompute(doc: Dict[str, Any]) -> Dict[str, Any]:
     doc["underwriting"] = engine.underwrite(arv, doc["rehab_budget"]["total"], a, state=state, sqft=sqft or None, market=doc.get("market"))
     doc["computed_at"] = datetime.now(timezone.utc).isoformat()
     return doc
+
+
+def _shortlist_and_verify(doc: Dict[str, Any], store: ArvStore, emit: Optional[Emit], say, partial, sources: set, *, radius: float, months: int) -> None:
+    """Rules pick the eligible candidates and rank them; Opus 5.5 chooses the
+    best few from the top of that list using deed and MLS evidence; HouseCanary
+    then verifies only those few plus the subject (condition grade, living
+    area, recorded sale). Every step is optional and failure-tolerant."""
+    st = doc.get("settings") or {}
+    subj = as_repaired(doc["subject"])
+    size = int(st.get("shortlist_size") or cfg.SHORTLIST_SIZE)
+    comps = doc.get("comps") or []
+    for c in comps:  # a fresh run forgets the last run's picks
+        c.pop("ai_pick", None)
+        c.pop("ai_rank", None)
+        c.pop("ai_reason", None)
+    pool: List[Dict[str, Any]] = []
+    label = "Analyst shortlist (Opus 5.5)"
+    if st.get("use_shortlist", True) and comps:
+        _phase(doc, emit, "shortlist", label, "running")
+        try:
+            sel = engine.select(subj, comps, radius=radius, months=months, target=max(size, 3))
+            ranked = sorted([c for c in comps if not c.get("fails") and c.get("included") is not False], key=lambda c: -(c.get("similarity") or 0))
+            pool = ranked[:max(cfg.SHORTLIST_POOL, size)]
+            # Fit alone favours the nearest cheap deeds; the renovated resales the ARV needs are often a street
+            # further or a size band away. Add the best-priced closed sales so the model sees both tiers.
+            closed = sorted([c for c in ranked if c.get("price_basis") == "closed" and c not in pool], key=lambda c: -(c.get("sale_price") or 0))
+            top_price = max([c.get("sale_price") or 0 for c in ranked if c.get("price_basis") == "closed"] or [0])
+            pool += [c for c in closed if (c.get("sale_price") or 0) >= 0.5 * top_price][:6]
+            # Deed and MLS history for the pool, so the model can tell a renovated resale from an auction.
+            if st.get("use_reapi") and cfg.REALESTATEAPI_KEY:
+                for c in pool:
+                    if c.get("evidence") is None:
+                        try:
+                            feeds.reapi_evidence(c)
+                        except Exception as exc:
+                            logger.info("reapi evidence %r: %s", c.get("address"), exc)
+                pool = [c for c in pool if c.get("arms_length") is not False] or pool
+            if len(pool) > size:
+                out = analyst.shortlist(subj, pool, size=size, emit=say)
+                doc["shortlist"] = out
+                doc["cost_usd"] = round(float(doc.get("cost_usd") or 0) + float((out.get("usage") or {}).get("total_cost_usd") or 0), 4)
+                _phase(doc, emit, "shortlist", label, "done", "%d chosen from %d candidates (%d qualified of %d)" % (len(out["picks"]), len(pool), sel["qualified"], sel["candidates"]))
+            else:
+                for i, c in enumerate(pool):
+                    c["ai_pick"], c["ai_rank"], c["ai_reason"] = True, i + 1, "one of the only %d qualifying sales" % len(pool)
+                doc["shortlist"] = {"picks": [{"comp_id": c["comp_id"], "rank": c["ai_rank"], "reason": c["ai_reason"], "address": c.get("address")} for c in pool], "rejected": [],
+                                    "notes": "Only %d sale(s) qualified, so all of them are used; there was no choice to make." % len(pool), "size": size, "candidates": len(pool)}
+                _phase(doc, emit, "shortlist", label, "done", "only %d qualifying sale(s); all kept" % len(pool))
+        except Exception as exc:
+            logger.warning("shortlist: %s", exc)
+            _phase(doc, emit, "shortlist", label, "failed", str(exc)[:160])
+        partial("shortlist", doc.get("shortlist"))
+    else:
+        _phase(doc, emit, "shortlist", label, "skipped", "switched off")
+    picks = [c for c in comps if c.get("ai_pick")] or pool[:size]
+    hlabel = "HouseCanary: condition grade and verified facts"
+    if st.get("use_housecanary") and cfg.HOUSECANARY_API_KEY and cfg.HOUSECANARY_API_SECRET and picks:
+        _phase(doc, emit, "housecanary", hlabel, "running")
+        try:
+            subject_addr = (doc.get("geocode") or {}).get("formatted") or doc["subject"].get("address")
+            addrs = [subject_addr] + [c.get("address") for c in picks if c.get("address")]
+            res = feeds.hc_enrich(addrs)
+            by = res["by_address"]
+            changed = {}
+            for c in picks:
+                hc = by.get(c.get("address"))
+                if hc:
+                    ch = feeds.apply_hc_to_comp(c, hc)
+                    if ch:
+                        changed[c.get("address")] = ch
+            sub_hc = by.get(subject_addr)
+            if sub_hc and sub_hc.get("match"):
+                facts = {k: sub_hc.get(k) for k in ("property_type", "beds", "baths", "sqft", "lot_sqft", "year_built", "stories", "garage_spaces", "basement", "pool")}
+                before_fill = set(doc["subject"].get("filled_from_records") or [])
+                doc["subject"] = merge_records(doc["subject"], facts)
+                doc["subject"]["filled_from_records"] = sorted(before_fill | set(doc["subject"].get("filled_from_records") or []))
+                if doc["subject"].get("condition_current") is None and sub_hc.get("condition"):
+                    doc["subject"]["condition_current"] = sub_hc["condition"]
+                    fs = dict(doc["subject"].get("fact_sources") or {})
+                    fs["condition_current"] = "HouseCanary condition grade"
+                    doc["subject"]["fact_sources"] = fs
+            doc["housecanary"] = {"subject": sub_hc, "comps": {c["comp_id"]: c.get("hc") for c in picks if c.get("hc")}, "changed": changed, "errors": res.get("errors"),
+                                  "cost_usd": res.get("cost_usd"), "billed_properties": res.get("billed_properties"), "at": datetime.now(timezone.utc).isoformat()}
+            doc["data_cost_usd"] = round(float(doc.get("data_cost_usd") or 0) + float(res.get("cost_usd") or 0), 2)
+            sources.add("housecanary")
+            graded = sum(1 for c in picks if c.get("condition_source") == "housecanary" or c.get("condition_hc"))
+            detail = "%d of %d comps graded%s; subject %s; $%.2f" % (graded, len(picks), (", subject %s" % sub_hc["condition"]) if sub_hc and sub_hc.get("condition") else "",
+                                                                   "matched" if sub_hc and sub_hc.get("match") else "not matched", float(res.get("cost_usd") or 0))
+            if res.get("errors"):
+                detail += "; " + "; ".join(res["errors"][:2])
+            _phase(doc, emit, "housecanary", hlabel, "done", detail)
+        except Exception as exc:
+            logger.warning("housecanary: %s", exc)
+            _phase(doc, emit, "housecanary", hlabel, "failed", str(exc)[:160])
+        partial("subject", doc["subject"])
+        partial("housecanary", doc.get("housecanary"))
+    elif picks:
+        _phase(doc, emit, "housecanary", hlabel, "skipped", "no HouseCanary credentials" if not cfg.HOUSECANARY_API_KEY else "switched off")
+    partial("comps", comps)
+    store.save(doc)
 
 
 def run(doc: Dict[str, Any], store: ArvStore, emit: Optional[Emit] = None, *, stages: Optional[List[str]] = None) -> Dict[str, Any]:
@@ -193,6 +300,34 @@ def run(doc: Dict[str, Any], store: ArvStore, emit: Optional[Emit] = None, *, st
                 partial("records", doc.get("records"))
             else:
                 _phase(doc, emit, "records", "Public records", "skipped", "no RentCast key — using what was entered")
+            if st.get("use_reapi") and cfg.REALESTATEAPI_KEY:
+                label = "Property file (RealEstateAPI): deeds, mortgages, MLS history"
+                _phase(doc, emit, "profile", label, "running")
+                try:
+                    prof = feeds.reapi_profile(doc["geocode"]["formatted"])
+                    doc["profile"] = prof
+                    if prof:
+                        doc["subject"] = merge_records(doc["subject"], prof.get("facts") or {})
+                        if not doc.get("records"):
+                            ls = prof.get("last_sale") or {}
+                            tax = prof.get("tax") or {}
+                            doc["records"] = {"source": "realestateapi", "formatted_address": prof.get("address"), "last_sale_price": ls.get("price"), "last_sale_date": ls.get("date"),
+                                              "tax_annual": tax.get("annual"), "tax_year": tax.get("year"), "assessed_value": tax.get("assessed_value"),
+                                              "zoning": (prof.get("facts") or {}).get("zoning")}
+                        sources.add("realestateapi")
+                        m = prof.get("mortgages") or []
+                        first = (" ($%s %s)" % (format(int(m[0]["amount"]), ","), m[0].get("lender") or "")) if m and m[0].get("amount") else ""
+                        _phase(doc, emit, "profile", label, "done", "%d deed event(s), %d open mortgage(s)%s, MLS %s; filled %s" % (
+                            len(prof.get("sale_history") or []), len(m), first, (prof.get("mls") or {}).get("status") or "none",
+                            ", ".join(doc["subject"].get("filled_from_records") or []) or "nothing new"))
+                    else:
+                        _phase(doc, emit, "profile", label, "done", "no record for this address")
+                except Exception as exc:
+                    logger.warning("reapi profile: %s", exc)
+                    _phase(doc, emit, "profile", label, "failed", str(exc)[:160])
+                partial("subject", doc["subject"])
+                partial("records", doc.get("records"))
+                partial("profile", doc.get("profile"))
             store.save(doc)
 
         # ----------------------------------------------------------- market
@@ -234,6 +369,20 @@ def run(doc: Dict[str, Any], store: ArvStore, emit: Optional[Emit] = None, *, st
                 partial("avm", doc.get("avm"))
             else:
                 _phase(doc, emit, "avm", "RentCast value and comparables", "skipped", "no RentCast key")
+            if st.get("use_reapi") and cfg.REALESTATEAPI_KEY:
+                _phase(doc, emit, "reapi", "Recorded sales nearby (RealEstateAPI)", "running")
+                try:
+                    rs = feeds.reapi_comps(doc["geocode"]["formatted"], doc["subject"], radius_mi=radius, months=months, max_results=30)
+                    found.extend(rs["comps"])
+                    doc["reapi_comps"] = {"found": len(rs["comps"]), "set_aside": rs["set_aside"], "avm": rs.get("avm"), "warning": rs.get("warning"), "returned": rs.get("returned")}
+                    if rs.get("avm") and not doc.get("avm"):
+                        doc["avm"] = dict(rs["avm"], as_of=datetime.now(timezone.utc).date().isoformat(), note="RealEstateAPI model value for the property as it stands (not as repaired).")
+                    sources.add("realestateapi")
+                    _phase(doc, emit, "reapi", "Recorded sales nearby (RealEstateAPI)", "done",
+                           "%d recorded sale(s) within %.1f mi / %d months; %d transfer(s) set aside (no market price)" % (len(rs["comps"]), radius, months, len(rs["set_aside"])))
+                except Exception as exc:
+                    logger.warning("reapi comps: %s", exc)
+                    _phase(doc, emit, "reapi", "Recorded sales nearby (RealEstateAPI)", "failed", str(exc)[:160])
             if st.get("use_web_search", True):
                 _phase(doc, emit, "web", "AI web search for recent sales", "running")
                 try:
@@ -254,6 +403,11 @@ def run(doc: Dict[str, Any], store: ArvStore, emit: Optional[Emit] = None, *, st
             doc["comps"] = providers.dedupe(keep + found, doc["subject"])
             partial("comps", doc["comps"])
             store.save(doc)
+            _shortlist_and_verify(doc, store, emit, say, partial, sources, radius=radius, months=months)
+        elif "shortlist" in stages:
+            # Re-pick from the comps already on file (no new search): the analyst shortlist and HouseCanary again.
+            radius, months = float(st.get("radius_mi") or cfg.COMP_RADIUS_MILES), int(st.get("months") or cfg.COMP_MONTHS)
+            _shortlist_and_verify(doc, store, emit, say, partial, sources, radius=radius, months=months)
 
         # ---------------------------------------------------------- compute
         _phase(doc, emit, "compute", "Score, adjust, reconcile, underwrite", "running")

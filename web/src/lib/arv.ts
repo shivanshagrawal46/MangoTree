@@ -43,14 +43,44 @@ export type Geocode = { provider: string; formatted: string; matched_address?: s
 export type AdjLine = { key: string; label: string; amount: number; why: string; rate?: number | null };
 export type Adjustment = { lines: AdjLine[]; net: number; gross: number; net_pct: number; gross_pct: number; adjusted_price: number; adjusted_ppsf?: number | null; flags: string[] };
 export type Comp = {
-  comp_id: string; source: "rentcast" | "web" | "manual" | "attom" | "document"; address?: string | null; lat?: number | null; lon?: number | null; distance_mi?: number | null;
+  comp_id: string; source: "rentcast" | "web" | "manual" | "attom" | "document" | "reapi"; address?: string | null; lat?: number | null; lon?: number | null; distance_mi?: number | null;
   sale_price?: number | null; sale_date?: string | null; price_basis: "closed" | "listed" | "estimated"; listing_price?: number | null; dom?: number | null;
   property_type?: PropertyType | null; beds?: number | null; baths?: number | null; sqft?: number | null; lot_sqft?: number | null; year_built?: number | null;
   garage_spaces?: number | null; basement?: Basement; pool?: boolean | null; condition?: Condition | null; url?: string | null; note?: string | null;
   included?: boolean | null; manual_adjustments?: { label: string; amount: number; why?: string }[];
   similarity?: number; deductions?: { points: number; reason: string }[]; fails?: string[]; selected?: boolean; forced?: boolean; weight?: number;
   months_since_sale?: number | null; adjustment?: Adjustment | null;
+  // 2026-10-20 feeds: analyst shortlist, RealEstateAPI evidence, HouseCanary grade
+  ai_pick?: boolean | null; ai_rank?: number | null; ai_reason?: string | null;
+  condition_source?: "housecanary" | "analyst" | "manual" | "document" | null; condition_hc?: Condition | null;
+  arms_length?: boolean | null; price_verified?: string | null;
+  evidence?: CompEvidence | null; hc?: HcFacts | null; hc_sale?: { date?: string | null; price?: number | null; event?: string } | null;
 };
+export type DeedEvent = { date?: string | null; recorded?: string | null; price?: number | null; arms_length?: boolean | null; transaction_type?: string | null; document_type?: string | null;
+  buyer?: string | null; seller?: string | null; purchase_method?: string | null; ltv?: number | null; prior_owner_months?: number | null };
+export type MlsEvent = { status?: string | null; date?: string | null; price?: number | null; dom?: number | null; beds?: number | null; baths?: number | null; agent?: string | null; office?: string | null; type?: string | null };
+export type CompEvidence = {
+  latest_sale?: DeedEvent | null; prior_sale?: DeedEvent | null;
+  resale_within_24_months?: { bought: number; bought_on: string; resold: number; resold_on: string; months_between: number; gain_pct: number } | null;
+  mls_closed?: MlsEvent | null; mls_listing?: MlsEvent | null; mls_events?: MlsEvent[]; mls_has_photos?: boolean | null;
+  county_condition?: string | null; vacant?: boolean | null; owner_occupied?: boolean | null; flags?: Record<string, boolean>; estimated_value?: number | null; units?: number | null; basement?: string;
+};
+export type HcFacts = { condition?: Condition | null; county_condition?: string | null; building_quality?: string | null; sqft?: number | null; beds?: number | null; baths?: number | null; year_built?: number | null; units?: number | null; match?: boolean | null };
+export type Mortgage = { lender?: string | null; amount?: number | null; loan_type?: string | null; position?: string | null; rate_pct?: number | null; rate_type?: string | null; term?: string | null;
+  recorded?: string | null; document_date?: string | null; maturity?: string | null; open?: boolean | null; assumable?: boolean | null };
+export type PropertyProfile = {
+  source: string; fetched_at?: string; address?: string | null; apn?: string | null; legal_description?: string | null;
+  facts?: Record<string, any>; lat?: number | null; lon?: number | null;
+  owner?: { name?: string | null; second?: string | null; mail_address?: string | null; absentee?: boolean | null; corporate?: boolean | null };
+  last_sale?: DeedEvent | null; sale_history?: DeedEvent[]; mortgages?: Mortgage[]; mortgage_history?: Mortgage[]; open_mortgage_balance?: number | null;
+  estimated_value?: number | null; estimated_equity?: number | null; equity_pct?: number | null;
+  mls?: { status?: string | null; type?: string | null; listing_price?: number | null; sold_price?: number | null; sold_date?: string | null; listing_date?: string | null; dom?: number | null; has_photos?: boolean | null; history?: MlsEvent[]; keywords?: Record<string, boolean> } | null;
+  tax?: { assessed_value?: number | null; market_value?: number | null; annual?: number | null; year?: number | string | null; delinquent_year?: number | null } | null;
+  flood?: { zone?: any; description?: string | null } | null; flags?: Record<string, any>; units?: number | null; neighborhood?: string | null;
+};
+export type Shortlist = { picks: { comp_id: string; rank?: number | null; reason?: string | null; address?: string | null }[]; rejected: { comp_id: string; reason?: string | null; address?: string | null }[];
+  notes?: string | null; model?: string; effort?: string; size?: number; candidates?: number; usage?: { total_cost_usd?: number } };
+export type HouseCanaryBlock = { subject?: (HcFacts & Record<string, any>) | null; comps?: Record<string, HcFacts | null>; changed?: Record<string, string[]>; errors?: string[]; cost_usd?: number; billed_properties?: number; at?: string };
 
 export type Rates = Record<string, any> & { gla_per_sqft: number; gla_basis: string; market_monthly_pct: number; market_basis: string; median_ppsf: number; median_sale_price: number };
 export type Reconciliation = {
@@ -115,6 +145,9 @@ export type AnalysisDoc = {
   created_by?: string; created_by_name?: string; property_id?: string | null; label?: string | null;
   subject: Subject; subject_input?: Subject; geocode?: Geocode; records?: Records; market?: Market; avm?: Avm | null; comps: Comp[]; documents?: ArvDocument[];
   web_search?: { notes?: string; searches?: number; found?: number } | null;
+  profile?: PropertyProfile | null; shortlist?: Shortlist | null; housecanary?: HouseCanaryBlock | null;
+  reapi_comps?: { found?: number; set_aside?: { address?: string; deed_amount?: number | null; deed_date?: string | null; why?: string }[]; avm?: Avm | null; warning?: string | null; returned?: number } | null;
+  data_cost_usd?: number;
   rehab: RehabInput; rehab_budget?: RehabBudget; assumptions: Assumptions; settings: Record<string, any>; valuation?: Valuation; underwriting?: Underwriting;
   analysis?: Analysis; analysis_error?: string | null; answers: { question: string; answer: string }[]; chat: ChatMsg[]; phases: Phase[]; data_sources: string[]; cost_usd?: number;
 };
@@ -126,7 +159,7 @@ export type AnalysisSummary = {
 };
 
 export type ArvStatus = {
-  providers: { census_geocoder: boolean; web_search: boolean; rentcast: boolean; attom: boolean; google_maps: boolean; model: string; effort: string }; doc_types?: Record<string, string>;
+  providers: { census_geocoder: boolean; web_search: boolean; rentcast: boolean; attom: boolean; realestateapi?: boolean; housecanary?: boolean; google_maps: boolean; model: string; effort: string }; doc_types?: Record<string, string>;
   defaults: { assumptions: Assumptions; adders: Record<string, number>; radius_mi: number; months: number; target: number };
   scopes: Record<string, { label: string; low: number; mid: number; high: number; covers: string }>; line_items: { key: string; label: string }[];
   conditions: Record<string, string>; property_types: PropertyType[]; state_cost_index: Record<string, number>; properties: { property_id: string; address: string }[];
@@ -185,7 +218,7 @@ export { ApiError };
 
 /* ---------------------------------------------------------------- labels */
 export const PROPERTY_TYPE_LABEL: Record<PropertyType, string> = { single_family: "Single family", townhouse: "Townhouse / rowhouse", condo: "Condo", multi_2_4: "2–4 units", manufactured: "Manufactured" };
-export const SOURCE_LABEL: Record<string, string> = { rentcast: "RentCast (MLS-derived)", web: "Web search", manual: "Entered by hand", attom: "ATTOM", document: "From a document" };
+export const SOURCE_LABEL: Record<string, string> = { rentcast: "RentCast (MLS-derived)", reapi: "Recorded sale (RealEstateAPI)", web: "Web search", manual: "Entered by hand", attom: "ATTOM", document: "From a document" };
 
 /* Structured intake vocab. Short labels; the value is what is stored. */
 export const KNOWN_ISSUES: [string, string][] = [["foundation", "Foundation cracks / settlement"], ["water", "Water intrusion / flooding"], ["roof_leak", "Roof leaks"], ["mold", "Mold"],

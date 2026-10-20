@@ -174,6 +174,10 @@ def score(subject: Dict[str, Any], comp: Dict[str, Any], *, radius: float, month
         dock(12, "an estimate, not a sale")
     if comp.get("source") == "manual" and not comp.get("sale_price"):
         fails.append("no sale price")
+    if comp.get("arms_length") is False:
+        fails.append("deed flags a non-arm's-length transfer (not a market sale)")
+    if comp.get("ai_pick") is False:
+        dock(10, "set aside by the analyst shortlist: %s" % (comp.get("ai_reason") or "see reason"))
     if not _f(comp.get("sale_price")):
         fails.append("no sale price")
 
@@ -186,6 +190,10 @@ def select(subject: Dict[str, Any], comps: List[Dict[str, Any]], *, radius: floa
     notes: List[str] = []
     r, m = radius, months
     gla_limit: Optional[float] = 0.40
+    # After the analyst shortlist (2026-10-20) the grid is the shortlist: a comp the model set aside is
+    # not used unless the person switches it on. Nothing is widened to pad the grid; a thin grid shows
+    # as low confidence instead.
+    shortlisted = any(c.get("ai_pick") for c in comps)
 
     def rescore():
         for c in comps:
@@ -193,10 +201,17 @@ def select(subject: Dict[str, Any], comps: List[Dict[str, Any]], *, radius: floa
             c["similarity"] = sc["score"]
             c["deductions"] = sc["deductions"]
             c["fails"] = sc["fails"]
-        return [c for c in comps if not c["fails"] and c.get("included", True) is not False]
+        keep = [c for c in comps if not c["fails"] and c.get("included", True) is not False]
+        if shortlisted:
+            keep = [c for c in keep if c.get("ai_pick") or c.get("included") is True]
+        return keep
 
     for attempt in range(4):
         passing = rescore()
+        if shortlisted:
+            if len(passing) < minimum:
+                notes.append("The analyst kept %d sale(s) as defensible comps; the grid is not padded with weaker sales." % len(passing))
+            break
         # Aim for a full grid (up to five) before settling for the minimum of three.
         if len(passing) >= min(target, 5) or attempt == 3 or (attempt >= 1 and len(passing) >= minimum):
             break
@@ -204,7 +219,7 @@ def select(subject: Dict[str, Any], comps: List[Dict[str, Any]], *, radius: floa
         notes.append("Only %d sale(s) qualified within %.1f mi / %d months; widened to %.1f mi / %d months." % (len(passing), r / 1.5, int(m / 1.5), r, m))
     # Still short: the size filter is what usually empties a rural or unusual file. Relax it in two steps
     # rather than return no value, and say so — the person should check the subject's living area.
-    if len(passing) < minimum and any("living area differs" in f for c in comps for f in c["fails"]):
+    if not shortlisted and len(passing) < minimum and any("living area differs" in f for c in comps for f in c["fails"]):
         for limit in (0.60, None):
             gla_limit = limit
             passing = rescore()
@@ -215,7 +230,8 @@ def select(subject: Dict[str, Any], comps: List[Dict[str, Any]], *, radius: floa
     forced = [c for c in comps if c.get("included") is True and c["fails"]]
     for c in forced:
         c["forced"] = True
-    pool = sorted(passing + forced, key=lambda c: -c["similarity"])
+    # Shortlisted comps (analyst picks, verified by HouseCanary) lead the grid; the rest follow by fit.
+    pool = sorted(passing + forced, key=lambda c: (0 if c.get("ai_pick") else 1, -c["similarity"]))
     chosen = pool[:max(target, minimum)]
     for c in comps:
         c["selected"] = c in chosen
@@ -348,6 +364,14 @@ def reconcile(subject: Dict[str, Any], comps: List[Dict[str, Any]], rates: Dict[
                 flag = "sold at %+.0f%% of the pack's $/sqft: likely as-is/distressed or a data error; weight halved" % (dev * 100)
                 if flag not in a["flags"]:
                     a["flags"].append(flag)
+        # An as-is sale three or more grades below the subject as repaired (a shell, an auction buy) is kept
+        # on the grid as the floor the analyst asked for, but it is not evidence of the repaired value.
+        c_cond, s_cond = c.get("condition"), subject.get("condition_after") or "C2"
+        if c_cond in CONDITION_RANK and s_cond in CONDITION_RANK and CONDITION_RANK[c_cond] - CONDITION_RANK[s_cond] >= 3:
+            w *= 0.1
+            flag = "as-is %s sale against a %s subject: shown as the floor, weight cut to a tenth" % (c_cond, s_cond)
+            if flag not in a["flags"]:
+                a["flags"].append(flag)
         if c.get("source") == "web":
             w *= 0.75
         if c.get("price_basis") == "listed":
@@ -417,10 +441,13 @@ def confidence(subject: Dict[str, Any], comps: List[Dict[str, Any]], rec: Dict[s
     gross = sum(c["adjustment"]["gross_pct"] for c in sel) / n
     pts += _clip(1 - gross / 40.0, 0, 1) * 15
     reasons.append("average gross adjustment %.0f%%" % gross + (" (above the 25% heuristic)" if gross > GROSS_GUIDE else ""))
-    src = {"rentcast": 1.0, "attom": 1.0, "manual": 0.85, "web": 0.6}
-    q = sum(src.get(c.get("source"), 0.7) for c in sel) / n
+    src = {"reapi": 1.0, "rentcast": 1.0, "attom": 1.0, "manual": 0.85, "web": 0.6}
+    q = sum(min(1.0, src.get(c.get("source"), 0.7) + (0.15 if c.get("price_verified") else 0) + (0.1 if c.get("condition_source") == "housecanary" else 0)) for c in sel) / n
     pts += q * 10
     reasons.append("data quality %.0f%% (%s)" % (q * 100, ", ".join(sorted({str(c.get("source")) for c in sel}))))
+    graded = sum(1 for c in sel if c.get("condition"))
+    if graded < n:
+        reasons.append("%d of %d comps have no condition grade (C3 assumed)" % (n - graded, n))
     pts += 5 if rec.get("bracketing", {}).get("value") and rec.get("bracketing", {}).get("size") else 0
     if not rec.get("bracketing", {}).get("size"):
         reasons.append("subject size is not bracketed by the comps")

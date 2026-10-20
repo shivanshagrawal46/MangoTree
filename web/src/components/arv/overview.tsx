@@ -13,6 +13,7 @@ import { cn, money, fmtDate } from "@/lib/utils";
 import { PROPERTY_TYPE_LABEL, VERDICT_LABEL, VERDICT_TONE, fmtFact, num, type AnalysisDoc, type PropertyType } from "@/lib/arv";
 import { CheckLine, Compare, Disclosure, MorePill, RangeBar, Tile } from "./bits";
 import { TYPE_TONE } from "./documents-drop";
+import { PropertyFile } from "./feeds-ui";
 
 const CONF_TONE: Record<string, "good" | "accent" | "high" | "critical"> = { high: "good", good: "accent", moderate: "high", low: "critical", very_low: "critical" };
 const VERDICT_EDGE: Record<string, string> = { fund: "border-l-good", fund_with_conditions: "border-l-high", renegotiate: "border-l-high", pass: "border-l-critical" };
@@ -210,6 +211,14 @@ export function Overview({ doc, setTab }: { doc: AnalysisDoc; setTab: (t: string
           {s.notes && <div className="mt-3 text-[12px] text-muted border-t border-line pt-2 whitespace-pre-wrap">{s.notes}</div>}
           <div className="mt-3 text-[10.5px] text-muted">Sources: {(doc.data_sources || []).join(", ") || "—"}{Object.keys(s.fact_sources || {}).length ? ` · ${Object.keys(s.fact_sources!).length} facts from documents (green dot)` : ""}</div>
         </Disclosure>
+
+        {(doc.profile || doc.housecanary?.subject) && (
+          <Disclosure title="Property file" badge={<span className="text-[11px] text-muted">public record</span>}
+            preview={[doc.housecanary?.subject?.condition ? `HouseCanary ${doc.housecanary.subject.condition}` : null, doc.profile?.mortgages?.length ? `${doc.profile.mortgages.length} open mortgage${doc.profile.mortgages.length === 1 ? "" : "s"} · ${money(doc.profile.open_mortgage_balance, true)}` : "no open mortgage",
+              doc.profile?.last_sale?.price != null ? `last sale ${money(doc.profile.last_sale.price, true)} ${fmtDate(doc.profile.last_sale.date, "MMM yy")}` : null, Object.keys(doc.profile?.flags || {}).includes("vacant") ? "vacant" : null].filter(Boolean).join(" · ")}>
+            <PropertyFile doc={doc} />
+          </Disclosure>
+        )}
 
         {doc.market && (
           <Disclosure title="Market" preview={[doc.market.zhvi ? `ZIP ${money(doc.market.zhvi.value, true)} (${(doc.market.zhvi.change_12m_pct ?? 0) > 0 ? "+" : ""}${doc.market.zhvi.change_12m_pct}%/yr)` : null, doc.market.mortgage ? `${doc.market.mortgage.rate_pct}% rate` : null, doc.market.flood ? `flood ${doc.market.flood.zone}` : null].filter(Boolean).join(" · ")}>

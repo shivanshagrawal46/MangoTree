@@ -25,6 +25,16 @@ ARV_FALLBACKS = _env("ARV_FALLBACKS", "1").lower() in ("1", "true", "yes")
 
 RENTCAST_API_KEY = _env("RENTCAST_API_KEY")
 ATTOM_API_KEY = _env("ATTOM_API_KEY")
+#: Paid feeds added 2026-10-20 (see feeds.py): recorded sales and the subject's
+#: public-record file from RealEstateAPI; condition grade and verified facts
+#: for the chosen comps from HouseCanary (Basic plan, per-call billing).
+REALESTATEAPI_KEY = _env("REALESTATEAPI_KEY")
+HOUSECANARY_API_KEY = _env("HOUSECANARY_API_KEY")
+HOUSECANARY_API_SECRET = _env("HOUSECANARY_API_SECRET")
+#: How many comps the model shortlists from the scored candidates (the ones
+#: HouseCanary is then paid to verify). Admin ask 2026-10-20: five.
+SHORTLIST_SIZE = int(_env("ARV_SHORTLIST_SIZE", "5"))
+SHORTLIST_POOL = int(_env("ARV_SHORTLIST_POOL", "10"))
 GOOGLE_MAPS_API_KEY = _env("GOOGLE_MAPS_API_KEY")   # Street View / Places, optional
 FRED_API_KEY = _env("FRED_API_KEY")                 # not needed: the CSV endpoint is keyless
 
@@ -49,6 +59,8 @@ def providers_status() -> dict:
         "web_search": True,
         "rentcast": bool(RENTCAST_API_KEY),
         "attom": bool(ATTOM_API_KEY),
+        "realestateapi": bool(REALESTATEAPI_KEY),
+        "housecanary": bool(HOUSECANARY_API_KEY and HOUSECANARY_API_SECRET),
         "google_maps": bool(GOOGLE_MAPS_API_KEY),
         "model": ARV_MODEL,
         "effort": ARV_EFFORT,

@@ -229,7 +229,7 @@ def install(app, mongo, jobs) -> None:
         doc = _get(aid)
         if jobs.active_of_kind("arv") and any(j.meta.get("analysis_id") == aid for j in jobs.jobs.values() if j.kind == "arv" and j.status in ("queued", "running")):
             raise HTTPException(409, "this analysis is already running")
-        stages = [s for s in body.stages if s in ("geocode", "records", "market", "comps", "analyst")] or ["analyst"]
+        stages = [s for s in body.stages if s in ("geocode", "records", "market", "comps", "shortlist", "analyst")] or ["analyst"]
 
         def run(job):
             out = pipeline.run(doc, store, lambda k, p: job.emit(k, p), stages=stages)

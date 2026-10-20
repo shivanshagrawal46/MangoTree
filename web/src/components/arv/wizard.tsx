@@ -42,7 +42,7 @@ type Form = {
   list_price: number | null; purchase_price: number | null; exit_strategy: string; months_held: number | null; rule_pct: number | null; profit_target_pct: number | null;
   finance: boolean; ltc_pct: number | null; ltarv_pct: number | null; rate_pct: number | null; points_pct: number | null;
   property_taxes_annual: number | null; insurance_annual: number | null; commission_pct: number | null;
-  use_web_search: boolean; use_rentcast: boolean; radius_mi: number | null; months: number | null; web_searches: number | null;
+  use_web_search: boolean; use_rentcast: boolean; use_reapi?: boolean; use_housecanary?: boolean; radius_mi: number | null; months: number | null; web_searches: number | null;
 };
 
 const INITIAL: Form = {
@@ -52,7 +52,7 @@ const INITIAL: Form = {
   planned_work: [], scope: "moderate", level: "mid", budget_mode: "tier", budget_doc_id: "", budget_touched: false, lump_sum: null, beds_after: null, baths_after: null, sqft_after: null, condition_after: "C2",
   list_price: null, purchase_price: null, exit_strategy: "flip", months_held: 8, rule_pct: 70, profit_target_pct: 15, finance: true, ltc_pct: 85, ltarv_pct: 70, rate_pct: 10.5, points_pct: 2,
   property_taxes_annual: null, insurance_annual: null, commission_pct: 5,
-  use_web_search: true, use_rentcast: true, radius_mi: 1.0, months: 12, web_searches: 10,
+  use_web_search: true, use_rentcast: true, use_reapi: true, use_housecanary: true, radius_mi: 1.0, months: 12, web_searches: 10,
 };
 
 const STEPS = [
@@ -149,7 +149,7 @@ export function Wizard({ status, initialAddress, initialPropertyId }: { status?:
           finance: f.finance, ltc_pct: f.ltc_pct, ltarv_pct: f.ltarv_pct, rate_pct: f.rate_pct, points_pct: f.points_pct, property_taxes_annual: f.property_taxes_annual, insurance_annual: f.insurance_annual,
           hoa_monthly: f.hoa_monthly, commission_pct: f.commission_pct,
         },
-        settings: { use_web_search: f.use_web_search, use_rentcast: f.use_rentcast, radius_mi: f.radius_mi, months: f.months, web_searches: f.web_searches },
+        settings: { use_web_search: f.use_web_search, use_rentcast: f.use_rentcast, use_reapi: f.use_reapi ?? true, use_housecanary: f.use_housecanary ?? true, radius_mi: f.radius_mi, months: f.months, web_searches: f.web_searches },
         property_id: f.property_id || null, label: f.label || null, document_ids: f.docs.filter((d) => d.status !== "reading").map((d) => d.doc_id),
       });
     },
@@ -408,6 +408,8 @@ export function Wizard({ status, initialAddress, initialPropertyId }: { status?:
                     <div className="mt-2 flex flex-col gap-1 text-[11.5px]">
                       <Checkbox checked={f.use_web_search} onChange={(e) => set("use_web_search", e.target.checked)}>AI searches public listing pages for sales</Checkbox>
                       <Checkbox disabled={!status?.providers.rentcast} checked={f.use_rentcast && !!status?.providers.rentcast} onChange={(e) => set("use_rentcast", e.target.checked)}>RentCast records, comps and AVM {!status?.providers.rentcast && <Badge>no key</Badge>}</Checkbox>
+                      <Checkbox disabled={!status?.providers.realestateapi} checked={(f.use_reapi ?? true) && !!status?.providers.realestateapi} onChange={(e) => set("use_reapi", e.target.checked)}>Recorded sales, deeds and mortgages (RealEstateAPI) {!status?.providers.realestateapi && <Badge>no key</Badge>}</Checkbox>
+                      <Checkbox disabled={!status?.providers.housecanary} checked={(f.use_housecanary ?? true) && !!status?.providers.housecanary} onChange={(e) => set("use_housecanary", e.target.checked)}>HouseCanary condition grade on the analyst's picks (about $6 a deal) {!status?.providers.housecanary && <Badge>no key</Badge>}</Checkbox>
                     </div>
                   </div>
                 </div>

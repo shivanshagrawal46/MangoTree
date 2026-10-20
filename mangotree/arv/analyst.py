@@ -321,3 +321,70 @@ def chat(doc: Dict[str, Any], history: List[Dict[str, str]], question: str, on_d
     if final.stop_reason == "refusal":
         answer = answer or "The model declined to answer this question."
     return {"answer": answer, "model": cfg.ARV_MODEL, "usage": METER.summarize(METER.diff(before, METER.snapshot())), "stop_reason": final.stop_reason}
+
+
+# ------------------------------------------------------------- shortlist
+_SHORTLIST_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "picks": {"type": "array", "items": {"type": "object", "properties": {
+            "comp_id": {"type": "string"}, "rank": {"type": "integer", "description": "1 = the single best comp."},
+            "reason": {"type": "string", "description": "One sentence, with the number or fact that decided it."},
+            "condition_guess": {"type": "string", "description": "C1-C6 if the evidence says so (a resale after a purchase at a third of the price is a renovation; an auction or estate sale is as-is). Omit if unknown."}},
+            "required": ["comp_id", "rank", "reason"]}},
+        "rejected": {"type": "array", "items": {"type": "object", "properties": {"comp_id": {"type": "string"}, "reason": {"type": "string"}}, "required": ["comp_id", "reason"]}},
+        "notes": {"type": "string", "description": "Two or three sentences for the CEO: what kind of sales these are, what is missing, what would change the pick."},
+    },
+    "required": ["picks", "rejected", "notes"],
+}
+
+
+def shortlist(subject: Dict[str, Any], candidates: List[Dict[str, Any]], *, size: int, emit: Optional[Callable[[str], None]] = None) -> Dict[str, Any]:
+    """Opus 5.5 chooses ``size`` comps from the scored candidates. Rules decided
+    who is eligible (distance, recency, size, type, arm's length); the model
+    decides between them from the deed and MLS evidence: a renovated resale,
+    an auction, an estate transfer, a shell. It cannot add an address or
+    change a number. Writes ai_pick / ai_rank / ai_reason onto the comps."""
+    if emit:
+        emit("Opus 5.5 is choosing the %d best comparable sales from %d candidates…" % (size, len(candidates)))
+    rows = []
+    for c in candidates:
+        rows.append({k: c.get(k) for k in ("comp_id", "source", "address", "distance_mi", "sale_price", "sale_date", "price_basis", "listing_price", "dom",
+                                           "property_type", "beds", "baths", "sqft", "lot_sqft", "year_built", "basement", "condition", "arms_length", "note", "url", "similarity")}
+                    | {"score_deductions": [d["reason"] for d in (c.get("deductions") or [])], "evidence": c.get("evidence")})
+    subj = {k: subject.get(k) for k in ("address", "property_type", "beds", "baths", "sqft", "lot_sqft", "year_built", "condition_current", "condition_after", "basement", "stories", "known_issues", "planned_work")}
+    user = ("Choose the %d comparable sales that best support an After Repair Value for this subject, from the candidates below. "
+            "Every candidate already passed the distance, recency, size and type filters and carries a similarity score from the engine. "
+            "Your job is judgement the engine cannot do: read each candidate's deed and MLS evidence and prefer closed, arm's-length, market sales of a house in the condition the subject will be in after the work "
+            "(a resale months after a cheap purchase is a renovated comp; an auction, estate, bank or $10,000 transfer is not a market price; a vacant shell sold to an investor is an as-is comp). "
+            "The grid values the subject AS REPAIRED, so renovated resales are the comps that matter; keep at most one as-is or shell sale, and only as a stated floor. "
+            "Bracket the subject: at least one comp larger and one smaller, one newer and one older where possible. "
+            "Pick exactly %d unless fewer are defensible; list every other candidate under rejected with one reason each. Copy comp_id values exactly."
+            "\n\nSUBJECT (as repaired to %s):\n%s\n\nCANDIDATES:\n%s") % (
+        size, size, subject.get("condition_after") or "C2", json.dumps(subj, default=str), json.dumps(rows, indent=1, default=str))
+    before = METER.snapshot()
+    out = _structured(system=[{"type": "text", "text": SYSTEM, "cache_control": {"type": "ephemeral"}}], user=user, tool_name="shortlist_comps",
+                      schema=_SHORTLIST_SCHEMA, description="The chosen comparable sales with reasons, and the rejected ones with reasons.", max_tokens=8000)
+    ids = {c["comp_id"]: c for c in candidates}
+    picks = [p for p in (out.get("picks") or []) if p.get("comp_id") in ids][:size]
+    for c in candidates:
+        c["ai_pick"] = False
+        c.pop("ai_rank", None)
+        c["ai_reason"] = None
+    for p in sorted(picks, key=lambda p: p.get("rank") or 99):
+        c = ids[p["comp_id"]]
+        c["ai_pick"] = True
+        c["ai_rank"] = p.get("rank")
+        c["ai_reason"] = p.get("reason")
+        g = str(p.get("condition_guess") or "").upper()
+        if g in ("C1", "C2", "C3", "C4", "C5", "C6") and not c.get("condition"):
+            c["condition"] = g
+            c["condition_source"] = "analyst"
+    for r in out.get("rejected") or []:
+        c = ids.get(r.get("comp_id"))
+        if c is not None and not c.get("ai_pick"):
+            c["ai_reason"] = r.get("reason")
+    return {"picks": [{"comp_id": p["comp_id"], "rank": p.get("rank"), "reason": p.get("reason"), "address": ids[p["comp_id"]].get("address")} for p in picks],
+            "rejected": [{"comp_id": r.get("comp_id"), "reason": r.get("reason"), "address": (ids.get(r.get("comp_id")) or {}).get("address")} for r in (out.get("rejected") or []) if r.get("comp_id") in ids],
+            "notes": out.get("notes"), "model": cfg.ARV_MODEL, "effort": cfg.ARV_EFFORT, "size": size, "candidates": len(candidates),
+            "usage": METER.summarize(METER.diff(before, METER.snapshot()))}

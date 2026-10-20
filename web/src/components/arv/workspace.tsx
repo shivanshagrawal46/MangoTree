@@ -83,7 +83,7 @@ export function Workspace({ id }: { id: string }) {
   const rerun = async (stages: string[]) => {
     try {
       const { job_id } = await arvApi.rerun(id, stages);
-      setDocState((d) => d ? { ...d, status: "running", job_id, phases: (d.phases || []).filter((p) => !stages.includes(p.key) && !(stages.includes("comps") && ["avm", "web"].includes(p.key)) && p.key !== "compute" && !(stages.includes("analyst") && p.key === "analyst")) } : d);
+      setDocState((d) => d ? { ...d, status: "running", job_id, phases: (d.phases || []).filter((p) => !stages.includes(p.key) && !(stages.includes("comps") && ["avm", "reapi", "web", "shortlist", "housecanary"].includes(p.key)) && !(stages.includes("shortlist") && ["shortlist", "housecanary"].includes(p.key)) && !(stages.includes("records") && p.key === "profile") && p.key !== "compute" && !(stages.includes("analyst") && p.key === "analyst")) } : d);
       setLog([]);
       follow(job_id);
     } catch (e: any) { toast.error(e?.message || "Could not start"); }
@@ -144,6 +144,7 @@ export function Workspace({ id }: { id: string }) {
               { key: "both", label: "Re-run comps + review", onClick: () => rerun(["comps", "analyst"]) },
               { key: "analyst", label: "Re-run the review only", onClick: () => rerun(["analyst"]) },
               { key: "comps", label: "Search comps again", onClick: () => rerun(["comps"]) },
+              { key: "shortlist", label: "Re-pick the comps (analyst + HouseCanary)", onClick: () => rerun(["shortlist"]) },
               { key: "market", label: "Refresh market data", onClick: () => rerun(["market"]) },
               { key: "all", label: "Run everything again", onClick: () => rerun(["geocode", "records", "market", "comps", "analyst"]) },
             ] }}><Button size="sm" variant="ghost" disabled={running}><RotateCcw size={13} /> Re-run comps + review</Button></Dropdown>
@@ -202,7 +203,7 @@ export function Workspace({ id }: { id: string }) {
         {(running || doc.status === "failed" || (doc.phases || []).some((p) => p.status === "failed")) && <Progress phases={doc.phases || []} log={log} running={running} error={doc.error} />}
         <BudgetGap doc={doc} setDoc={setDoc} setTab={setTab} />
         {tab === "overview" && <Overview doc={doc} setTab={setTab} />}
-        {tab === "comps" && <CompsTab doc={doc} patch={patch} setDoc={setDoc} saving={saving} running={running} />}
+        {tab === "comps" && <CompsTab doc={doc} patch={patch} setDoc={setDoc} saving={saving} running={running} onRerun={rerun} />}
         {tab === "calculator" && <CalculatorTab doc={doc} patch={patch} setDoc={setDoc} saving={saving} running={running} status={status.data} />}
         {tab === "documents" && <DocumentsTab doc={doc} patch={patch} setDoc={setDoc} saving={saving} running={running} onRerun={rerun} />}
         {tab === "market" && <MarketTab doc={doc} />}
@@ -258,11 +259,11 @@ function upsertPhase(list: Phase[], p: Phase): Phase[] {
 function applyPartial(d: AnalysisDoc, key: string, value: any): AnalysisDoc {
   if (key.startsWith("market_")) return { ...d, market: { ...(d.market || { gaps: [] }), [key.slice(7)]: value } as any };
   if (key === "document") { const list = (d.documents || []).slice(); const i = list.findIndex((x) => x.doc_id === value.doc_id); if (i === -1) list.push(value); else list[i] = { ...list[i], ...value }; return { ...d, documents: list }; }
-  if (["geocode", "subject", "records", "market", "avm", "comps", "valuation", "rehab_budget", "underwriting", "analysis"].includes(key)) return { ...d, [key]: value } as AnalysisDoc;
+  if (["geocode", "subject", "records", "market", "avm", "comps", "valuation", "rehab_budget", "underwriting", "analysis", "profile", "shortlist", "housecanary"].includes(key)) return { ...d, [key]: value } as AnalysisDoc;
   return d;
 }
 
-const PHASE_ORDER = ["geocode", "records", "market", "avm", "web", "compute", "analyst"];
+const PHASE_ORDER = ["geocode", "records", "profile", "market", "avm", "reapi", "web", "shortlist", "housecanary", "compute", "analyst"];
 
 function Progress({ phases, log, running, error }: { phases: Phase[]; log: string[]; running: boolean; error?: string | null }) {
   const sorted = [...phases].sort((a, b) => PHASE_ORDER.indexOf(a.key) - PHASE_ORDER.indexOf(b.key));
