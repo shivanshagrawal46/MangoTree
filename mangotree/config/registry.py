@@ -682,6 +682,7 @@ PROPERTIES: List[Property] = [
             "1631 North Durham", "1631 N Durham", "1631 N. Durham",
             "North Durham St", "N Durham St", "Durham St", "Durham Street",
         ),
+        disk_folder="1631 N Durham St Baltimore",
         status="deal",
         notes=(
             "ROI Blocks deal. Invested 1 Sep 2026; builder cost $154,733.85; "
@@ -698,12 +699,65 @@ PROPERTIES: List[Property] = [
             "6159 Old Brentford", "Old Brentford Ct", "Old Brentford Court",
             "Old Brentford", "Old Brantford",
         ),
+        disk_folder="Old Brentford Ct, Alexandria, VA 22310",
         status="deal",
         notes=(
             "ROI Blocks deal. Invested 18 Sep 2026; builder cost $51,514.69; "
             "$16,329.17 funded to 30 Sep 2026; closing fee $3,173.70; ROI commission "
             "$3,000; BuilderTrend invoice $69,618.14. Completed, on market 14 Oct 2026 "
             "per JP."
+        ),
+    ),
+    # Added 2026-10-27 (admin directive): the three ROI Blocks deals that have
+    # folders on E:\ and mail with Wes/Kelly/KVS but were never registered, so
+    # their documents sat unplaced. Street numbers and zips are from the folder
+    # names and the title-company subject lines, not assumed.
+    Property(
+        property_id="lodestone",
+        canonical_address="1913 Lodestone Dr",
+        city="Silver Spring", state="MD", postal="20904",
+        aliases=(
+            "1913 Lodestone", "1913 Lodestone Dr", "1913 Lodestone Drive",
+            "Lodestone Dr", "Lodestone Drive", "Lodestone",
+        ),
+        disk_folder="1913 Lodestone Dr Silver Spring, MD 20904",
+        status="deal",
+        notes=(
+            "ROI Blocks deal. Contractor Cornerstone Remodeling (Endy). KVS Title file "
+            "26-KVS-15454; 25% closed 26 Oct 2026 ($2,152.52 ROI funding), KVS wire "
+            "$1,715.35 the same day. Pipeline sheet: builder cost $22,460, retail $31,070."
+        ),
+    ),
+    Property(
+        property_id="marmon",
+        canonical_address="3704 Marmon Ave",
+        city="Baltimore", state="MD", postal="21207",
+        aliases=(
+            "3704 Marmon", "3704 Marmon Ave", "3704 Marmon Avenue",
+            "Marmon Ave", "Marmon Avenue", "Marmon",
+        ),
+        disk_folder="3704 Marmon Ave Baltimore-MD-21207",
+        status="deal",
+        notes=(
+            "ROI Blocks deal. Approved by RKB 23 Oct 2026 (title commitment works, "
+            "equity ample); closing targeted 30 Oct 2026 ($7,459.78 ROI funding)."
+        ),
+    ),
+    Property(
+        property_id="e_21st_st",
+        canonical_address="308 E 21st St",
+        city="Baltimore", state="MD", postal="21218",
+        aliases=(
+            "308 E 21st", "308 E. 21st", "308 East 21st", "308 21st",
+            "E 21st St", "E. 21st St", "East 21st St", "E 21st Street", "East 21st Street",
+            "21st St Baltimore", "21st Street Baltimore",
+        ),
+        disk_folder="308 21st. Baltimore, Md. 21218",
+        status="deal",
+        notes=(
+            "ROI Blocks deal. Items-to-close list sent to Wes 23 Oct 2026 (rev 1 "
+            "returned 26 Oct); closing expected 27-28 Oct 2026 ($6,814.24 ROI funding). "
+            "Bare '21st St' is deliberately not an alias."
         ),
     ),
 ]
