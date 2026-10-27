@@ -35,6 +35,45 @@ const TEAM_NAV = [
   { href: "/tasks", label: "My tasks", icon: CheckSquare },
 ];
 
+/** The tools a contractor account may be let into, and the one path each opens.
+ *  A contractor session anywhere else under the RKB shell is sent to /portal. */
+const CONTRACTOR_TOOL_PATHS: Record<string, string> = { arv: "/arv" };
+
+function contractorMayOpen(user: { side?: string; tools?: string[] } | null | undefined, path: string): boolean {
+  if (!user || user.side !== "contractor") return false;
+  return (user.tools || []).some((t) => CONTRACTOR_TOOL_PATHS[t] && path.startsWith(CONTRACTOR_TOOL_PATHS[t]));
+}
+
+/** The frame a contractor sees inside an RKB system it has been granted (today:
+ *  ARV). Same header as the portal — no sidebar, no property list, no jump
+ *  palette — with a tab back to the sheet. Nothing from NAV is rendered. */
+function ContractorFrame({ children, path }: { children: React.ReactNode; path: string }) {
+  const { user } = useUser();
+  const qc = useQueryClient();
+  const tabs = [{ href: "/portal", label: "Next steps" }, ...(user?.tools || []).filter((t) => CONTRACTOR_TOOL_PATHS[t]).map((t) => ({ href: CONTRACTOR_TOOL_PATHS[t], label: t === "arv" ? "ARV & underwriting" : t }))];
+  return (
+    <div className="min-h-screen bg-bg">
+      <header className="sticky top-0 z-20 border-b border-line bg-elev/90 backdrop-blur">
+        <div className="mx-auto max-w-6xl px-4 h-14 flex items-center gap-3">
+          <div className="h-8 w-8 rounded-xl bg-[#1F3550] text-white grid place-items-center font-bold text-sm">R</div>
+          <div className="min-w-0">
+            <div className="text-[13px] font-semibold tracking-tight leading-none">RKB Consulting Group</div>
+            <div className="text-[11px] text-faint mt-0.5 truncate">{user?.org_name || "ROI Blocks"} · signed in as {user?.name}</div>
+          </div>
+          <nav className="ml-4 flex gap-1 text-xs">
+            {tabs.map((t) => <Link key={t.href} href={t.href} className={cn("h-8 px-3 rounded-lg flex items-center", path.startsWith(t.href) ? "bg-[#1F3550] text-white" : "text-muted hover:bg-sunken")}>{t.label}</Link>)}
+          </nav>
+          <div className="flex-1" />
+          <button onClick={async () => { await api.post("/auth/logout").catch(() => {}); qc.clear(); window.location.assign("/login"); }} className="h-8 px-2.5 rounded-lg text-xs text-muted hover:bg-sunken flex items-center gap-1.5" title="Sign out">
+            <LogOut size={14} /> Sign out
+          </button>
+        </div>
+      </header>
+      <main className="min-w-0 min-h-screen flex flex-col">{children}</main>
+    </div>
+  );
+}
+
 export function AppShell({ children }: { children: React.ReactNode }) {
   const { user, loading } = useUser();
   const router = useRouter();
@@ -42,6 +81,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const qc = useQueryClient();
   const [palette, setPalette] = React.useState(false);
   const rkb = !!user && user.side !== "contractor";
+  const contractorHere = contractorMayOpen(user, path);
   const props = useQuery({ queryKey: ["properties"], queryFn: () => api.get<PropertySummary[]>("/properties"), enabled: rkb, staleTime: 5 * 60_000 });
   // The frame only needs the review badge and the degrade banner — a 200-byte call, not the whole dashboard.
   const dash = useQuery({ queryKey: ["shell"], queryFn: () => api.get<{ unplaced: number; degrades: string[]; answering?: { property_id: string | null; question: string; job_id: string }[] }>("/shell"), enabled: rkb, staleTime: 5 * 60_000,
@@ -51,14 +91,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   React.useEffect(() => { if (!loading && !user) router.replace("/login"); }, [loading, user, router]);
   // A contractor session has nothing here (the server refuses every RKB route
-  // anyway); send it to its own home before any query fires.
-  React.useEffect(() => { if (user?.side === "contractor") router.replace("/portal"); }, [user, router]);
+  // anyway) — except a system it has been granted (ARV for Wes, 2026-10-27),
+  // which it gets inside its own frame. Everything else sends it home.
+  React.useEffect(() => { if (user?.side === "contractor" && !contractorMayOpen(user, path)) router.replace("/portal"); }, [user, path, router]);
   React.useEffect(() => {
+    if (!rkb) return;
     const onKey = (e: KeyboardEvent) => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); setPalette((v) => !v); } };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [rkb]);
 
+  if (!loading && user && contractorHere) return <ContractorFrame path={path}>{children}</ContractorFrame>;
   if (loading || !user || !rkb) return <div className="min-h-screen grid place-items-center text-muted text-sm">Loading…</div>;
   const unplaced = dash.data?.unplaced || 0;
   const ceo = user.role === "ceo";

@@ -671,6 +671,41 @@ PROPERTIES: List[Property] = [
             "cleared."
         ),
     ),
+    # Added 2026-10-27 from JP's "LP Remodeling Hold Properties Summary.xlsx"
+    # (figures to 30 Sep 2026): the two newest ROI Blocks deals. Street numbers
+    # are JP's; aliases are number+street and the distinctive street name only.
+    Property(
+        property_id="durham_st",
+        canonical_address="1631 North Durham St",
+        city="Baltimore", state="MD", postal="21213",
+        aliases=(
+            "1631 North Durham", "1631 N Durham", "1631 N. Durham",
+            "North Durham St", "N Durham St", "Durham St", "Durham Street",
+        ),
+        status="deal",
+        notes=(
+            "ROI Blocks deal. Invested 1 Sep 2026; builder cost $154,733.85; "
+            "$25,000 funded to 30 Sep 2026 (fronted equity); closing fee $3,268; "
+            "ROI commission $20,000; BuilderTrend invoice $156,649. Contact on JP's "
+            "sheet: Duane Tutt. In progress."
+        ),
+    ),
+    Property(
+        property_id="old_brentford",
+        canonical_address="6159 Old Brentford Ct",
+        city="Alexandria", state="VA", postal="22310",
+        aliases=(
+            "6159 Old Brentford", "Old Brentford Ct", "Old Brentford Court",
+            "Old Brentford", "Old Brantford",
+        ),
+        status="deal",
+        notes=(
+            "ROI Blocks deal. Invested 18 Sep 2026; builder cost $51,514.69; "
+            "$16,329.17 funded to 30 Sep 2026; closing fee $3,173.70; ROI commission "
+            "$3,000; BuilderTrend invoice $69,618.14. Completed, on market 14 Oct 2026 "
+            "per JP."
+        ),
+    ),
 ]
 
 

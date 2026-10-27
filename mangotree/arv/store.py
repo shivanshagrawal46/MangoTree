@@ -19,7 +19,8 @@ from typing import Any, Dict, List, Optional
 
 from mangotree.storage.mongo import Mongo
 
-SUMMARY_FIELDS = ("analysis_id", "created_at", "updated_at", "created_by", "created_by_name", "status", "error", "job_id",
+SUMMARY_FIELDS = ("analysis_id", "created_at", "updated_at", "created_by", "created_by_name", "created_side", "created_org", "created_org_name",
+                  "status", "error", "job_id",
                   "subject.address", "subject.property_type", "subject.beds", "subject.baths", "subject.sqft", "geocode.formatted", "geocode.state",
                   "valuation.arv", "valuation.arv_low", "valuation.arv_high", "valuation.confidence", "analysis.headline", "analysis.arv_opinion",
                   "underwriting.mao", "rehab_budget.total", "comps_count", "property_id", "label")
@@ -94,10 +95,12 @@ class ArvStore:
         self._forget(analysis_id)
         return self.coll.delete_one({"analysis_id": analysis_id}).deleted_count == 1
 
-    def list(self, *, limit: int = 50, property_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    def list(self, *, limit: int = 50, property_id: Optional[str] = None, created_by: Optional[str] = None) -> List[Dict[str, Any]]:
         q: Dict[str, Any] = {}
         if property_id:
             q["property_id"] = property_id
+        if created_by:
+            q["created_by"] = created_by   # a contractor account sees only its own files
         proj = {f: 1 for f in SUMMARY_FIELDS}
         proj["_id"] = 0
         return list(self.coll.find(q, proj).sort("created_at", -1).limit(limit))

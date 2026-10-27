@@ -29,7 +29,7 @@ from mangotree.storage.mongo import get_mongo
 from mangotree.tasks.store import OWNERS, TaskStore
 
 from . import data
-from .auth import AnySession, CurrentUser, change_password, ensure_users, login, logout
+from .auth import AnySession, CurrentArvUser, CurrentUser, change_password, ensure_users, is_contractor, login, logout
 from .jobs import JobRunner, _jsonable
 
 app = FastAPI(title="MangoTree API", version="0.1")
@@ -617,25 +617,37 @@ def _active_answers(chat_id: Optional[str] = None) -> List[Dict[str, Any]]:
     return out
 
 
+def _job_visible(job_meta: dict, kind: str, user: dict) -> bool:
+    """A contractor session (ARV tool) may follow only the ARV jobs it started;
+    an RKB session may follow any job. Everything else stays as it was."""
+    if not is_contractor(user):
+        return True
+    return kind in ("arv", "arv_chat", "arv_docs") and (job_meta or {}).get("by") == user["user_id"]
+
+
 @app.get("/jobs/{job_id}/stream")
-def job_stream(job_id: str, request: Request, user=CurrentUser):
+def job_stream(job_id: str, request: Request, user=CurrentArvUser):
     job = jobs.get(job_id)
     if not job:
         doc = mongo.db["jobs"].find_one({"job_id": job_id}, {"_id": 0})
-        if not doc:
+        if not doc or not _job_visible(doc.get("meta"), doc.get("kind") or "", user):
             raise HTTPException(404, "job not found")
         raise HTTPException(410, f"job {doc.get('status')} before this server started; reload the chat")
+    if not _job_visible(job.meta, job.kind, user):
+        raise HTTPException(404, "job not found")
     return StreamingResponse(jobs.sse(job), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @app.get("/jobs/{job_id}")
-def job_status(job_id: str, user=CurrentUser):
+def job_status(job_id: str, user=CurrentArvUser):
     job = jobs.get(job_id)
     if job:
+        if not _job_visible(job.meta, job.kind, user):
+            raise HTTPException(404, "job not found")
         return {"job_id": job_id, "status": job.status, "events": len(job.events), "result": job.result, "error": job.error}
     doc = mongo.db["jobs"].find_one({"job_id": job_id}, {"_id": 0})
-    if not doc:
+    if not doc or not _job_visible(doc.get("meta"), doc.get("kind") or "", user):
         raise HTTPException(404, "job not found")
     return data.clean(doc)
 

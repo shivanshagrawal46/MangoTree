@@ -118,22 +118,37 @@ def public_user(doc: Dict[str, Any]) -> Dict[str, Any]:
     if side == "contractor":
         # The contractor portal needs the organisation and the person behind the
         # login, and the properties the organisation may see — nothing else.
+        # ``tools`` is the explicit list of RKB systems opened to this account
+        # (admin directive 2026-10-27: "arv" for Wes); empty means portal only.
         out.update({"org": doc.get("org"), "org_name": doc.get("org_name"), "person_id": doc.get("person_id"),
-                    "property_ids": list(doc.get("property_ids") or [])})
+                    "property_ids": list(doc.get("property_ids") or []),
+                    "tools": [t for t in (doc.get("tools") or []) if t in CONTRACTOR_TOOLS]})
     return out
 
 
+#: Systems a contractor account may be granted, one by one. Nothing else is
+#: ever reachable from a contractor session, whatever the browser asks for.
+CONTRACTOR_TOOLS = ("arv",)
+
+
 def ensure_contractor(mongo: Mongo, *, user_id: str, login_name: str, name: str, full_name: str, org: str, org_name: str,
-                      person_id: str, property_ids: List[str], password: Optional[str] = None) -> Dict[str, Any]:
+                      person_id: str, property_ids: List[str], password: Optional[str] = None,
+                      tools: Optional[List[str]] = None) -> Dict[str, Any]:
     """Create or update a contractor account (side=contractor). The password is
     set only when given (first creation, or a reset by RKB); returns the public
     user. Contractor accounts are refused by every RKB route by construction —
-    see current_user()."""
+    see current_user(). ``tools`` replaces the account's tool grants when given
+    (None leaves them as they are)."""
     users = mongo.db["users"]
     now = datetime.now(timezone.utc)
     doc = {"user_id": user_id, "login": login_name.strip().lower(), "name": name, "full_name": full_name, "role": "contractor",
            "side": "contractor", "org": org, "org_name": org_name, "person_id": person_id, "property_ids": list(property_ids),
            "updated_at": now}
+    if tools is not None:
+        bad = [t for t in tools if t not in CONTRACTOR_TOOLS]
+        if bad:
+            raise ValueError(f"unknown tools {bad}; allowed: {list(CONTRACTOR_TOOLS)}")
+        doc["tools"] = list(dict.fromkeys(tools))
     upd: Dict[str, Any] = {"$set": doc, "$setOnInsert": {"created_at": now, "active": True}}
     if password:
         if len(password) < 10:
@@ -191,6 +206,20 @@ def current_contractor(request: Request) -> Dict[str, Any]:
     return user
 
 
+def is_contractor(user: Dict[str, Any]) -> bool:
+    return user.get("side") == "contractor"
+
+
+def current_arv_user(request: Request) -> Dict[str, Any]:
+    """An RKB user, or a contractor account that has been granted the ARV tool.
+    This is the one place a contractor session crosses into an RKB system; the
+    ARV routes then scope everything to that account's own files."""
+    user = current_session(request)
+    if is_contractor(user) and "arv" not in (user.get("tools") or []):
+        raise HTTPException(403, "the ARV system has not been opened to this account")
+    return user
+
+
 def change_password(mongo: Mongo, user_id: str, old: str, new: str) -> None:
     doc = mongo.db["users"].find_one({"user_id": user_id})
     if not doc or not verify_password(old, doc.get("password_hash", "")):
@@ -203,3 +232,4 @@ def change_password(mongo: Mongo, user_id: str, old: str, new: str) -> None:
 CurrentUser = Depends(current_user)
 AnySession = Depends(current_session)
 CurrentContractor = Depends(current_contractor)
+CurrentArvUser = Depends(current_arv_user)

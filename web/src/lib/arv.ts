@@ -154,6 +154,8 @@ export type AnalysisDoc = {
 
 export type AnalysisSummary = {
   analysis_id: string; created_at: string; updated_at?: string; created_by_name?: string; status: string; error?: string | null; label?: string | null; property_id?: string | null;
+  /** Set when a contractor login (Wes) started the file: "contractor", with the organisation name. */
+  created_side?: "contractor" | "rkb"; created_org?: string; created_org_name?: string;
   subject?: Partial<Subject>; geocode?: Partial<Geocode>; valuation?: { arv?: number | null; arv_low?: number | null; arv_high?: number | null; confidence?: Confidence };
   analysis?: { headline?: string; arv_opinion?: number }; underwriting?: { mao?: Underwriting["mao"] }; rehab_budget?: { total?: number }; comps_count?: number;
 };
@@ -163,6 +165,7 @@ export type ArvStatus = {
   defaults: { assumptions: Assumptions; adders: Record<string, number>; radius_mi: number; months: number; target: number };
   scopes: Record<string, { label: string; low: number; mid: number; high: number; covers: string }>; line_items: { key: string; label: string }[];
   conditions: Record<string, string>; property_types: PropertyType[]; state_cost_index: Record<string, number>; properties: { property_id: string; address: string }[];
+  viewer?: { side: "rkb" | "contractor"; name?: string; org_name?: string };
 };
 
 export const arvApi = {

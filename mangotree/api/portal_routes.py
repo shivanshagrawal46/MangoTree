@@ -46,6 +46,8 @@ class ContractorAccount(BaseModel):
     property_ids: List[str] = []
     password: Optional[str] = None
     active: bool = True
+    #: RKB systems opened to this account ("arv"). None = leave as is.
+    tools: Optional[List[str]] = None
 
 
 def _ip(request: Request) -> Optional[str]:
@@ -192,12 +194,29 @@ def install(app, mongo) -> None:
             raise HTTPException(400, f"unknown properties: {bad}")
         try:
             out = ensure_contractor(mongo, user_id=body.user_id.strip().lower(), login_name=body.login, name=body.name, full_name=body.full_name,
-                                    org=body.org, org_name=body.org_name, person_id=body.person_id, property_ids=body.property_ids, password=body.password)
+                                    org=body.org, org_name=body.org_name, person_id=body.person_id, property_ids=body.property_ids, password=body.password,
+                                    tools=body.tools)
         except ValueError as exc:
             raise HTTPException(400, str(exc))
         mongo.db["users"].update_one({"user_id": body.user_id.strip().lower()}, {"$set": {"active": body.active}})
-        logger.info("portal: contractor account %s %s by %s", body.user_id, "updated" if not body.password else "created/reset", user["user_id"])
+        logger.info("portal: contractor account %s %s by %s (tools=%s)", body.user_id, "updated" if not body.password else "created/reset", user["user_id"], out.get("tools"))
         return out
+
+    @app.post("/portal-admin/accounts/{user_id}/tools")
+    def portal_account_tools(user_id: str, body: Dict[str, List[str]], user=CurrentUser):
+        """Open or close an RKB system for one contractor account — {"tools": ["arv"]}.
+        Separate from the upsert so a grant never needs the password or scope re-sent."""
+        ceo(user)
+        from .auth import CONTRACTOR_TOOLS
+        tools = [t for t in (body.get("tools") or [])]
+        bad = [t for t in tools if t not in CONTRACTOR_TOOLS]
+        if bad:
+            raise HTTPException(400, f"unknown tools {bad}; allowed: {list(CONTRACTOR_TOOLS)}")
+        res = mongo.db["users"].update_one({"user_id": user_id.strip().lower(), "side": "contractor"}, {"$set": {"tools": list(dict.fromkeys(tools)), "updated_at": datetime.now(timezone.utc)}})
+        if not res.matched_count:
+            raise HTTPException(404, "no such contractor account")
+        logger.info("portal: tools for %s set to %s by %s", user_id, tools, user["user_id"])
+        return {"user_id": user_id, "tools": list(dict.fromkeys(tools))}
 
     @app.get("/portal-admin/events")
     def portal_events(org: Optional[str] = None, limit: int = 200, user=CurrentUser):

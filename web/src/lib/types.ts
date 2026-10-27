@@ -2,6 +2,8 @@ export type User = {
   user_id: string; name: string; full_name?: string; role: string; home: string;
   /** "rkb" (default) or "contractor" — contractor sessions live in /portal only. */
   side?: "rkb" | "contractor"; org?: string; org_name?: string; person_id?: string; property_ids?: string[];
+  /** RKB systems opened to a contractor account ("arv"); empty = portal only. */
+  tools?: string[];
 };
 
 /* ------------------------------------------------------- contractor portal */

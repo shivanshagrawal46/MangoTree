@@ -84,7 +84,9 @@ export default function ArvPage() {
     { title: "Max offer", key: "mao", width: 110, align: "right", sorter: (a, b) => (a.underwriting?.mao?.recommended || 0) - (b.underwriting?.mao?.recommended || 0), render: (_, it) => <span className="text-[13px] font-semibold tnum">{money(it.underwriting?.mao?.recommended, true)}</span> },
     { title: "Rehab", key: "rehab", width: 100, align: "right", sorter: (a, b) => (a.rehab_budget?.total || 0) - (b.rehab_budget?.total || 0), render: (_, it) => <span className="text-[13px] tnum text-muted">{money(it.rehab_budget?.total, true)}</span> },
     { title: "Grade", key: "grade", width: 100, align: "right", sorter: (a, b) => (a.valuation?.confidence?.score || 0) - (b.valuation?.confidence?.score || 0), render: (_, it) => { const c = it.valuation?.confidence; return c ? <Pill tone={GRADE_TONE[c.grade] || "neutral"}>{c.grade} · {c.score}</Pill> : <span className="text-faint text-[11px]">—</span>; } },
-    { title: "Who · when", key: "who", width: 170, align: "right", sorter: (a, b) => String(a.created_at).localeCompare(String(b.created_at)), render: (_, it) => <span className="text-[11px] text-muted">{it.created_by_name} · {ago(it.created_at)}</span> },
+    { title: "Who · when", key: "who", width: 190, align: "right", sorter: (a, b) => String(a.created_at).localeCompare(String(b.created_at)),
+      // A file a contractor account started (Wes, via his login) is marked so RKB can tell its own searches from his at a glance.
+      render: (_, it) => <span className="text-[11px] text-muted inline-flex items-center gap-1.5 justify-end">{it.created_side === "contractor" && <Pill tone="high">searched by {it.created_org_name || "contractor"}</Pill>}<span>{it.created_by_name} · {ago(it.created_at)}</span></span> },
     {
       key: "actions", width: 44, align: "right",
       render: (_, it) => (

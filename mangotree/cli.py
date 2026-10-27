@@ -1134,6 +1134,30 @@ def cmd_property(args) -> int:
 
 
 # ---------------------------------------------------------------- main
+def cmd_portal_tools(args) -> int:
+    """Grant or revoke RKB systems on a contractor account (admin directive
+    2026-10-27: the ARV system for Wes's login, nothing else)."""
+    from mangotree.api.auth import CONTRACTOR_TOOLS
+    mongo = get_mongo()
+    uid = args.user_id.strip().lower()
+    doc = mongo.db["users"].find_one({"user_id": uid, "side": "contractor"}, {"_id": 0, "password_hash": 0})
+    if not doc:
+        rows = [u["user_id"] for u in mongo.db["users"].find({"side": "contractor"}, {"user_id": 1})]
+        print(f"no contractor account '{uid}'. Contractor accounts here: {rows or 'none'}")
+        return 1
+    if args.grant is None:
+        print(f"{uid} ({doc.get('name')}, {doc.get('org_name')}): tools = {doc.get('tools') or []}")
+        return 0
+    bad = [t for t in args.grant if t not in CONTRACTOR_TOOLS]
+    if bad:
+        print(f"unknown tools {bad}; allowed: {list(CONTRACTOR_TOOLS)}")
+        return 1
+    tools = list(dict.fromkeys(args.grant))
+    mongo.db["users"].update_one({"user_id": uid}, {"$set": {"tools": tools, "updated_at": datetime.now(timezone.utc)}})
+    print(f"{uid}: tools now {tools or '[] (portal only)'}")
+    return 0
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="mangotree", description="MangoTree ingestion")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -1280,6 +1304,11 @@ def main(argv=None) -> int:
     p_prop.add_argument("property_id")
     p_prop.add_argument("--limit", type=int, default=40)
     p_prop.set_defaults(func=cmd_property)
+
+    p_tools = sub.add_parser("portal-tools", help="open or close an RKB system (e.g. arv) for a contractor login")
+    p_tools.add_argument("user_id", help="the contractor account's user_id (see portal-admin/accounts)")
+    p_tools.add_argument("--grant", nargs="*", default=None, help="tools to open, e.g. --grant arv ; no value = close everything")
+    p_tools.set_defaults(func=cmd_portal_tools)
 
     args = parser.parse_args(argv)
     try:

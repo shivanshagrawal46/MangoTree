@@ -1,19 +1,24 @@
 """ARV routes (2026-10-14): start an analysis as a job, read it, edit any input
 and get the deterministic half recomputed at once, add or toggle comps, ask
 the analyst a follow-up, export. Installed onto the app like the other route
-modules; every route takes an RKB session."""
+modules; every route takes an RKB session — or, since 2026-10-27, a contractor
+account that has been granted the ``arv`` tool (Wes). A contractor session is
+scoped to the files it created itself: it cannot list, open, edit or delete
+anyone else's, cannot link a file to a portfolio property outside its scope,
+and every search it starts is stamped with the account and organisation and
+written to the contractor audit trail so RKB can see who searched what."""
 from __future__ import annotations
 
 import re
 from typing import Any, Dict, List, Optional
 
-from fastapi import Body, File, Form, HTTPException, Response, UploadFile
+from fastapi import Body, File, Form, HTTPException, Request, Response, UploadFile
 from pydantic import BaseModel
 
 from mangotree.config.registry import PROPERTY_INDEX
 
 from . import data
-from .auth import CurrentUser
+from .auth import CurrentArvUser, is_contractor
 
 
 class CreateBody(BaseModel):
@@ -101,48 +106,92 @@ def install(app, mongo, jobs) -> None:
         doc["rehab"] = {**rehab, "mode": "lines", "lines": lines, "source_doc_id": rec["doc_id"], "source": rec.get("filename"), "auto": True}
         return True
 
-    def _get(aid: str) -> Dict[str, Any]:
+    def _own(user: Dict[str, Any], doc: Dict[str, Any]) -> bool:
+        return not is_contractor(user) or doc.get("created_by") == user["user_id"]
+
+    def _get(aid: str, user: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         doc = store.get(aid)
-        if not doc:
+        # A contractor asking for a file that is not its own gets the same 404 as
+        # a file that does not exist: no confirmation that the id is real.
+        if not doc or (user is not None and not _own(user, doc)):
             raise HTTPException(404, "no such analysis")
         return doc
 
+    def _audit(user: Dict[str, Any], request: Optional[Request], action: str, doc: Dict[str, Any], extra: Optional[Dict[str, Any]] = None) -> None:
+        """Contractor use of the ARV system goes on the same hash-chained trail as
+        the portal replies, so Rakesh Sir's desk shows "searched by Wes" next to
+        everything else Wes did. RKB users are not logged here (their files
+        already carry created_by)."""
+        if not is_contractor(user):
+            return
+        try:
+            from mangotree.portal import sheets as S
+            ip = None
+            if request is not None:
+                fwd = request.headers.get("x-forwarded-for")
+                ip = (fwd.split(",")[0].strip() if fwd else None) or (request.client.host if request.client else None)
+            S.record_event(mongo, user=user, action=action, ip=ip, property_id=doc.get("property_id"),
+                           text=(doc.get("geocode") or {}).get("formatted") or (doc.get("subject") or {}).get("address"),
+                           extra={"analysis_id": doc.get("analysis_id"), "tool": "arv", **(extra or {})})
+        except Exception as exc:   # the audit row must never block the search itself
+            from mangotree.core.logging import logger
+            logger.warning("arv: could not record contractor audit event (%s): %s", action, exc)
+
     @app.get("/arv/status")
-    def arv_status(user=CurrentUser):
+    def arv_status(user=CurrentArvUser):
         from mangotree.arv.engine import CONDITION_LABEL, DEFAULT_ASSUMPTIONS, PROPERTY_TYPES
         from mangotree.arv.rehab import DEFAULT_ADDERS, LINE_ITEMS, SCOPE_TIERS, STATE_COST_INDEX
+        # A contractor may link a file only to the portfolio properties in its scope;
+        # the rest of the portfolio is not listed to it.
+        scope = set(user.get("property_ids") or []) if is_contractor(user) else None
+        props = [p for p in PROPERTY_INDEX.values() if scope is None or p.property_id in scope]
         return {"providers": cfg.providers_status(), "doc_types": documents_mod.DOC_TYPES, "defaults": {"assumptions": DEFAULT_ASSUMPTIONS, "adders": DEFAULT_ADDERS,
                 "radius_mi": cfg.COMP_RADIUS_MILES, "months": cfg.COMP_MONTHS, "target": cfg.COMP_TARGET},
                 "scopes": {k: {kk: vv for kk, vv in v.items()} for k, v in SCOPE_TIERS.items()}, "line_items": [{"key": l["key"], "label": l["label"]} for l in LINE_ITEMS],
                 "conditions": CONDITION_LABEL, "property_types": list(PROPERTY_TYPES), "state_cost_index": STATE_COST_INDEX,
-                "properties": [{"property_id": p.property_id, "address": "%s, %s, %s %s" % (p.canonical_address, p.city, p.state, p.postal)} for p in PROPERTY_INDEX.values()]}
+                "properties": [{"property_id": p.property_id, "address": "%s, %s, %s %s" % (p.canonical_address, p.city, p.state, p.postal)} for p in props],
+                "viewer": {"side": "contractor" if is_contractor(user) else "rkb", "name": user.get("name"), "org_name": user.get("org_name")}}
 
     @app.get("/arv/geocode")
-    def arv_geocode(q: str, user=CurrentUser):
+    def arv_geocode(q: str, user=CurrentArvUser):
         try:
             return geocode(q)
         except GeocodeError as exc:
             raise HTTPException(422, str(exc))
 
     @app.get("/arv/analyses")
-    def arv_list(limit: int = 50, property_id: Optional[str] = None, user=CurrentUser):
-        return data.clean({"items": store.list(limit=min(max(limit, 1), 200), property_id=property_id)})
+    def arv_list(limit: int = 50, property_id: Optional[str] = None, user=CurrentArvUser):
+        items = store.list(limit=min(max(limit, 1), 200), property_id=property_id,
+                           created_by=user["user_id"] if is_contractor(user) else None)
+        return data.clean({"items": items})
 
     @app.post("/arv/analyses")
-    def arv_create(body: CreateBody, user=CurrentUser):
+    def arv_create(body: CreateBody, request: Request, user=CurrentArvUser):
         addr = (body.subject or {}).get("address") or ""
         if len(addr.strip()) < 6:
             raise HTTPException(422, "Enter the property address.")
         pid = body.property_id if body.property_id in PROPERTY_INDEX else None
+        if pid and is_contractor(user) and pid not in (user.get("property_ids") or []):
+            pid = None
         doc = pipeline.new_document(subject=body.subject, assumptions=body.assumptions, rehab=body.rehab, settings=body.settings, user=user,
                                     property_id=pid, label=body.label)
+        if is_contractor(user):
+            # Stamped on the file itself, so every list, PDF and workbook that
+            # shows "by ..." reads "Wes Stone (ROI Blocks)" without a lookup.
+            doc["created_side"] = "contractor"
+            doc["created_org"] = user.get("org")
+            doc["created_org_name"] = user.get("org_name")
+            doc["created_by_name"] = "%s (%s)" % (user.get("name") or user["user_id"], user.get("org_name") or "contractor")
         for did in body.document_ids[:40]:
             rec = docs_coll.find_one({"doc_id": did, "$or": [{"analysis_id": None}, {"analysis_id": doc["analysis_id"]}]}, {"_id": 0})
             if rec:
+                if is_contractor(user) and rec.get("uploaded_by") not in (None, user["user_id"]):
+                    continue   # a staged upload belongs to whoever staged it
                 docs_coll.update_one({"doc_id": did}, {"$set": {"analysis_id": doc["analysis_id"]}})
                 _attach(doc, rec)
                 _adopt_bid(doc, rec)
         store.create(doc)
+        _audit(user, request, "arv_search", doc, {"label": doc.get("label")})
 
         def run(job):
             def emit(kind, payload):
@@ -156,19 +205,21 @@ def install(app, mongo, jobs) -> None:
         return {"analysis_id": doc["analysis_id"], "job_id": job.job_id}
 
     @app.get("/arv/analyses/{aid}")
-    def arv_get(aid: str, user=CurrentUser):
-        return data.clean(_get(aid))
+    def arv_get(aid: str, user=CurrentArvUser):
+        return data.clean(_get(aid, user))
 
     @app.delete("/arv/analyses/{aid}")
-    def arv_delete(aid: str, user=CurrentUser):
+    def arv_delete(aid: str, request: Request, user=CurrentArvUser):
+        doc = _get(aid, user)
         if not store.delete(aid):
             raise HTTPException(404, "no such analysis")
         docs_coll.delete_many({"analysis_id": aid})   # the document records go with the file; the bytes stay in the object store by hash
+        _audit(user, request, "arv_deleted", doc)
         return {"ok": True}
 
     @app.patch("/arv/analyses/{aid}")
-    def arv_patch(aid: str, body: PatchBody, user=CurrentUser):
-        doc = _get(aid)
+    def arv_patch(aid: str, body: PatchBody, user=CurrentArvUser):
+        doc = _get(aid, user)
         if body.subject is not None:
             merged = {**doc["subject"], **{k: v for k, v in body.subject.items()}}
             doc["subject"] = pipeline.clean_subject(merged)
@@ -199,8 +250,8 @@ def install(app, mongo, jobs) -> None:
         return data.clean(doc)
 
     @app.post("/arv/analyses/{aid}/comps")
-    def arv_add_comp(aid: str, body: CompBody, user=CurrentUser):
-        doc = _get(aid)
+    def arv_add_comp(aid: str, body: CompBody, user=CurrentArvUser):
+        doc = _get(aid, user)
         c = providers.new_comp(**{k: v for k, v in (body.comp or {}).items() if k in _COMP_EDITABLE})
         c["source"] = "manual"
         c["included"] = True if c.get("included") is None else c["included"]
@@ -217,16 +268,16 @@ def install(app, mongo, jobs) -> None:
         return data.clean(doc)
 
     @app.delete("/arv/analyses/{aid}/comps/{comp_id}")
-    def arv_delete_comp(aid: str, comp_id: str, user=CurrentUser):
-        doc = _get(aid)
+    def arv_delete_comp(aid: str, comp_id: str, user=CurrentArvUser):
+        doc = _get(aid, user)
         doc["comps"] = [c for c in doc.get("comps") or [] if c["comp_id"] != comp_id]
         pipeline.recompute(doc)
         store.save(doc)
         return data.clean(doc)
 
     @app.post("/arv/analyses/{aid}/rerun")
-    def arv_rerun(aid: str, body: RerunBody = Body(default=RerunBody()), user=CurrentUser):
-        doc = _get(aid)
+    def arv_rerun(aid: str, request: Request, body: RerunBody = Body(default=RerunBody()), user=CurrentArvUser):
+        doc = _get(aid, user)
         if jobs.active_of_kind("arv") and any(j.meta.get("analysis_id") == aid for j in jobs.jobs.values() if j.kind == "arv" and j.status in ("queued", "running")):
             raise HTTPException(409, "this analysis is already running")
         stages = [s for s in body.stages if s in ("geocode", "records", "market", "comps", "shortlist", "analyst")] or ["analyst"]
@@ -238,19 +289,22 @@ def install(app, mongo, jobs) -> None:
         doc["job_id"] = job.job_id
         doc["status"] = "running"
         store.patch(aid, {"job_id": job.job_id, "status": "running"})
+        _audit(user, request, "arv_rerun", doc, {"stages": stages})
         return {"analysis_id": aid, "job_id": job.job_id}
 
     @app.post("/arv/analyses/{aid}/chat")
-    def arv_chat(aid: str, body: ChatBody, user=CurrentUser):
+    def arv_chat(aid: str, body: ChatBody, request: Request, user=CurrentArvUser):
         from mangotree.arv import analyst
-        doc = _get(aid)
+        doc = _get(aid, user)
         q = body.question.strip()
         if not q:
             raise HTTPException(422, "ask something")
         from datetime import datetime, timezone
         now = datetime.now(timezone.utc).isoformat()
-        doc.setdefault("chat", []).append({"role": "user", "content": q, "by": user["user_id"], "by_name": user.get("name"), "at": now})
+        doc.setdefault("chat", []).append({"role": "user", "content": q, "by": user["user_id"], "by_name": user.get("name"), "at": now,
+                                           **({"by_org": user.get("org_name")} if is_contractor(user) else {})})
         store.save(doc)
+        _audit(user, request, "arv_question", doc, {"question": q[:300]})
 
         def run(job):
             history = [{"role": m["role"], "content": m["content"]} for m in doc["chat"][:-1]]
@@ -265,12 +319,12 @@ def install(app, mongo, jobs) -> None:
     # ------------------------------------------------------------ documents
     @app.post("/arv/documents")
     async def arv_upload_documents(files: List[UploadFile] = File(...), analysis_id: Optional[str] = Form(None), hint: Optional[str] = Form(None),
-                                   address: Optional[str] = Form(None), user=CurrentUser):
+                                   address: Optional[str] = Form(None), user=CurrentArvUser):
         """Store the files at once and read them in a job (Claude Opus 5.5 per
         document). Without analysis_id the records are staged for the intake
         wizard, which passes their ids to POST /arv/analyses; with one they are
         attached to that analysis as each read lands."""
-        target = _get(analysis_id) if analysis_id else None
+        target = _get(analysis_id, user) if analysis_id else None
         payloads = []
         for f in files[:40]:
             data_bytes = await f.read()
@@ -304,17 +358,27 @@ def install(app, mongo, jobs) -> None:
         job = jobs.start("arv_docs", {"analysis_id": (target or {}).get("analysis_id"), "by": user["user_id"], "files": len(payloads)}, run)
         return data.clean({"job_id": job.job_id, "documents": [documents_mod.digest(rec) for rec, _ in payloads]})
 
-    @app.get("/arv/documents/{doc_id}")
-    def arv_document(doc_id: str, user=CurrentUser):
+    def _doc_rec(doc_id: str, user: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """A document record, if this session may see it: RKB sees all; a
+        contractor sees only what it uploaded or what sits on its own files."""
         rec = docs_coll.find_one({"doc_id": doc_id}, {"_id": 0})
+        if rec and is_contractor(user) and rec.get("uploaded_by") != user["user_id"]:
+            owner = store.get(rec["analysis_id"]) if rec.get("analysis_id") else None
+            if not owner or owner.get("created_by") != user["user_id"]:
+                return None
+        return rec
+
+    @app.get("/arv/documents/{doc_id}")
+    def arv_document(doc_id: str, user=CurrentArvUser):
+        rec = _doc_rec(doc_id, user)
         if not rec:
             raise HTTPException(404, "no such document")
         return data.clean(documents_mod.digest(rec))
 
     @app.get("/arv/documents/{doc_id}/file")
-    def arv_document_file(doc_id: str, user=CurrentUser):
+    def arv_document_file(doc_id: str, user=CurrentArvUser):
         from mangotree.storage.objectstore import get_object_store
-        rec = docs_coll.find_one({"doc_id": doc_id}, {"_id": 0})
+        rec = _doc_rec(doc_id, user)
         if not rec or not rec.get("sha256"):
             raise HTTPException(404, "no such document")
         blob = get_object_store().get(rec["sha256"])
@@ -324,8 +388,8 @@ def install(app, mongo, jobs) -> None:
         return Response(blob, media_type=rec.get("content_type") or "application/octet-stream", headers={"Content-Disposition": 'inline; filename="%s"' % safe})
 
     @app.delete("/arv/analyses/{aid}/documents/{doc_id}")
-    def arv_detach_document(aid: str, doc_id: str, user=CurrentUser):
-        doc = _get(aid)
+    def arv_detach_document(aid: str, doc_id: str, user=CurrentArvUser):
+        doc = _get(aid, user)
         doc["documents"] = [x for x in (doc.get("documents") or []) if x.get("doc_id") != doc_id]
         docs_coll.delete_one({"doc_id": doc_id, "analysis_id": aid})
         pipeline.recompute(doc)
@@ -333,10 +397,10 @@ def install(app, mongo, jobs) -> None:
         return data.clean(doc)
 
     @app.post("/arv/analyses/{aid}/documents/{doc_id}/apply")
-    def arv_apply_document(aid: str, doc_id: str, body: ApplyBody, user=CurrentUser):
+    def arv_apply_document(aid: str, doc_id: str, body: ApplyBody, user=CurrentArvUser):
         """Take what a document says into the file: its facts about the house,
         its priced repair items as the rehab budget, or its comparable sales."""
-        doc = _get(aid)
+        doc = _get(aid, user)
         rec = next((x for x in (doc.get("documents") or []) if x.get("doc_id") == doc_id), None)
         if not rec or rec.get("status") != "done":
             raise HTTPException(404, "no readable document with that id on this analysis")
@@ -386,15 +450,15 @@ def install(app, mongo, jobs) -> None:
         return data.clean(doc)
 
     @app.get("/arv/analyses/{aid}/report.pdf")
-    def arv_pdf(aid: str, user=CurrentUser):
-        doc = _get(aid)
+    def arv_pdf(aid: str, user=CurrentArvUser):
+        doc = _get(aid, user)
         name = re.sub(r"[^A-Za-z0-9]+", "-", (doc.get("geocode") or {}).get("formatted") or doc["subject"].get("address") or aid).strip("-")[:60]
         return Response(report.pdf(doc, user_name=user.get("name") or ""), media_type="application/pdf",
                         headers={"Content-Disposition": 'inline; filename="ARV-%s.pdf"' % name})
 
     @app.get("/arv/analyses/{aid}/calculator.xlsx")
-    def arv_xlsx(aid: str, user=CurrentUser):
-        doc = _get(aid)
+    def arv_xlsx(aid: str, user=CurrentArvUser):
+        doc = _get(aid, user)
         name = re.sub(r"[^A-Za-z0-9]+", "-", (doc.get("geocode") or {}).get("formatted") or doc["subject"].get("address") or aid).strip("-")[:60]
         return Response(report.xlsx(doc), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         headers={"Content-Disposition": 'attachment; filename="MAO-Rehab-Calculator-%s.xlsx"' % name})
