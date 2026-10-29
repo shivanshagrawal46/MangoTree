@@ -38,14 +38,17 @@ export default function ArvPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items.map((i) => i.analysis_id).join(",")]);
   const [addr, setAddr] = React.useState("");
-  const [filter, setFilter] = React.useState<"all" | "running" | "done" | "failed">("all");
+  const [filter, setFilter] = React.useState<"all" | "roi" | "running" | "done" | "failed">("all");
+  // Files started from a contractor login (Wes / Panos at ROI Blocks) get their own tab on the RKB side.
+  const isRkb = status.data?.viewer?.side !== "contractor";
+  const roiItems = items.filter((i) => i.created_side === "contractor");
   const [q, setQ] = React.useState("");
   const start = () => router.push(addr.trim() ? `/arv/new?address=${encodeURIComponent(addr.trim())}` : "/arv/new");
 
   const running = items.filter((i) => i.status === "running" || i.status === "queued").length;
   const valued = items.filter((i) => i.valuation?.arv);
   const strong = valued.filter((i) => ["A", "B"].includes(i.valuation?.confidence?.grade || "")).length;
-  const shown = items.filter((i) => (filter === "all" ? true : filter === "running" ? i.status === "running" || i.status === "queued" : i.status === filter))
+  const shown = items.filter((i) => (filter === "all" ? true : filter === "roi" ? i.created_side === "contractor" : filter === "running" ? i.status === "running" || i.status === "queued" : i.status === filter))
     .filter((i) => !q.trim() || `${i.geocode?.formatted || i.subject?.address || ""} ${i.label || ""} ${i.created_by_name || ""}`.toLowerCase().includes(q.trim().toLowerCase()));
 
   const remove = async (it: AnalysisSummary) => {
@@ -158,12 +161,12 @@ export default function ArvPage() {
 
       <div>
         <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
-          <Segmented value={filter} onChange={(v) => setFilter(v as typeof filter)} options={[{ value: "all", label: `All · ${items.length}` }, { value: "running", label: `Running · ${running}` }, { value: "done", label: "Done" }, { value: "failed", label: "Failed" }]} />
+          <Segmented value={filter} onChange={(v) => setFilter(v as typeof filter)} options={[{ value: "all", label: `All · ${items.length}` }, ...(isRkb ? [{ value: "roi", label: `ROI Blocks · ${roiItems.length}` }] : []), { value: "running", label: `Running · ${running}` }, { value: "done", label: "Done" }, { value: "failed", label: "Failed" }]} />
           <Input allowClear value={q} onChange={(e) => setQ(e.target.value)} placeholder="Find an address, label or person" prefix={<Search size={13} className="text-faint" />} className="!w-72" />
         </div>
         <Card className="overflow-hidden">
           <Table<AnalysisSummary> rowKey="analysis_id" columns={columns} dataSource={shown} loading={list.isLoading} pagination={shown.length > 25 ? { pageSize: 25, showSizeChanger: false } : false} size="middle"
-            locale={{ emptyText: items.length === 0 ? "No files yet. Start with an address above." : "Nothing matches this filter." }}
+            locale={{ emptyText: items.length === 0 ? "No files yet. Start with an address above." : filter === "roi" ? "ROI Blocks has not started any files yet." : "Nothing matches this filter." }}
             onRow={(it) => ({
               onClick: (e) => { if ((e.target as HTMLElement).closest("button, a, .ant-popover, .ant-popconfirm")) return; router.push(`/arv/${it.analysis_id}`); },
               onMouseEnter: () => { void qc.prefetchQuery({ queryKey: ["arv", it.analysis_id], queryFn: () => arvApi.get(it.analysis_id), staleTime: 5 * 60_000 }); },
