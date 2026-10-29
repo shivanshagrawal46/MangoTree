@@ -22,7 +22,7 @@ from mangotree.storage.mongo import Mongo
 SUMMARY_FIELDS = ("analysis_id", "created_at", "updated_at", "created_by", "created_by_name", "created_side", "created_org", "created_org_name",
                   "status", "error", "job_id",
                   "subject.address", "subject.property_type", "subject.beds", "subject.baths", "subject.sqft", "geocode.formatted", "geocode.state",
-                  "valuation.arv", "valuation.arv_low", "valuation.arv_high", "valuation.confidence", "analysis.headline", "analysis.arv_opinion",
+                  "valuation.arv", "valuation.arv_low", "valuation.arv_high", "valuation.confidence", "analysis.headline", "analysis.arv_opinion", "analysis.arv_low", "analysis.arv_high",
                   "underwriting.mao", "rehab_budget.total", "comps_count", "property_id", "label")
 
 CACHE_SIZE = 64

@@ -136,6 +136,10 @@ export type Analysis = {
   next_steps: string[]; model?: string; effort?: string; usage?: { total_cost_usd?: number }; at?: string;
 };
 
+/** The one ARV the file is underwritten on: the AI analyst's opinion once the review has run, else the engine's sales comparison. */
+export type ArvUsed = { value: number | null; low: number | null; high: number | null; basis: "analyst" | "engine"; label: string; engine: number | null; analyst: number | null;
+  engine_low?: number | null; engine_high?: number | null; model?: string | null; at?: string | null; diff_pct?: number | null };
+
 export type Phase = { key: string; label: string; status: "running" | "done" | "skipped" | "failed"; detail?: string; at?: string };
 export type ChatMsg = { role: "user" | "assistant"; content: string; by?: string; by_name?: string; at: string; model?: string };
 export type Records = Record<string, any> | null;
@@ -149,7 +153,7 @@ export type AnalysisDoc = {
   reapi_comps?: { found?: number; set_aside?: { address?: string; deed_amount?: number | null; deed_date?: string | null; why?: string }[]; avm?: Avm | null; warning?: string | null; returned?: number } | null;
   data_cost_usd?: number;
   rehab: RehabInput; rehab_budget?: RehabBudget; assumptions: Assumptions; settings: Record<string, any>; valuation?: Valuation; underwriting?: Underwriting;
-  analysis?: Analysis; analysis_error?: string | null; answers: { question: string; answer: string }[]; chat: ChatMsg[]; phases: Phase[]; data_sources: string[]; cost_usd?: number;
+  arv?: ArvUsed | null; analysis?: Analysis; analysis_error?: string | null; answers: { question: string; answer: string }[]; chat: ChatMsg[]; phases: Phase[]; data_sources: string[]; cost_usd?: number;
 };
 
 export type AnalysisSummary = {
@@ -157,7 +161,7 @@ export type AnalysisSummary = {
   /** Set when a contractor login (Wes) started the file: "contractor", with the organisation name. */
   created_side?: "contractor" | "rkb"; created_org?: string; created_org_name?: string;
   subject?: Partial<Subject>; geocode?: Partial<Geocode>; valuation?: { arv?: number | null; arv_low?: number | null; arv_high?: number | null; confidence?: Confidence };
-  analysis?: { headline?: string; arv_opinion?: number }; underwriting?: { mao?: Underwriting["mao"] }; rehab_budget?: { total?: number }; comps_count?: number;
+  analysis?: { headline?: string; arv_opinion?: number; arv_low?: number; arv_high?: number }; underwriting?: { mao?: Underwriting["mao"] }; rehab_budget?: { total?: number }; comps_count?: number;
 };
 
 export type ArvStatus = {

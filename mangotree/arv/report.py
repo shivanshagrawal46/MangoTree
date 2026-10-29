@@ -82,11 +82,16 @@ def pdf(doc: Dict[str, Any], *, user_name: str = "") -> bytes:
         ("as repaired %s" % subj.get("condition_after")) if subj.get("condition_after") else None] if x)
     story.append(P(facts, st["p"]))
     story.append(Spacer(1, 8))
-    head = [[P("<b>ARV (sales comparison)</b>", st["p"]), P("<b>Range</b>", st["p"]), P("<b>Confidence</b>", st["p"]), P("<b>Analyst opinion</b>", st["p"]), P("<b>Recommended MAO</b>", st["p"])],
-            [P(_m(v.get("arv")), st["big"]), P("%s – %s" % (_m(v.get("arv_low")), _m(v.get("arv_high"))), st["p"]),
-             P("%s (%s/100, ±%s%%)" % (_esc(conf.get("label")), conf.get("score"), conf.get("band_pct")), st["p"]),
-             P("%s<br/>%s – %s" % (_m(an.get("arv_opinion")), _m(an.get("arv_low")), _m(an.get("arv_high"))) if an else "—", st["p"]),
-             P(_m((uw.get("mao") or {}).get("recommended")), st["p"])]]
+    # The ARV the file is underwritten on: the AI analyst's opinion once the
+    # review has run (``doc["arv"]``), else the engine's sales comparison.
+    fa = doc.get("arv") or {"value": v.get("arv"), "low": v.get("arv_low"), "high": v.get("arv_high"), "basis": "engine"}
+    ai_based = fa.get("basis") == "analyst"
+    head = [[P("<b>ARV (%s)</b>" % ("AI analyst" if ai_based else "sales comparison"), st["p"]), P("<b>Range</b>", st["p"]), P("<b>Confidence</b>", st["p"]),
+             P("<b>%s</b>" % ("Engine (sales comparison)" if ai_based else "Analyst opinion"), st["p"]), P("<b>Recommended MAO</b>", st["p"])],
+            [P(_m(fa.get("value")), st["big"]), P("%s – %s" % (_m(fa.get("low")), _m(fa.get("high"))), st["p"]),
+             P("%s (%s/100, ±%s%%)" % (_esc(conf.get("label")), conf.get("score"), conf.get("band_pct")) if ai_based is False else _esc(an.get("confidence") or conf.get("label")), st["p"]),
+             P("%s<br/>%s – %s" % (_m(v.get("arv")), _m(v.get("arv_low")), _m(v.get("arv_high"))) if ai_based else ("%s<br/>%s – %s" % (_m(an.get("arv_opinion")), _m(an.get("arv_low")), _m(an.get("arv_high"))) if an else "—"), st["p"]),
+             P("%s<br/><font size=6.5 color='#6b6b76'>on the %s ARV</font>" % (_m((uw.get("mao") or {}).get("recommended")), "AI" if ai_based else "engine"), st["p"])]]
     t = Table(head, colWidths=[42 * mm, 36 * mm, 38 * mm, 36 * mm, 30 * mm])
     t.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#d3cfc5")), ("INNERGRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#e6e3dc")),
                            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#efede8")), ("VALIGN", (0, 0), (-1, -1), "TOP")]))

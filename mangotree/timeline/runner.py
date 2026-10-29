@@ -110,6 +110,9 @@ class TimelineBuilder:
             "sha256": 1, "filename": 1, "relative_path": 1, "doc_class": 1,
             "date": 1, "property_ids": 1, "text": 1, "privileged": 1,
             "source_type": 1, "subject": 1, "body_clean": 1, "participants": 1,
+            # Heading-split transcripts: per-section property offsets, so an
+            # event lands only on the property whose section quotes it.
+            "chunk_sections": 1,
         }
         artifacts = list(self.mongo.artifacts.find(query, projection))
         # Emails carry their content in ``body_clean``; the extractor reads

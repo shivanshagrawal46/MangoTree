@@ -15,6 +15,14 @@ import { money, ago } from "@/lib/utils";
 import { arvApi, GRADE_TONE, PROPERTY_TYPE_LABEL, type AnalysisSummary, type PropertyType } from "@/lib/arv";
 import { Pill } from "@/components/arv/bits";
 
+/** The ARV a file is read on: the AI analyst's opinion once the review has run, else the engine's sales comparison. */
+function fileArv(it: AnalysisSummary): { arv: number; arv_low?: number | null; arv_high?: number | null; ai: boolean } {
+  const an = it.analysis;
+  if (an?.arv_opinion) return { arv: an.arv_opinion, arv_low: an.arv_low || an.arv_opinion, arv_high: an.arv_high || an.arv_opinion, ai: true };
+  const v = it.valuation;
+  return { arv: v?.arv || 0, arv_low: v?.arv_low, arv_high: v?.arv_high, ai: false };
+}
+
 export default function ArvPage() {
   const router = useRouter();
   const qc = useQueryClient();
@@ -68,15 +76,16 @@ export default function ArvPage() {
       },
     },
     {
-      title: "After repair value", key: "arv", width: 200, sorter: (a, b) => (a.valuation?.arv || 0) - (b.valuation?.arv || 0),
+      title: "After repair value", key: "arv", width: 200, sorter: (a, b) => fileArv(a).arv - fileArv(b).arv,
       render: (_, it) => {
-        const v = it.valuation;
-        const span = v?.arv_low && v?.arv_high && v.arv_high > v.arv_low ? v : null;
+        // The analyst's ARV once the review has run, else the engine's — the same number the file is underwritten on.
+        const v = fileArv(it);
+        const span = v.arv_low && v.arv_high && v.arv_high > v.arv_low ? v : null;
         return (
           <div>
-            <div className="text-[15px] font-semibold tnum tracking-tight">{v?.arv ? money(v.arv) : it.status === "running" ? <span className="text-faint text-[12px]">computing…</span> : "—"}</div>
-            {span && <div className="relative h-1.5 mt-1 rounded-full bg-sunken overflow-hidden"><div className="absolute inset-y-0 bg-accent/30" style={{ left: "8%", right: "8%" }} /><div className="absolute inset-y-0 w-[2px] bg-accent" style={{ left: `${8 + ((v!.arv! - v!.arv_low!) / (v!.arv_high! - v!.arv_low!)) * 84}%` }} /></div>}
-            {span && <div className="text-[10px] text-faint tnum mt-0.5">{money(v!.arv_low, true)} – {money(v!.arv_high, true)}</div>}
+            <div className="text-[15px] font-semibold tnum tracking-tight">{v.arv ? money(v.arv) : it.status === "running" ? <span className="text-faint text-[12px]">computing…</span> : "—"}</div>
+            {span && <div className="relative h-1.5 mt-1 rounded-full bg-sunken overflow-hidden"><div className="absolute inset-y-0 bg-accent/30" style={{ left: "8%", right: "8%" }} /><div className="absolute inset-y-0 w-[2px] bg-accent" style={{ left: `${8 + ((v.arv - v.arv_low!) / (v.arv_high! - v.arv_low!)) * 84}%` }} /></div>}
+            {span && <div className="text-[10px] text-faint tnum mt-0.5">{money(v.arv_low, true)} – {money(v.arv_high, true)}{v.ai ? " · AI" : ""}</div>}
           </div>
         );
       },

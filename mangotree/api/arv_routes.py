@@ -206,7 +206,18 @@ def install(app, mongo, jobs) -> None:
 
     @app.get("/arv/analyses/{aid}")
     def arv_get(aid: str, user=CurrentArvUser):
-        return data.clean(_get(aid, user))
+        doc = _get(aid, user)
+        # Files saved before the analyst's ARV became the file's ARV carry no
+        # ``arv`` block and a max offer on the engine's number; one deterministic
+        # recompute brings them in line (no model calls).
+        if doc.get("status") == "done" and doc.get("analysis") and not doc.get("arv"):
+            try:
+                pipeline.recompute(doc)
+                store.save(doc)
+            except Exception:
+                from mangotree.core.logging import logger
+                logger.exception("arv backfill recompute failed for %s", aid)
+        return data.clean(doc)
 
     @app.delete("/arv/analyses/{aid}")
     def arv_delete(aid: str, request: Request, user=CurrentArvUser):

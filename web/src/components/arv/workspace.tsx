@@ -110,6 +110,18 @@ export function Workspace({ id }: { id: string }) {
   const v = doc.valuation;
   const an = doc.analysis;
   const uw = doc.underwriting;
+  // The ARV the file is underwritten on: the analyst's opinion once the review has run, else the
+  // engine's. Older files carry no ``arv`` block, so the same rule is applied here.
+  const fa = doc.arv || (an?.arv_opinion
+    ? { value: an.arv_opinion, low: an.arv_low || an.arv_opinion, high: an.arv_high || an.arv_opinion, basis: "analyst" as const, engine: v?.arv ?? null, analyst: an.arv_opinion, label: "AI analyst opinion" }
+    : { value: v?.arv ?? null, low: v?.arv_low ?? null, high: v?.arv_high ?? null, basis: "engine" as const, engine: v?.arv ?? null, analyst: null, label: "sales comparison (engine)" });
+  const aiArv = fa.basis === "analyst";
+  // The analyst states confidence as high / medium / low; the gauge wants a score and grade.
+  const ANALYST_CONF: Record<string, { score: number; grade: string }> = { high: { score: 85, grade: "A" }, medium: { score: 60, grade: "C" }, low: { score: 30, grade: "D" } };
+  const aiBand = aiArv && fa.value && fa.low != null && fa.high != null && fa.high > fa.low ? Math.round(((fa.high - fa.low) / 2 / fa.value) * 100) : null;
+  const conf = aiArv && an?.confidence
+    ? { ...(ANALYST_CONF[an.confidence.toLowerCase()] || { score: 50, grade: "C" }), band_pct: aiBand, reasons: an.confidence_reason ? [an.confidence_reason] : [], label: `${an.confidence} confidence · AI analyst` }
+    : v?.confidence;
   const title = doc.geocode?.formatted || s.address;
   const facts = [PROPERTY_TYPE_LABEL[s.property_type as PropertyType], s.beds != null ? `${s.beds}${s.beds_after && s.beds_after !== s.beds ? `→${s.beds_after}` : ""} bd` : null,
     s.baths != null ? `${s.baths}${s.baths_after && s.baths_after !== s.baths ? `→${s.baths_after}` : ""} ba` : null, s.sqft ? `${num(s.sqft)}${s.sqft_after && s.sqft_after !== s.sqft ? `→${num(s.sqft_after)}` : ""} sqft` : null,
@@ -156,20 +168,23 @@ export function Workspace({ id }: { id: string }) {
         <Card className="mt-4 overflow-hidden">
           <div className="grid md:grid-cols-[1.7fr_0.75fr_1fr_1fr] divide-y md:divide-y-0 md:divide-x divide-line">
             <div className="p-5 min-w-0">
-              <div className="flex items-center justify-between gap-2"><div className="text-[11px] uppercase tracking-wide text-muted font-medium">After repair value</div>{v?.confidence && <GradeBadge conf={v.confidence} />}</div>
-              <div className="flex items-end gap-3 mt-1.5">
-                <div className="text-[38px] leading-none font-semibold tracking-tight tnum">{v?.arv ? money(v.arv) : running ? <span className="text-faint text-xl">computing…</span> : "—"}</div>
-                {v?.arv && <div className="text-[11.5px] text-muted pb-1 leading-snug">{money(v.arv_low, true)} – {money(v.arv_high, true)}<br />${num(v.reconciliation?.value_per_sqft, 0)}/sqft · {v.reconciliation?.comps_used} comps</div>}
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-[11px] uppercase tracking-wide text-muted font-medium">After repair value <span className="normal-case tracking-normal text-faint font-normal">· {aiArv ? "AI analyst" : "sales comparison"}</span></div>
+                {aiArv ? (an?.confidence && <Badge tone={an.confidence === "high" ? "good" : an.confidence === "low" ? "critical" : "high"}>{an.confidence} confidence</Badge>) : (conf && <GradeBadge conf={conf} />)}
               </div>
-              <RangeBar low={v?.arv_low} high={v?.arv_high} value={v?.arv} compLow={v?.reconciliation?.comp_low} compHigh={v?.reconciliation?.comp_high}
-                marks={[{ label: "analyst", value: an?.arv_opinion, tone: "text-high" }, { label: doc.avm?.source?.split(" ")[0] || "AVM", value: doc.avm?.value, tone: "text-info" }]} className="mt-2" />
+              <div className="flex items-end gap-3 mt-1.5">
+                <div className="text-[38px] leading-none font-semibold tracking-tight tnum">{fa.value ? money(fa.value) : running ? <span className="text-faint text-xl">computing…</span> : "—"}</div>
+                {fa.value && <div className="text-[11.5px] text-muted pb-1 leading-snug">{money(fa.low, true)} – {money(fa.high, true)}<br />{aiArv ? <>engine {money(fa.engine, true)} · {v?.reconciliation?.comps_used} comps</> : <>${num(v?.reconciliation?.value_per_sqft, 0)}/sqft · {v?.reconciliation?.comps_used} comps</>}</div>}
+              </div>
+              <RangeBar low={fa.low} high={fa.high} value={fa.value} compLow={v?.reconciliation?.comp_low} compHigh={v?.reconciliation?.comp_high}
+                marks={[aiArv ? { label: "engine", value: fa.engine, tone: "text-muted" } : { label: "analyst", value: an?.arv_opinion, tone: "text-high" }, { label: doc.avm?.source?.split(" ")[0] || "AVM", value: doc.avm?.value, tone: "text-info" }]} className="mt-2" />
             </div>
             <div className="p-5 flex flex-col items-center justify-center">
-              <Gauge conf={v?.confidence} size={128} />
-              <div className="text-[10.5px] text-muted text-center leading-snug">{v?.confidence?.label || "Confidence"}{v?.confidence?.band_pct ? ` · expect ±${v.confidence.band_pct}%` : ""}</div>
+              <Gauge conf={conf} size={128} />
+              <div className="text-[10.5px] text-muted text-center leading-snug" title={conf?.reasons?.[0]}>{conf?.label || "Confidence"}{conf?.band_pct ? ` · expect ±${conf.band_pct}%` : ""}</div>
             </div>
             <div className="p-5 min-w-0">
-              <div className="text-[11px] uppercase tracking-wide text-muted font-medium">Max offer</div>
+              <div className="text-[11px] uppercase tracking-wide text-muted font-medium">Max offer <span className="normal-case tracking-normal text-faint font-normal">· on the {aiArv ? "AI" : "engine"} ARV</span></div>
               <div className="text-[26px] leading-none font-semibold tracking-tight tnum mt-1.5">{money(uw?.mao.recommended)}</div>
               {uw && <div className="mt-3 space-y-1">
                 <Mini k={`${num(uw.mao.rule_pct, 0)}% rule`} v={money(uw.mao.rule, true)} />
@@ -259,7 +274,7 @@ function upsertPhase(list: Phase[], p: Phase): Phase[] {
 function applyPartial(d: AnalysisDoc, key: string, value: any): AnalysisDoc {
   if (key.startsWith("market_")) return { ...d, market: { ...(d.market || { gaps: [] }), [key.slice(7)]: value } as any };
   if (key === "document") { const list = (d.documents || []).slice(); const i = list.findIndex((x) => x.doc_id === value.doc_id); if (i === -1) list.push(value); else list[i] = { ...list[i], ...value }; return { ...d, documents: list }; }
-  if (["geocode", "subject", "records", "market", "avm", "comps", "valuation", "rehab_budget", "underwriting", "analysis", "profile", "shortlist", "housecanary"].includes(key)) return { ...d, [key]: value } as AnalysisDoc;
+  if (["geocode", "subject", "records", "market", "avm", "comps", "valuation", "arv", "rehab_budget", "underwriting", "analysis", "profile", "shortlist", "housecanary"].includes(key)) return { ...d, [key]: value } as AnalysisDoc;
   return d;
 }
 

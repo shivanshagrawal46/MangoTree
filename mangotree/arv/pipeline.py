@@ -123,8 +123,34 @@ def merge_records(subject: Dict[str, Any], records: Optional[Dict[str, Any]]) ->
     return out
 
 
-def recompute(doc: Dict[str, Any]) -> Dict[str, Any]:
-    """Deterministic half: rehab budget, sales comparison, underwriting."""
+def arv_used(doc: Dict[str, Any], *, basis: Optional[str] = None) -> Dict[str, Any]:
+    """The one ARV the file is underwritten on (2026-10-29): the AI analyst's
+    opinion when the review has run, else the engine's sales comparison. The
+    engine's number stays on ``valuation`` for the audit trail; everything a
+    person reads as "the ARV" — the headline, the max offer, profit, the lender
+    checks, the report and the calculator — comes from this block.
+
+    ``basis="engine"`` forces the sales comparison (used while the analyst is
+    about to review the file, so it critiques the engine's math, not its own
+    last opinion)."""
+    v = doc.get("valuation") or {}
+    an = doc.get("analysis") or {}
+    eng = _num(v.get("arv"))
+    op = _num(an.get("arv_opinion"))
+    out: Dict[str, Any] = {"engine": eng, "analyst": op, "engine_low": _num(v.get("arv_low")), "engine_high": _num(v.get("arv_high"))}
+    if basis != "engine" and op and op > 0:
+        out.update({"value": op, "low": _num(an.get("arv_low")) or op, "high": _num(an.get("arv_high")) or op, "basis": "analyst",
+                    "label": "AI analyst opinion", "model": an.get("model"), "at": an.get("at"),
+                    "diff_pct": round((op - eng) / eng * 100, 1) if eng else None})
+    else:
+        out.update({"value": eng, "low": _num(v.get("arv_low")), "high": _num(v.get("arv_high")), "basis": "engine",
+                    "label": "sales comparison (engine)", "model": None, "at": v.get("computed_at"), "diff_pct": None})
+    return out
+
+
+def recompute(doc: Dict[str, Any], *, basis: Optional[str] = None) -> Dict[str, Any]:
+    """Deterministic half: rehab budget, sales comparison, underwriting.
+    Underwriting runs on ``arv_used`` (the analyst's ARV once there is one)."""
     subj = as_repaired(doc["subject"])
     geo = doc.get("geocode") or {}
     state = geo.get("state") or None
@@ -132,7 +158,8 @@ def recompute(doc: Dict[str, Any]) -> Dict[str, Any]:
     doc["rehab_budget"] = rehab_mod.budget(doc.get("rehab") or {}, sqft=sqft, state=state)
     avm = doc.get("avm")
     doc["valuation"] = engine.value(subj, doc.get("comps") or [], doc.get("market") or {}, avm, doc.get("settings") or {})
-    arv = (doc["valuation"] or {}).get("arv")
+    doc["arv"] = arv_used(doc, basis=basis)
+    arv = doc["arv"].get("value")
     a = dict(doc.get("assumptions") or {})
     rec = doc.get("records") or {}
     if a.get("property_taxes_annual") in (None, "") and rec.get("tax_annual"):
@@ -141,6 +168,7 @@ def recompute(doc: Dict[str, Any]) -> Dict[str, Any]:
     if a.get("hoa_monthly") in (None, "") and rec.get("hoa_monthly"):
         a["hoa_monthly"] = rec["hoa_monthly"]
     doc["underwriting"] = engine.underwrite(arv, doc["rehab_budget"]["total"], a, state=state, sqft=sqft or None, market=doc.get("market"))
+    doc["underwriting"]["arv_basis"] = doc["arv"]["basis"]
     doc["computed_at"] = datetime.now(timezone.utc).isoformat()
     return doc
 
@@ -411,17 +439,21 @@ def run(doc: Dict[str, Any], store: ArvStore, emit: Optional[Emit] = None, *, st
 
         # ---------------------------------------------------------- compute
         _phase(doc, emit, "compute", "Score, adjust, reconcile, underwrite", "running")
-        recompute(doc)
+        reviewing = "analyst" in stages and st.get("run_analyst", True)
+        # The analyst reviews the engine's math, so while a review is about to
+        # run the file is underwritten on the engine; its opinion takes over below.
+        recompute(doc, basis="engine" if reviewing else None)
         v = doc["valuation"]
         _phase(doc, emit, "compute", "Score, adjust, reconcile, underwrite", "done",
                ("ARV $%s (%s - %s), %s" % (format(int(v["arv"]), ","), format(int(v["arv_low"]), ","), format(int(v["arv_high"]), ","), v["confidence"]["label"])) if v.get("arv") else v.get("reconciliation", {}).get("error", "no value"))
         partial("valuation", v)
+        partial("arv", doc["arv"])
         partial("rehab_budget", doc["rehab_budget"])
         partial("underwriting", doc["underwriting"])
         store.save(doc)
 
         # ---------------------------------------------------------- analyst
-        if "analyst" in stages and st.get("run_analyst", True):
+        if reviewing:
             _phase(doc, emit, "analyst", "AI review", "running")
             try:
                 an = analyst.analyze(doc, emit=say)
@@ -430,10 +462,19 @@ def run(doc: Dict[str, Any], store: ArvStore, emit: Optional[Emit] = None, *, st
                 doc["cost_usd"] = round(float(doc.get("cost_usd") or 0) + float((an.get("usage") or {}).get("total_cost_usd") or 0), 4)
                 _phase(doc, emit, "analyst", "AI review", "done", an.get("headline", "")[:200])
                 partial("analysis", an)
+                # The analyst's ARV is the file's ARV: max offer, profit and the
+                # lender checks are re-run on it.
+                recompute(doc)
+                partial("arv", doc["arv"])
+                partial("underwriting", doc["underwriting"])
             except Exception as exc:
                 logger.exception("arv analyst failed")
                 doc["analysis_error"] = str(exc)[:300]
                 _phase(doc, emit, "analyst", "AI review", "failed", str(exc)[:200])
+                if doc.get("analysis"):  # an earlier review is still the file's ARV
+                    recompute(doc)
+                    partial("arv", doc["arv"])
+                    partial("underwriting", doc["underwriting"])
         doc["status"] = "done"
     except Exception as exc:
         doc["status"] = "failed"
