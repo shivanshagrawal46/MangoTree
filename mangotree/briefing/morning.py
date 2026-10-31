@@ -301,7 +301,27 @@ class Scheduler:
 
     def _due_outbox(self) -> bool:
         last = getattr(self, "_last_outbox", None)
-        return last is None or (datetime.now(timezone.utc) - last) >= timedelta(minutes=self.OUTBOX_MINUTES)
+        if last is None or (datetime.now(timezone.utc) - last) >= timedelta(minutes=self.OUTBOX_MINUTES):
+            return True
+        # A held email whose hour has arrived since the last flush leaves on this
+        # tick, not up to ten minutes later (the 6:05 recurring send is at 6:05).
+        from mangotree.mail.outbox import Outbox
+        if self._outbox is None:
+            self._outbox = Outbox(self.mongo)
+        return bool(self._outbox.coll.count_documents({"status": "queued", "send_after": {"$gt": last, "$lte": datetime.now(timezone.utc)}}, limit=1))
+
+    def run_recurring(self) -> Dict[str, Any]:
+        """Queue today's copy of every active recurring email once its send time
+        is within the hour; the outbox holds it until the minute (2026-10-31)."""
+        from mangotree.mail.outbox import Outbox
+        from mangotree.mail.recurring import RecurringSends
+        if self._outbox is None:
+            self._outbox = Outbox(self.mongo)
+        if getattr(self, "_recurring", None) is None:
+            self._recurring = RecurringSends(self.mongo)
+        if not self._recurring.coll.count_documents({"active": True}, limit=1):
+            return {}
+        return self._recurring.tick(self._outbox)
 
     @staticmethod
     def _zone(name: str):
@@ -577,6 +597,14 @@ class Scheduler:
                 self._yield_logged = True
             return
         self._yield_logged = False
+        # Recurring emails: today's copy is queued ahead and held for its minute.
+        if self.intake_enabled:
+            try:
+                rec = self.run_recurring()
+                if rec and rec.get("queued"):
+                    self._record("recurring", True, rec)
+            except Exception as exc:
+                logger.exception("recurring sends failed")
         # Held emails leave at their hour; no model involved.
         if self.intake_enabled and self._due_outbox():
             try:

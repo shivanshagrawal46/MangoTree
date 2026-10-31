@@ -97,17 +97,19 @@ class Outbox:
     # -------------------------------------------------------------- queue
     def queue(self, *, kind: str, ref: str, to: Sequence[Tuple[str, str]], subject: str, html: str, text: str,
               attachments: Sequence[Tuple[str, bytes, str]] = (), meta: Optional[Dict[str, Any]] = None,
-              dedupe: bool = True, send_after: Optional[datetime] = None) -> Dict[str, Any]:
-        """Put one email on the outbox. ``to`` is [(name, address)]; ``attachments``
-        [(filename, bytes, content_type)]. With ``dedupe`` an identical
-        (kind, ref) still queued or sent is not queued twice. ``send_after``
-        holds the email (reminders wait for a civil hour)."""
+              dedupe: bool = True, send_after: Optional[datetime] = None,
+              cc: Sequence[Tuple[str, str]] = ()) -> Dict[str, Any]:
+        """Put one email on the outbox. ``to`` and ``cc`` are [(name, address)];
+        ``attachments`` [(filename, bytes, content_type)]. With ``dedupe`` an
+        identical (kind, ref) still queued or sent is not queued twice.
+        ``send_after`` holds the email (reminders wait for a civil hour)."""
         if dedupe:
             existing = self.coll.find_one({"kind": kind, "ref": ref, "status": {"$in": ["queued", "sent", "needs_consent", "replied"]}}, {"_id": 0, "outbox_id": 1, "status": 1})
             if existing:
                 return {"outbox_id": existing["outbox_id"], "status": existing["status"], "deduped": True}
         oid = f"ob-{uuid.uuid4().hex[:12]}"
         doc = {"outbox_id": oid, "kind": kind, "ref": ref, "to": [{"name": n, "address": a.lower()} for n, a in to],
+               "cc": [{"name": n, "address": a.lower()} for n, a in cc],
                "subject": subject, "html": html, "text": text,
                "attachments": [{"filename": f, "content_type": ct, "bytes": b, "size": len(b)} for f, b, ct in attachments],
                "meta": meta or {}, "status": "queued", "attempts": 0, "queued_at": datetime.now(timezone.utc),
@@ -132,6 +134,7 @@ class Outbox:
             "subject": doc["subject"],
             "body": {"contentType": "HTML", "content": doc["html"]},
             "toRecipients": [{"emailAddress": {"address": r["address"], "name": r.get("name") or r["address"]}} for r in doc["to"]],
+            "ccRecipients": [{"emailAddress": {"address": r["address"], "name": r.get("name") or r["address"]}} for r in doc.get("cc") or []],
             "attachments": [{"@odata.type": "#microsoft.graph.fileAttachment", "name": a["filename"], "contentType": a["content_type"],
                              "contentBytes": base64.b64encode(a["bytes"]).decode("ascii")} for a in doc.get("attachments") or []],
             "internetMessageHeaders": [{"name": "x-mangotree-outbox", "value": doc["outbox_id"]}],

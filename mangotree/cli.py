@@ -1134,6 +1134,62 @@ def cmd_property(args) -> int:
 
 
 # ---------------------------------------------------------------- main
+def _parse_recipient(s: str):
+    import re as _re
+    m = _re.match(r"^\s*(?:\"?([^\"<]+?)\"?\s*)?<([^>]+)>\s*$", s)
+    if m:
+        return ((m.group(1) or m.group(2)).strip(), m.group(2).strip())
+    return (s.strip(), s.strip())
+
+
+def cmd_recurring(args) -> int:
+    """Add, list, stop or send-now a recurring email (admin directive 2026-10-31:
+    the Durham / Lane Pl reconciliation email to Wes and Kelly daily at 6:05 ET)."""
+    from mangotree.mail.outbox import Outbox
+    from mangotree.mail.recurring import RecurringSends
+    mongo = get_mongo()
+    rs = RecurringSends(mongo)
+    if args.action == "list":
+        rows = rs.list()
+        if not rows:
+            print("no recurring emails"); return 0
+        for r in rows:
+            print(f"{r['rec_id']}  {'ACTIVE ' if r.get('active') else 'stopped'}  {r['hour']:02d}:{r['minute']:02d} {r['tz']}  "
+                  f"to {[t['address'] for t in r['to']]} cc {[t['address'] for t in r.get('cc') or []]}  "
+                  f"subject '{r['subject'][:60]}'  last day {r.get('last_queued_day')}  sent {r.get('sent_days', 0)}  missed {r.get('missed_days') or []}")
+        return 0
+    if args.action == "stop":
+        if not args.rec_id:
+            print("stop needs the rec_id (see: recurring list)"); return 1
+        res = rs.stop(args.rec_id, by=args.by, outbox=Outbox(mongo))
+        print(res.get("error") or f"stopped {args.rec_id}; cancelled {res['cancelled_queued']} waiting copy")
+        return 0 if not res.get("error") else 1
+    if args.action == "send-now":
+        if not args.rec_id:
+            print("send-now needs the rec_id"); return 1
+        rec = rs.coll.find_one({"rec_id": args.rec_id})
+        if not rec:
+            print("no such recurrence"); return 1
+        ob = Outbox(mongo)
+        from datetime import datetime as _dt, timezone as _tz
+        res = ob.queue(kind="recurring", ref=f"{rec['rec_id']}:manual-{_dt.now(_tz.utc):%Y%m%d%H%M%S}", to=[(t["name"], t["address"]) for t in rec["to"]],
+                       cc=[(t["name"], t["address"]) for t in rec.get("cc") or []], subject=rec["subject"], html=rec["html"], text=rec["text"],
+                       meta={"recurrence": rec["rec_id"], "manual": True}, dedupe=False)
+        print("queued", res, "->", ob.flush())
+        return 0
+    # add
+    missing = [k for k in ("name", "to", "subject", "body_file") if not getattr(args, k)]
+    if missing:
+        print("add needs --name --to --subject --body-file"); return 1
+    hh, mm = (int(x) for x in args.at.split(":"))
+    text = Path(args.body_file).read_text(encoding="utf-8")
+    rec = rs.add(name=args.name, to=[_parse_recipient(s) for s in args.to], cc=[_parse_recipient(s) for s in args.cc],
+                 subject=args.subject, text=text, hour=hh, minute=mm, tz=args.tz, created_by=args.by, start_day=args.start)
+    print(f"added {rec['rec_id']}: daily {hh:02d}:{mm:02d} {args.tz} to {[a for _, a in rec['to']] if isinstance(rec['to'][0], tuple) else [t['address'] for t in rec['to']]}")
+    print("stop it with:  python -m mangotree.cli recurring stop", rec["rec_id"])
+    return 0
+
+
 def cmd_portal_tools(args) -> int:
     """Grant or revoke RKB systems on a contractor account (admin directive
     2026-10-27: the ARV system for Wes's login, nothing else)."""
@@ -1309,6 +1365,20 @@ def main(argv=None) -> int:
     p_tools.add_argument("user_id", help="the contractor account's user_id (see portal-admin/accounts)")
     p_tools.add_argument("--grant", nargs="*", default=None, help="tools to open, e.g. --grant arv ; no value = close everything")
     p_tools.set_defaults(func=cmd_portal_tools)
+
+    p_rec = sub.add_parser("recurring", help="a fixed email sent every day at a local time until stopped")
+    p_rec.add_argument("action", choices=["add", "list", "stop", "send-now"])
+    p_rec.add_argument("rec_id", nargs="?", help="recurrence id for stop / send-now")
+    p_rec.add_argument("--name", help="short label, e.g. 'Durham / Lane Pl reconciliation'")
+    p_rec.add_argument("--to", nargs="*", default=[], help="recipients as 'Name <address>' or address")
+    p_rec.add_argument("--cc", nargs="*", default=[], help="cc recipients, same form")
+    p_rec.add_argument("--subject")
+    p_rec.add_argument("--body-file", help="plain-text body; blank line = new paragraph")
+    p_rec.add_argument("--at", default="06:05", help="local send time HH:MM (default 06:05)")
+    p_rec.add_argument("--tz", default="America/New_York")
+    p_rec.add_argument("--start", default=None, help="first day YYYY-MM-DD (local); default today")
+    p_rec.add_argument("--by", default="admin")
+    p_rec.set_defaults(func=cmd_recurring)
 
     args = parser.parse_args(argv)
     try:
