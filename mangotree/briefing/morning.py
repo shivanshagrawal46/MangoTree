@@ -308,7 +308,11 @@ class Scheduler:
         from mangotree.mail.outbox import Outbox
         if self._outbox is None:
             self._outbox = Outbox(self.mongo)
-        return bool(self._outbox.coll.count_documents({"status": "queued", "send_after": {"$gt": last, "$lte": datetime.now(timezone.utc)}}, limit=1))
+        now = datetime.now(timezone.utc)
+        return bool(self._outbox.coll.count_documents({"status": "queued", "$or": [
+            {"send_after": {"$gt": last, "$lte": now}},            # its hour arrived since the last flush
+            {"send_after": {"$lte": now}, "queued_at": {"$gt": last}},   # queued since the last flush, already due
+        ]}, limit=1))
 
     def run_recurring(self) -> Dict[str, Any]:
         """Queue today's copy of every active recurring email once its send time
