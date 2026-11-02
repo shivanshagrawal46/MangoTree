@@ -85,10 +85,49 @@ class Outbox:
             logger.warning("outbox: Graph not configured for sending: %s", exc)
             return False
 
+    def can_draft(self) -> bool:
+        try:
+            from mangotree.ingest.graph_auth import DRAFT_SCOPES
+            self._graph().auth.access_token(DRAFT_SCOPES)
+            return True
+        except Exception:
+            return False
+
+    def save_draft(self, *, to: Sequence[Tuple[str, str]], subject: str, html: str, cc: Sequence[Tuple[str, str]] = (),
+                   attachments: Sequence[Tuple[str, bytes, str]] = ()) -> Dict[str, Any]:
+        """Create an unsent message in the mailbox's Drafts folder
+        (``POST /users/{mailbox}/messages``; needs Mail.ReadWrite). Nothing is
+        sent; the person opens Drafts, reads it and presses Send himself.
+        Recorded on the outbox with status ``draft`` for the audit trail."""
+        from mangotree.ingest.graph_auth import DRAFT_SCOPES
+        g = self._graph()
+        token = g.auth.access_token(DRAFT_SCOPES)      # raises GraphReauthRequired until consented
+        msg = {
+            "subject": subject,
+            "body": {"contentType": "HTML", "content": html},
+            "toRecipients": [{"emailAddress": {"address": a, "name": n or a}} for n, a in to],
+            "ccRecipients": [{"emailAddress": {"address": a, "name": n or a}} for n, a in cc],
+            "attachments": [{"@odata.type": "#microsoft.graph.fileAttachment", "name": f, "contentType": ct,
+                             "contentBytes": base64.b64encode(b).decode("ascii")} for f, b, ct in attachments],
+        }
+        r = g._session.post(f"{GRAPH_ROOT}/users/{quote(g.mailbox)}/messages", json=msg,
+                            headers={"Authorization": f"Bearer {token}"}, timeout=max(g.timeout, 120))
+        if r.status_code != 201:
+            raise RuntimeError(f"Graph refused the draft: HTTP {r.status_code}: {r.text[:300]}")
+        created = r.json()
+        oid = f"ob-{uuid.uuid4().hex[:12]}"
+        self.coll.insert_one({"outbox_id": oid, "kind": "draft", "ref": created.get("id"), "to": [{"name": n, "address": a.lower()} for n, a in to],
+                              "cc": [{"name": n, "address": a.lower()} for n, a in cc], "subject": subject, "html": html, "text": "",
+                              "attachments": [], "meta": {"web_link": created.get("webLink")}, "status": "draft", "attempts": 0,
+                              "queued_at": datetime.now(timezone.utc), "send_after": None, "sent_at": None, "error": None,
+                              "internet_message_id": None, "conversation_id": created.get("conversationId"), "graph_message_id": created.get("id")})
+        logger.info("outbox: draft saved in %s Drafts: %s", g.mailbox, subject)
+        return {"outbox_id": oid, "graph_message_id": created.get("id"), "web_link": created.get("webLink"), "mailbox": g.mailbox}
+
     def send_status(self) -> Dict[str, Any]:
         try:
             g = self._graph()
-            return {"mailbox": g.mailbox, "can_send": g.auth.can_send(), "signed_in": g.auth.is_authenticated,
+            return {"mailbox": g.mailbox, "can_send": g.auth.can_send(), "can_draft": self.can_draft(), "signed_in": g.auth.is_authenticated,
                     "how_to_enable": "On the server: cd /rkb/MangoTree && .venv/bin/python -m mangotree.cli outlook-auth — "
                                      "then rakesh@mtreh.com opens the link, enters the code and accepts 'Send mail as you'."}
         except Exception as exc:

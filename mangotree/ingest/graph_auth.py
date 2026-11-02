@@ -62,6 +62,13 @@ SCOPES: List[str] = ["Mail.Read", "offline_access"]
 #: while sending reports "consent needed" until Rakesh signs in once more; the
 #: device-code sign-in asks for both, so one sign-in covers everything.
 SEND_SCOPES: List[str] = ["Mail.Send"]
+#: Drafts (admin directive 2026-11-02): an email written by the system can be
+#: saved into Rakesh's Drafts folder for him to read and send himself. Graph
+#: creates a draft with ``POST /users/{mailbox}/messages``, which needs
+#: ``Mail.ReadWrite``. Separate scope set, same pattern as sending: reading and
+#: sending keep working on the old consent; saving a draft reports "consent
+#: needed" until the next sign-in, which asks for all three.
+DRAFT_SCOPES: List[str] = ["Mail.ReadWrite"]
 
 AUTHORITY = "https://login.microsoftonline.com/{tenant}"
 
@@ -164,7 +171,7 @@ class GraphDelegatedAuth:
     ) -> str:
         """Interactive one-time sign-in. Returns the signed-in username."""
         app = self._application()
-        flow = app.initiate_device_flow(scopes=[s for s in SCOPES if s != "offline_access"] + SEND_SCOPES)
+        flow = app.initiate_device_flow(scopes=[s for s in SCOPES if s != "offline_access"] + SEND_SCOPES + DRAFT_SCOPES)
 
         if "user_code" not in flow:
             raise GraphAuthError(
@@ -258,6 +265,13 @@ class GraphDelegatedAuth:
                         "Sending needs a one-time consent for Mail.Send: run "
                         "`python -m mangotree.cli outlook-auth` and have "
                         f"{self.mailbox} sign in once more (reading is unaffected). "
+                        f"Detail: {str(error)[:300]}"
+                    )
+                if any(s in DRAFT_SCOPES for s in wanted):
+                    raise GraphReauthRequired(
+                        "Saving a draft needs a one-time consent for Mail.ReadWrite: run "
+                        "`python -m mangotree.cli outlook-auth` and have "
+                        f"{self.mailbox} sign in once more (reading and sending are unaffected). "
                         f"Detail: {str(error)[:300]}"
                     )
                 raise GraphReauthRequired(

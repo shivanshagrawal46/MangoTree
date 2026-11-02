@@ -941,12 +941,20 @@ def cmd_outlook_auth(args) -> int:
         account = auth.signed_in_account()
         print(f"\nAlready signed in as {account}.")
         if not auth.needs_reauth():
-            if auth.can_send():
-                print("Token refreshes silently; reading and sending both work. Nothing to do.")
+            from mangotree.ingest.graph_auth import DRAFT_SCOPES, GraphReauthRequired
+            try:
+                auth.access_token(DRAFT_SCOPES); can_draft = True
+            except GraphReauthRequired:
+                can_draft = False
+            if auth.can_send() and can_draft:
+                print("Token refreshes silently; reading, sending and saving drafts all work. Nothing to do.")
                 print("Use --force to sign in again as a different account.\n")
                 return 0
-            print("Reading works, but SENDING is not yet consented (Mail.Send is new since 2026-09-16).")
-            print("Signing in once more adds it — the next-steps sheets and reminders go out from this mailbox.\n")
+            if not auth.can_send():
+                print("Reading works, but SENDING is not yet consented (Mail.Send is new since 2026-09-16).")
+            if not can_draft:
+                print("Reading works, but SAVING DRAFTS is not yet consented (Mail.ReadWrite is new since 2026-11-02).")
+            print("Signing in once more adds it; the consent screen will list read, send and read-write mail together.\n")
         else:
             print("But the refresh token is no longer valid — signing in again.\n")
 
@@ -962,12 +970,13 @@ def cmd_outlook_auth(args) -> int:
         print(f"  1. Open this page:   {prompt.verification_uri}")
         print(f"  2. Enter this code:  {prompt.user_code}")
         print(f"  3. Sign in as:       {auth.mailbox}")
-        print("  4. Approve the consent screen. It should say 'Read your mail' and")
-        print("     'Send mail as you' — both for THIS account only.")
+        print("  4. Approve the consent screen. It should say 'Read your mail',")
+        print("     'Send mail as you' and 'Read and write access to your mail' —")
+        print("     all for THIS account only.")
         print("     If it mentions ALL mailboxes, STOP — the app has Application")
         print("     permissions instead of Delegated. See runbook step 3.")
-        print("     If 'Send mail as you' is missing, add the delegated permission")
-        print("     Mail.Send to the app registration in Entra (API permissions).")
+        print("     If one of them is missing, add the delegated permission")
+        print("     (Mail.Send / Mail.ReadWrite) to the app registration in Entra (API permissions).")
         print("  " + "-" * 64)
         print(f"\n  Code expires in {prompt.expires_in // 60} minutes. Waiting...\n")
 
@@ -1190,6 +1199,26 @@ def cmd_recurring(args) -> int:
     return 0
 
 
+def cmd_outlook_draft(args) -> int:
+    """Save an email into the Drafts folder of the configured mailbox
+    (rakesh@mtreh.com) without sending it. Needs the Mail.ReadWrite consent."""
+    from mangotree.mail.outbox import Outbox
+    from mangotree.mail.recurring import text_to_html
+    ob = Outbox(get_mongo())
+    if not ob.can_draft():
+        st = ob.send_status()
+        print("Cannot save drafts yet: the mailbox consent has no Mail.ReadWrite.\n"
+              f"  {st.get('how_to_enable')}\n  (the sign-in now asks for Mail.Read, Mail.Send and Mail.ReadWrite together)")
+        return 1
+    text = Path(args.body_file).read_text(encoding="utf-8")
+    res = ob.save_draft(to=[_parse_recipient(s) for s in args.to], cc=[_parse_recipient(s) for s in args.cc],
+                        subject=args.subject, html=text_to_html(text))
+    print(f"draft saved in {res['mailbox']} Drafts: '{args.subject}'  ({res['outbox_id']})")
+    if res.get("web_link"):
+        print("open:", res["web_link"])
+    return 0
+
+
 def cmd_portal_tools(args) -> int:
     """Grant or revoke RKB systems on a contractor account (admin directive
     2026-10-27: the ARV system for Wes's login, nothing else)."""
@@ -1379,6 +1408,13 @@ def main(argv=None) -> int:
     p_rec.add_argument("--start", default=None, help="first day YYYY-MM-DD (local); default today")
     p_rec.add_argument("--by", default="admin")
     p_rec.set_defaults(func=cmd_recurring)
+
+    p_draft = sub.add_parser("outlook-draft", help="save an email in rakesh@mtreh.com's Drafts folder (not sent)")
+    p_draft.add_argument("--to", nargs="+", required=True, help="recipients as 'Name <address>' or address")
+    p_draft.add_argument("--cc", nargs="*", default=[])
+    p_draft.add_argument("--subject", required=True)
+    p_draft.add_argument("--body-file", required=True, help="plain-text body; blank line = new paragraph")
+    p_draft.set_defaults(func=cmd_outlook_draft)
 
     args = parser.parse_args(argv)
     try:
