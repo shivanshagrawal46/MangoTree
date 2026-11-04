@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sold Price Sources Compared</title>
+<style>
+@page { size: Letter; margin: 15mm 13mm 17mm 13mm; }
+:root{ --fg:#1c1f23; --muted:#5d636b; --rule:#d2cfc6; --th:#eeede8; --band:#f7f6f2; --ink:#143d5c; --pos:#1f7a4d; --neg:#b3261e; --warn:#a8650c; }
+*{box-sizing:border-box}
+body{color:var(--fg);font:12px/1.45 "Segoe UI",system-ui,Arial,sans-serif;margin:0}
+h1{font:600 24px/1.15 Georgia,serif;margin:4px 0 8px}
+h2{font:600 18px/1.2 Georgia,serif;margin:0 0 8px;padding-top:10px;border-top:2px solid var(--fg)}
+h3{font:600 13.5px/1.3 "Segoe UI",system-ui,Arial,sans-serif;color:var(--ink);margin:14px 0 4px;break-after:avoid}
+p{margin:6px 0}
+.eyebrow{font:600 10px/1 Consolas,monospace;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+table{border-collapse:collapse;width:100%;font-size:11.5px;table-layout:fixed;margin:6px 0 4px;break-inside:avoid}
+th,td{padding:6px 7px;border:1px solid var(--rule);text-align:left;vertical-align:top}
+thead th{background:var(--th);font:600 10px/1.3 Consolas,monospace;letter-spacing:.03em;text-transform:uppercase;color:var(--muted)}
+tbody th{font-weight:600;color:var(--ink);background:#fafaf7}
+.num{font-family:Consolas,monospace}
+.big{white-space:nowrap}
+table.src{table-layout:fixed}
+table.src col.c1{width:14%} table.src col.c2{width:11%} table.src col.c3{width:12%} table.src col.c4{width:11%} table.src col.c5{width:24%} table.src col.c6{width:28%}
+tbody th{width:auto}
+.big{font-weight:700;font-size:13px}
+.pos{color:var(--pos)} .neg{color:var(--neg)} .warn{color:var(--warn)} .mut{color:var(--muted)}
+.cap{font-size:10.5px;color:var(--muted);margin:2px 0 8px}
+.band{background:var(--band);border:1px solid var(--rule);padding:8px 12px;margin:10px 0;break-inside:avoid}
+ol,ul{margin:4px 0 4px 18px;padding:0}
+li{margin:5px 0}
+li b{color:var(--ink)}
+.pb{break-before:page}
+footer{margin-top:14px;font-size:10px;color:var(--muted);border-top:1px solid var(--rule);padding-top:6px}
+footer a{color:var(--ink);text-decoration:none}
+</style>
+</head>
+<body>
+
+<div class="eyebrow">RKB Consulting Group · ARV engine · 22 October 2026</div>
+<h1>Sold price: our system against Redfin</h1>
+<p>Two recently sold rowhouses in Baltimore 21217. "Our system" is RealEstateAPI (the recorded deed) and HouseCanary (its own copy of the county record) together; both returned the same sold price. "Official SDAT" is the State of Maryland's property record for the same deed. "Redfin" is the current value Redfin's live page shows a visitor today.</p>
+
+<table class="simple">
+<colgroup><col style="width:22%"><col style="width:20%"><col style="width:19%"><col style="width:20%"><col style="width:19%"></colgroup>
+<thead><tr><th>Property</th><th>Our system: sold price</th><th>Official SDAT: sold price</th><th>Redfin: current value (Redfin Estimate)</th><th>Redfin value vs actual sale</th></tr></thead>
+<tbody>
+<tr><th>2033 N Fulton Ave<br><span class="mut">Baltimore, MD 21217</span></th><td><span class="num big">$135,000</span><br><span class="mut">23 Sep 2026, arm's-length, 98% mortgage</span></td><td><span class="num big">$135,000</span><br><span class="mut">23 Sep 2026, deed Liber 29464 Folio 0164</span></td><td><span class="num big warn">$149,998</span><br><span class="mut">"+$14K since last sold"</span></td><td><span class="num big neg">+$14,998 (+11%)</span><br><span class="mut">asking price was $195,900 (+45%)</span></td></tr>
+<tr><th>2837 Woodbrook Ave<br><span class="mut">Baltimore, MD 21217</span></th><td><span class="num big">$155,000</span><br><span class="mut">12 Aug 2026, arm's-length, 98% mortgage</span></td><td><span class="num big">$155,000</span><br><span class="mut">12 Aug 2026, deed Liber 29344 Folio 0296</span></td><td><span class="num big warn">$230,819</span><br><span class="mut">"+$75K since last sold"</span></td><td><span class="num big neg">+$75,819 (+49%)</span><br><span class="mut">asking price was $149,999 (−3%)</span></td></tr>
+</tbody>
+</table>
+<p class="cap">Our system: RealEstateAPI deed record and HouseCanary sales history, called 22 Oct 2026. SDAT: Maryland Real Property Assessments open data, records updated 5 Oct 2026 (dates in both columns are the deed recording date; the Woodbrook contract closed 31 Jul 2026). Redfin: Redfin Estimate as served on its property pages, 22 Oct 2026; its own "last sold" rows show the same $135,000 and $155,000. Zillow could not be read (bot protection).</p>
+
+<h3>What our system knows about each sale that Redfin does not show</h3>
+<table class="simple">
+<colgroup><col style="width:22%"><col style="width:39%"><col style="width:39%"></colgroup>
+<thead><tr><th></th><th>2033 N Fulton Ave</th><th>2837 Woodbrook Ave</th></tr></thead>
+<tbody>
+<tr><th>Kind of sale</th><td>Arm's-length resale, deed recorded 23 Sep 2026</td><td>Arm's-length resale, deed recorded 12 Aug 2026</td></tr>
+<tr><th>Who bought, and how</th><td>Owner-occupant, $132,554 loan from United Wholesale Mortgage (98%)</td><td>First-time owner-occupant, $152,192 loan from Truist (98%) plus $7,609 City of Baltimore housing loan</td></tr>
+<tr><th>Who sold</th><td>Valdez Properties LLC, investor; bought for $80,000 in Apr 2025, off-market, and renovated</td><td>Ascend Ventures LLC, investor; bought for $95,000 in Mar 2025, off-market, and renovated</td></tr>
+<tr><th>Condition grade</th><td>HouseCanary C4; county word "Excellent"</td><td>HouseCanary C5; county word "Average"; SDAT dwelling grade "Below Average"</td></tr>
+<tr><th>Size</th><td>1,748 sq ft (HouseCanary); Redfin page still says 3 beds, 1 bath, no size</td><td>1,220 sq ft, 5 beds, 3 baths</td></tr>
+<tr><th>Listing trail</th><td>$195,900 (Mar 2026), $170,500, sold $135,000</td><td>$149,999 (Mar 2026), sold $155,000 after 137 days; MLS closed figure $149,900, deed $155,000</td></tr>
+</tbody>
+</table>
+
+<div class="band">
+<p><b>In one line:</b> our system's sold price equals the State's official record to the dollar on both houses, because both come from the recorded deed. The number Redfin shows as the house's <i>current value</i> is a model, and today it is 11% and 49% above what buyers actually paid. The ARV engine prices from the sold figure and never from the estimate or the asking price.</p>
+</div>
+
+<h2 class="pb">Why HouseCanary and our system are more accurate than Redfin and Zillow</h2>
+
+<ol>
+<li><b>Our number is the deed; their headline number is a model.</b> RealEstateAPI and HouseCanary deliver the recorded sale from the county record, the same record SDAT publishes. On both houses the three agree to the dollar. Redfin and Zillow carry the sold price too, but only after a listing closes, and what they lead with is the Redfin Estimate or the Zestimate. On Woodbrook that estimate is $230,819 against a sale at $155,000.</li>
+
+<li><b>The portal estimates are built on the wrong comps.</b> Redfin's estimate for Woodbrook rests on six MLS sales: $20,000, $55,000, $65,000, $90,000, $315,000 and $317,000. Three shells, one as-is house and two luxury rehabs, averaged by a formula that cannot see condition. Fulton's estimate is built the same way, from $20,000 to $317,000. Our engine never averages like that. The analyst reads each sale's deed chain and financing, keeps five comparable finished houses, and sets aside shells, auctions and LLC transfers with a written reason.</li>
+
+<li><b>We know whether a sale was a market sale.</b> The deed record carries the conveyance type. Both houses have a prior investor purchase ($80,000 and $95,000) that SDAT codes as non-arm's-length. Our engine rejects those as comps. A portal shows every transfer as "sold", or not at all. The $20,000 shell on Francis St is a "sold" row on Redfin and a comp in its estimate; in our grid it is set aside.</li>
+
+<li><b>We see who bought it and how.</b> A 98% purchase mortgage from Truist plus a City of Baltimore assistance loan (Woodbrook), or a 98% loan from United Wholesale Mortgage (Fulton), means a family bought a finished house. An LLC paying cash means an investor bought a project. That is the difference between an after-repair comp and an as-is comp, and it is on the mortgage record, which neither portal shows.</li>
+
+<li><b>Portals miss the sales that did not go through the MLS.</b> Redfin and Zillow are built on the Bright MLS feed. Off-market, wholesale and investor-to-investor sales, a large share of Baltimore transactions, never appear as listings and show only as thin public-record rows, if at all. Both investor purchases above were off-market. The deed record has every one of them.</li>
+
+<li><b>We grade condition from evidence, and show our working.</b> HouseCanary gives a C1 to C6 grade plus the county's condition word, and the engine shows both next to the deed chain and the listing photos. Where the grade looks stale against the evidence, the analyst's reading of the sale wins and the disagreement is marked. Redfin and Zillow show listing photos, which are useful, but no grade and nothing at all for a house that never listed.</li>
+
+<li><b>Every number is traceable.</b> Each price in the ARV file carries its source, its record date and the deed reference (Liber and Folio). Anyone can open the SDAT page and see the same figure. A Zestimate or a Redfin Estimate cannot be traced to anything.</li>
+
+<li><b>Two feeds catch each other's mistakes.</b> HouseCanary and RealEstateAPI both label the investors' off-market purchases as arm's-length; SDAT does not, and the deed chain (a cheap LLC purchase followed by a financed retail resale) makes the analyst treat them as acquisitions, not comps. The MLS closed price on Woodbrook differs from the deed by $5,100. Because the engine prices from the deed and treats everything else as evidence, none of this reaches the ARV. A single portal has no second opinion.</li>
+</ol>
+
+<h3>What Redfin and Zillow are still good for</h3>
+<ul>
+<li><b>Photos and remarks at the time of sale</b>, for any house that sold through the MLS. This is the best public record of condition at sale and contractors should keep using it.</li>
+<li><b>The asking-price history</b>, which shows how a listing moved. Fulton: $195,900 to $170,500 to a $135,000 sale. Woodbrook: $149,999 to a $155,000 sale after 137 days.</li>
+<li><b>Not for value.</b> Neither the asking price nor the estimate is evidence of what a house is worth. The ARV engine prices from closed, arm's-length, deed-recorded sales and nothing else.</li>
+</ul>
+
+<footer>
+Sources: Maryland SDAT open data (Real Property Assessments, records updated 5 Oct 2026), accounts 0315173400 075 and 0313053228B019;
+RealEstateAPI PropertyDetail and HouseCanary details_advanced / sales_history, called 22 Oct 2026 under RKB's keys;
+Redfin property pages <a href="https://www.redfin.com/MD/Baltimore/2033-N-Fulton-Ave-21217/home/10897415">2033 N Fulton Ave</a> and <a href="https://www.redfin.com/MD/Baltimore/2837-Woodbrook-Ave-21217/home/10862605">2837 Woodbrook Ave</a>: last-sold price, Redfin Estimate and the estimate's comparables as served on 22 Oct 2026; asking-price history from the Bright MLS listing trail. Zillow pages returned "access denied" to automated reading on 22 Oct 2026.
+</footer>
+</body>
+</html>

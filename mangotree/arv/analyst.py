@@ -66,6 +66,7 @@ Standards you hold the file to
 - Dollar figures rounded to the nearest $1,000 in prose; ranges as low-high.
 - Documents in the file (inspection, appraisal, contractor bid, listing, photos, title, tax) are evidence that outranks assumptions: a measured living area beats a typed one, a bid beats a tier estimate, an inspector's finding changes the scope. Cite the document by name when you lean on it, and say when two documents or a document and the person disagree.
 - The subject is valued with its AS-REPAIRED room count and living area when the plan adds a bedroom, a bath or square footage (beds_after, baths_after, sqft_after); say so when that drives the number.
+- Give an AS-IS value as well (as_is_opinion, as_is_low, as_is_high, as_is_basis): what the house would sell for today, in its current condition (condition_current, before any work), to an investor or an as-is buyer. It is a separate number from the ARV and never changes the ARV. Build it from the same comps adjusted down to the current condition, any as-is, shell or distressed sales in the file, the subject's own last sale and listing history, the price under contract, the AVM, and any as-is appraisal among the documents; say in as_is_basis which of these you leaned on. Cross-check: ARV minus the rehab budget minus an investor's margin should land near it.
 
 Write for the CEO who will decide whether to fund. Every sentence carries a number or a decision. The single most important caveat comes first."""
 
@@ -75,6 +76,9 @@ _ANALYSIS_SCHEMA = {
         "headline": {"type": "string", "description": "One sentence: the ARV opinion and the biggest caveat."},
         "arv_opinion": {"type": "number", "description": "Your point opinion of value as repaired, USD."},
         "arv_low": {"type": "number"}, "arv_high": {"type": "number"},
+        "as_is_opinion": {"type": "number", "description": "Your point opinion of the house's value TODAY, in its current condition before any work, USD. Separate from the ARV."},
+        "as_is_low": {"type": "number"}, "as_is_high": {"type": "number"},
+        "as_is_basis": {"type": "string", "description": "One or two sentences: what the as-is number rests on (comps adjusted to current condition, as-is sales, last sale, contract price, AVM, as-is appraisal) and how it squares with ARV minus rehab."},
         "agrees_with_engine": {"type": "boolean", "description": "True if your opinion is within the engine's range."},
         "confidence": {"type": "string", "enum": ["high", "good", "moderate", "low", "very_low"]},
         "confidence_reason": {"type": "string"},
@@ -102,7 +106,7 @@ _ANALYSIS_SCHEMA = {
                       "items": {"type": "object", "properties": {"question": {"type": "string"}, "why_it_matters": {"type": "string"}, "impact": {"type": "string", "enum": ["high", "medium", "low"]}}, "required": ["question", "why_it_matters", "impact"]}},
         "next_steps": {"type": "array", "items": {"type": "string"}},
     },
-    "required": ["headline", "arv_opinion", "arv_low", "arv_high", "agrees_with_engine", "confidence", "confidence_reason", "summary_points", "summary", "value_drivers", "verdict", "verdict_reason", "comp_notes", "market_read", "rehab_read", "mao_opinion", "mao_reason", "risks", "questions", "next_steps"],
+    "required": ["headline", "arv_opinion", "arv_low", "arv_high", "as_is_opinion", "as_is_low", "as_is_high", "as_is_basis", "agrees_with_engine", "confidence", "confidence_reason", "summary_points", "summary", "value_drivers", "verdict", "verdict_reason", "comp_notes", "market_read", "rehab_read", "mao_opinion", "mao_reason", "risks", "questions", "next_steps"],
 }
 
 _COMPS_SCHEMA = {
@@ -193,7 +197,8 @@ def analyze(doc: Dict[str, Any], emit: Optional[Callable[[str], None]] = None) -
     user = ("Review this ARV file and return your analysis by calling the arv_analysis tool.\n\n"
             "FILE:\n" + _file_for_model(doc) +
             "\n\nNotes: comp_id values must be copied exactly. If the person already answered questions (user_answers), use the answers and do not ask them again. "
-            "Your arv_opinion is your own number — agree with the engine only if the evidence supports it.")
+            "Your arv_opinion is your own number — agree with the engine only if the evidence supports it. "
+            "Also give as_is_opinion with its range: the house's value today, before any work; it is separate from the ARV.")
     before = METER.snapshot()
     out = _structured(system=[{"type": "text", "text": SYSTEM, "cache_control": {"type": "ephemeral"}}], user=user,
                       tool_name="arv_analysis", schema=_ANALYSIS_SCHEMA, description="The structured ARV review.", max_tokens=24000)

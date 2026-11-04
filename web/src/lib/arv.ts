@@ -128,6 +128,8 @@ export type Market = {
 
 export type Analysis = {
   headline: string; arv_opinion: number; arv_low: number; arv_high: number; agrees_with_engine: boolean; confidence: string; confidence_reason: string; summary: string;
+  /** The house's value today, before any work (2026-11-04). Separate from the ARV; the ARV and the underwriting never read it. */
+  as_is_opinion?: number | null; as_is_low?: number | null; as_is_high?: number | null; as_is_basis?: string | null;
   summary_points?: string[]; value_drivers?: { factor: string; impact_usd: number; why: string }[];
   verdict?: "fund" | "fund_with_conditions" | "renegotiate" | "pass"; verdict_reason?: string;
   comp_notes: { comp_id: string; verdict: "keep" | "drop" | "caution" | "add"; note: string; suggested_condition?: string; suggested_adjustments?: { label: string; amount: number; why: string }[] }[];
@@ -161,7 +163,7 @@ export type AnalysisSummary = {
   /** Set when a contractor login (Wes) started the file: "contractor", with the organisation name. */
   created_side?: "contractor" | "rkb"; created_org?: string; created_org_name?: string;
   subject?: Partial<Subject>; geocode?: Partial<Geocode>; valuation?: { arv?: number | null; arv_low?: number | null; arv_high?: number | null; confidence?: Confidence };
-  analysis?: { headline?: string; arv_opinion?: number; arv_low?: number; arv_high?: number }; underwriting?: { mao?: Underwriting["mao"] }; rehab_budget?: { total?: number }; comps_count?: number;
+  analysis?: { headline?: string; arv_opinion?: number; arv_low?: number; arv_high?: number; as_is_opinion?: number | null; as_is_low?: number | null; as_is_high?: number | null }; underwriting?: { mao?: Underwriting["mao"] }; rehab_budget?: { total?: number }; comps_count?: number;
 };
 
 export type ArvStatus = {

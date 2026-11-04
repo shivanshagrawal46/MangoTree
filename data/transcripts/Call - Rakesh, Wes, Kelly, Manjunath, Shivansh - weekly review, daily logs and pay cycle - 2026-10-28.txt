@@ -1,0 +1,72 @@
+Meeting Title: Zoom Meeting Wes and Rakesh - LP (weekly project review)
+Date: Oct 28, 2026
+Meeting participants: Rakesh Bhargava (RKB), Wes Stone (ROI Blocks), Kelly (ROI Blocks, field/project coordination), Manjunath Meharwade (RKB), Shivansh Agrawal (RKB)
+Format: per-property summary of the call (key points only). Process decisions that apply to all properties come first.
+
+Process decisions (all properties)
+- Daily logs are the missing link: the system ingests emails but not the Buildertrend daily logs. Buildertrend has no API, so the logs must be pulled manually.
+- Decision: Payal (RKB administrative assistant) downloads every property's Buildertrend daily log before 6 AM New York time every day and gives it to Shivansh, or enters it directly into the system. Rakesh Sir: "these guys already do all the work that I'm asking for the update - there's no need to ask them for update" once the daily logs are in the system.
+- Buildertrend access: Wes sent Shivansh his own Buildertrend login during the call (no per-user cost; Buildertrend charges by location). Shivansh shares it with Payal; Manjunath keeps his own separate access. Rakesh Sir to Shivansh: delegate - do not do everything yourself; hire if needed.
+- Daily log quality: Manjunath asked that every daily log carries a description with the photos - what was done and what is planned - because only Durham's logs have notes today; for the other jobs it is 30 pictures with no explanation. Kelly agreed; Wes: it is a training process with the contractors.
+- Scheduling: Kelly / Wes to give start date, end date and duration for each stage of work so Manjunath can build a week-by-week Gantt chart per property from Buildertrend. Rakesh Sir: every completion deadline Wes gives is to be ingested into the system as the deadline to finish.
+- Pay cycle: contractors asked for a Wednesday-to-Wednesday week so payments are processed Wednesday and received Friday (end-of-week payroll). Rakesh Sir agreed; Tuesday-to-Tuesday is also acceptable as long as the money lands by Friday. Kelly enters bills as soon as a line item is 100% complete (so Manjunath does not have to judge percent-complete from photos); deposits and partial work go in on Wednesday. Faster crews may be paid twice a week.
+- Payment method: ACH for regular payments (no limit), Zelle only for emergencies - Rakesh Sir is hitting Zelle limits and is opening a second bank account / second Zelle on his other mobile number. Contractors to be told payment is approved Wednesday and arrives by ACH (1-day or 3-day). Rakesh Sir pays promptly, not only on Wednesdays (e.g. paid David Gonzalez next-morning for Tahona change orders so he could finish).
+- Rule for contractors: whatever a contractor needs from the homeowner to finish (power, outlets, access) the contractor must arrange upfront; RKB will not be the intermediary and will not pay out for work that cannot be tested.
+- Closing package / standard underwriting documents: Shivansh asked Wes for the standard document list per property. Rakesh Sir: pull the list of unique document types per property from the system (no duplicates - one deed of trust, etc.), send the set to the attorney to bless, then the system pre-fills the documents from its data as PDFs for the title company (lenders normally fill the documents and send them to title). Wes: a few documents still have to be created and agreed first - know-your-customer (copy of Social Security number and driver's licence) and homeowner acknowledgements; Wes and Rakesh Sir to settle that between them before handing it to Shivansh.
+- System logins: Shivansh to email Wes and Panos their logins for the ARV / underwriting system. Wes's goal is to enter every deal when the first call comes in so values are in the system even if the deal never moves forward.
+- Baltimore expansion: Wes has more Baltimore contractors lined up and wants to discuss roll-out. Rakesh Sir: go carefully (DC expansion left 3-4 properties still losing money); join Baltimore REIA (about $30 a month - Wes to become the member), meet local people (founder's wife Andrea Mann is a broker), Rakesh Sir willing to drive to Baltimore for meetings. Duwayne Tutt is a good candidate but still new - let him do 1-2 projects first. Idea raised: let contractors co-invest in deals (Rakesh Sir's Carlos example) as a selling point for reliable contractors. Wes and Rakesh Sir to talk separately.
+- Estimation from photos: Rakesh Sir wants rehab estimation done from room-by-room photos / video (bird-dogs via REIA at $60-100 per visit); Wes agrees.
+- Walbrook: Wes asked whether Shivansh received his response on 1908 Walbrook with the added basement square footage; the ARV is to be re-run with it.
+- Personal: Wes announced he will become a grandfather in June.
+
+1512 Varnum St NW
+- Kelly: ceiling levelling is finished, which was holding up the drywall; the crew is now finishing the rest of the sheetrock / drywall and getting it paint-ready. Wes confirmed drywall is being installed now.
+- Manjunath to give a week-by-week Gantt chart of what happens from here (Wes gave the completion date on 27 October; that date is the deadline in the system).
+- No HVAC bill on Varnum (Manjunath's HVAC question was about Lane Pl).
+
+912 Decatur St NW
+- Completion date confirmed as 6 November 2026. Nothing else new.
+
+844 50th Pl NE
+- Rakesh Sir: a decision is needed this week on whether 50th Pl is moving or not; he cannot leave it hanging.
+- Wes has put it on Kelly's plate; Kelly committed to a decision this week. Wes: they are looking at alternatives to make it happen, but it may not happen.
+
+14376 Tower Road
+- Finished (Rakesh Sir: "tower is finished"). No listing update given on this call.
+
+2401 Ridge Road
+- Wes: rolling along; bathrooms are being done now.
+- Permit: Ali is supposed to get the permit application in today or tomorrow (28-29 October); once the permit is in, the crew is ready to finish the basement.
+
+4251 Lane Pl
+- Kelly: great progress; bathrooms in progress.
+- HVAC: a single central system (replacing the old radiator heat, so full ductwork) has been installed - about $18,000 in total, of which roughly $9,000-10,000 has been paid as the deposit; a second payment request of $9,000 is pending.
+- The unit cannot be powered or tested because it needs an exterior outlet, and the homeowner is using her own electrician who did not add it; LP is waiting on him and it is outside LP's control.
+- Manjunath is holding the $9,000 second HVAC payment until the electrician powers the unit and the work can be verified.
+- Wes: before the final HVAC payment the city should inspect and pass the permit; add a holdback (about 25%) until the inspection passes. Kelly will change the amount.
+- Rakesh Sir: contractors must be told upfront that anything they need from the homeowner (such as power) is their responsibility to arrange, not RKB's.
+
+1631 N Durham St
+- Kelly: Duwayne Tutt's crew is moving fast. All the junk is out, so they could finally inspect the house: the subfloors are rotten and need to be redone. Work on the subfloors has started and a change order has been put in for the subfloor repair/replacement.
+- The homeowner may not yet have been told about the subfloor change order - Kelly to check with David (project manager).
+- Windows are being ordered this week.
+- Kelly wants the subfloor change order paid this week so Duwayne can buy materials (he may already have bought them) and pay his crew for the weekend.
+- More clean-out of the basement continues.
+- Manjunath: a $4,050 item on Durham is marked as paid but no receipt was sent; Manjunath to confirm with JP and reply to Wes's email.
+- Durham is the only job whose daily logs carry clear notes with the photos.
+
+1913 Lodestone Dr
+- Work starts tomorrow, Thursday 29 October 2026. Wes: finished by the end of November at the latest.
+- Certificate of insurance: the insured name is wrong - it reads "RKV Consulting" instead of RKB Consulting Group Inc. Wes to get it corrected.
+- Funding: Rakesh Sir sent a small amount by Zelle and was then frozen by the Zelle limit; the rest goes tomorrow morning, and he is opening a second Zelle with another bank.
+
+3704 Marmon Ave
+- Wes sent the final information. Jackie has completed everything on the title; the only open item is the COI, which needs the correct company name (RKB Consulting Group Inc).
+- Rakesh Sir will review the package with Shivansh within the hour and sign off today so Wes can schedule the closing.
+
+513 Allison St NW
+- RKB's offer to the homeowner expires Friday 31 October. If it is not accepted, Rakesh Sir files the notice of intent to foreclose on Monday 3 November 2026 (Brian Gallagher instructed). The homeowner's demand is $600,000 plus assumption of the mortgage and taxes, which RKB will not meet.
+- The homeowner may pursue Wes; Rakesh Sir told them to remove Wes from any claim (as Pam Graham did) but cannot prevent it. Wes: "it is what it is."
+
+8514 Tahona Dr
+- Mentioned only as an example: Rakesh Sir paid David Gonzalez next-morning for the Tahona change orders so he could finish the work.

@@ -221,6 +221,8 @@ def pdf(doc: Dict[str, Any], *, user_name: str = "") -> bytes:
         story.append(PageBreak())
         story.append(P("Analyst review — %s, effort %s" % (_esc(an.get("model")), _esc(an.get("effort"))), st["h2"]))
         story.append(P("<b>Opinion of value %s (%s – %s), %s confidence.</b> %s" % (_m(an.get("arv_opinion")), _m(an.get("arv_low")), _m(an.get("arv_high")), _esc(an.get("confidence")), _esc(an.get("confidence_reason"))), st["p"]))
+        if an.get("as_is_opinion"):
+            story.append(P("<b>As-is value today %s (%s – %s), before any work.</b> %s" % (_m(an.get("as_is_opinion")), _m(an.get("as_is_low")), _m(an.get("as_is_high")), _esc(an.get("as_is_basis") or "")), st["p"]))
         for para in str(an.get("summary") or "").split("\n\n"):
             if para.strip():
                 story.append(P(_md(para.strip()), st["p"]))

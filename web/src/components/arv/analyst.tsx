@@ -9,7 +9,7 @@
 import * as React from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { AlertTriangle, Bot, CheckCircle2, ChevronDown, ChevronUp, HelpCircle, Loader2, MessageSquare, RotateCcw, Send } from "lucide-react";
+import { AlertTriangle, Bot, CheckCircle2, ChevronDown, ChevronUp, HelpCircle, Home, Loader2, MessageSquare, RotateCcw, Send } from "lucide-react";
 import { toast } from "sonner";
 import { Badge, Button, Card, Textarea } from "@/components/arv/ui";
 import { cn, money, ago } from "@/lib/utils";
@@ -70,9 +70,17 @@ export function AnalystTab({ doc, patch, setDoc, running, onRerun }: TabProps & 
               <div className="text-[10.5px] uppercase tracking-wide text-muted font-medium">Analyst&apos;s ARV</div>
               <div className="text-2xl font-semibold tracking-tight tnum">{money(an.arv_opinion)}</div>
               <div className="text-[11px] text-muted tnum">{money(an.arv_low, true)} – {money(an.arv_high, true)}{diff !== null ? <span className={cn("ml-1", Math.abs(diff) > 5 ? "text-high" : "text-good")}>({diff > 0 ? "+" : ""}{diff.toFixed(1)}% vs engine)</span> : null}</div>
+              {an.as_is_opinion ? (
+                <div className="mt-2.5 pt-2 border-t border-line" title={an.as_is_basis || undefined}>
+                  <div className="text-[10.5px] uppercase tracking-wide text-muted font-medium">As-is value today</div>
+                  <div className="text-[17px] font-semibold tracking-tight tnum">{money(an.as_is_opinion)}</div>
+                  {an.as_is_low && an.as_is_high ? <div className="text-[11px] text-muted tnum">{money(an.as_is_low, true)} – {money(an.as_is_high, true)}</div> : null}
+                </div>
+              ) : null}
             </div>
           </div>
           <div className="text-[12px] text-muted mt-3 flex items-start gap-1.5">{an.agrees_with_engine ? <CheckCircle2 size={13} className="text-good mt-0.5 shrink-0" /> : <AlertTriangle size={13} className="text-high mt-0.5 shrink-0" />} <span>{an.confidence_reason}{an.verdict_reason ? ` ${an.verdict_reason}` : ""}</span></div>
+          {an.as_is_opinion && an.as_is_basis ? <div className="text-[12px] text-muted mt-1.5 flex items-start gap-1.5"><Home size={13} className="mt-0.5 shrink-0" /> <span><b className="text-fg">As-is {money(an.as_is_opinion)}.</b> {an.as_is_basis}</span></div> : null}
           <ol className="mt-4 space-y-2">
             {points.map((p, i) => <li key={i} className="flex items-start gap-3 text-[13px] leading-snug"><span className="mt-[2px] h-5 w-5 rounded-full bg-sunken text-muted grid place-items-center text-[10.5px] font-semibold shrink-0">{i + 1}</span><span>{emphasise(p)}</span></li>)}
           </ol>

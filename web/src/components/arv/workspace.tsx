@@ -178,6 +178,17 @@ export function Workspace({ id }: { id: string }) {
               </div>
               <RangeBar low={fa.low} high={fa.high} value={fa.value} compLow={v?.reconciliation?.comp_low} compHigh={v?.reconciliation?.comp_high}
                 marks={[aiArv ? { label: "engine", value: fa.engine, tone: "text-muted" } : { label: "analyst", value: an?.arv_opinion, tone: "text-high" }, { label: doc.avm?.source?.split(" ")[0] || "AVM", value: doc.avm?.value, tone: "text-info" }]} className="mt-2" />
+              {/* The AI analyst's as-is value: the house today, before any work. Shown beside the ARV; nothing downstream reads it. */}
+              {an?.as_is_opinion ? (
+                <div className="mt-3 pt-2.5 border-t border-line flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1" title={an.as_is_basis || undefined}>
+                  <div className="text-[11px] uppercase tracking-wide text-muted font-medium">As-is value <span className="normal-case tracking-normal text-faint font-normal">· today{s.condition_current ? `, ${s.condition_current} condition` : ""} · AI analyst</span></div>
+                  <div className="flex items-baseline gap-2 tnum">
+                    <span className="text-[20px] leading-none font-semibold tracking-tight">{money(an.as_is_opinion)}</span>
+                    {an.as_is_low && an.as_is_high ? <span className="text-[11.5px] text-muted">{money(an.as_is_low, true)} – {money(an.as_is_high, true)}</span> : null}
+                    {fa.value ? <span className="text-[11px] text-faint">· renovation adds {money(fa.value - an.as_is_opinion, true)}</span> : null}
+                  </div>
+                </div>
+              ) : null}
             </div>
             <div className="p-5 flex flex-col items-center justify-center">
               <Gauge conf={conf} size={128} />
