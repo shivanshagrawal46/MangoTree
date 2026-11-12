@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Optional
 
 from mangotree.storage.mongo import Mongo
 
-SUMMARY_FIELDS = ("analysis_id", "created_at", "updated_at", "created_by", "created_by_name", "created_side", "created_org", "created_org_name",
+SUMMARY_FIELDS = ("analysis_id", "mode", "as_is", "created_at", "updated_at", "created_by", "created_by_name", "created_side", "created_org", "created_org_name",
                   "status", "error", "job_id",
                   "subject.address", "subject.property_type", "subject.beds", "subject.baths", "subject.sqft", "geocode.formatted", "geocode.state",
                   "valuation.arv", "valuation.arv_low", "valuation.arv_high", "valuation.confidence", "analysis.headline", "analysis.arv_opinion", "analysis.arv_low", "analysis.arv_high", "analysis.as_is_opinion", "analysis.as_is_low", "analysis.as_is_high",

@@ -13,7 +13,7 @@ import { AlertTriangle, ExternalLink, Plus, Trash2, Lock } from "lucide-react";
 import { toast } from "sonner";
 import { Button, Card, Dialog, DialogContent, Input } from "@/components/arv/ui";
 import { cn, money, fmtDate } from "@/lib/utils";
-import { arvApi, SOURCE_LABEL, num, pct, signed, type AnalysisDoc, type Comp } from "@/lib/arv";
+import { arvApi, isAsIs, SOURCE_LABEL, num, pct, signed, type AnalysisDoc, type Comp } from "@/lib/arv";
 import { CONDITION_OPTIONS, H, NumField, Pill, SelectField } from "./bits";
 import { CompEvidence, CompFeedPills, ConditionSource, ShortlistPanel } from "./feeds-ui";
 
@@ -86,7 +86,7 @@ export function CompsTab({ doc, patch, setDoc, saving, running, onRerun }: TabPr
   const table = (rows: Comp[], dim?: boolean) => (
     <Table<Comp> rowKey="comp_id" columns={columns} dataSource={rows} pagination={false} size="small" scroll={{ x: 1180 }}
       expandable={{ expandedRowKeys: open, onExpandedRowsChange: (k) => setOpen(k as string[]), expandRowByClick: true, showExpandColumn: false,
-        expandedRowRender: (c) => <CompDetail c={c} note={notes[c.comp_id]} onRemove={() => remove(c)} busy={busy} /> }}
+        expandedRowRender: (c) => <CompDetail c={c} note={notes[c.comp_id]} onRemove={() => remove(c)} busy={busy} asIs={isAsIs(doc)} /> }}
       onRow={(c) => ({ onMouseEnter: () => setHover(c.comp_id), onMouseLeave: () => setHover(null), className: cn("cursor-pointer", hover === c.comp_id && "arv-row-hover", dim && "opacity-70") })} />
   );
 
@@ -143,12 +143,12 @@ export function CompsTab({ doc, patch, setDoc, saving, running, onRerun }: TabPr
   );
 }
 
-function CompDetail({ c, note, onRemove, busy }: { c: Comp; note?: Note; onRemove: () => void; busy: boolean }) {
+function CompDetail({ c, note, onRemove, busy, asIs }: { c: Comp; note?: Note; onRemove: () => void; busy: boolean; asIs?: boolean }) {
   const a = c.adjustment;
   return (
     <div className="grid gap-4 lg:grid-cols-[1.2fr_1fr] text-[12px] px-2 py-1">
       <div>
-        <div className="text-[11px] uppercase tracking-wide text-muted font-medium mb-1.5">Adjustments to the subject as repaired</div>
+        <div className="text-[11px] uppercase tracking-wide text-muted font-medium mb-1.5">Adjustments to the subject {asIs ? "as it stands today" : "as repaired"}</div>
         {a ? (
           <Table size="small" pagination={false} rowKey={(r: any) => r.key}
             dataSource={[{ key: "_sale", label: "Sale price", amount: null, why: c.price_basis !== "closed" ? `${c.price_basis} price — verify the closed figure` : c.months_since_sale != null ? `${Math.round(c.months_since_sale)} months ago` : "", value: money(c.sale_price) },

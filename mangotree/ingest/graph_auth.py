@@ -51,6 +51,10 @@ from pathlib import Path
 from typing import Callable, List, Optional
 
 from mangotree.core.logging import logger
+from mangotree.core.net import prefer_ipv4
+
+# Microsoft's servers were measured unreachable over IPv6 from the office network: see core/net.py.
+prefer_ipv4()
 
 #: Delegated scopes for ingestion: `Mail.Read` and nothing else — ingestion
 #: never writes. `offline_access` is what yields the refresh token; without it

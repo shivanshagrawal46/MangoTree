@@ -6,7 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Mail, Paperclip } from "lucide-react";
 import { api } from "@/lib/api";
 import { Badge, Card, CardHeader, Skeleton, Stat } from "@/components/ui";
-import { ThreadDialog } from "../../property/[pid]/page";
+import { ThreadDialog } from "@/components/brain/tabs";
 import { fmtDate, propertyLabel, initials } from "@/lib/utils";
 
 export default function PersonPage() {

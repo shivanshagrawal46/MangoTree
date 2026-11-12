@@ -31,6 +31,7 @@ from mangotree.tasks.store import OWNERS, TaskStore
 from . import data
 from .auth import AnySession, CurrentArvUser, CurrentUser, change_password, ensure_users, is_contractor, login, logout
 from .jobs import JobRunner, _jsonable
+from . import swr
 
 app = FastAPI(title="MangoTree API", version="0.1")
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
@@ -226,6 +227,7 @@ def get_property(pid: str, user=CurrentUser):
 
 
 @app.get("/properties/{pid}/timeline")
+@swr.cached("timeline", fresh=30, keep=900)
 def get_timeline(pid: str, types: Optional[str] = None, start: Optional[str] = None, end: Optional[str] = None,
                  as_of: Optional[str] = None, q: Optional[str] = None, user=CurrentUser):
     return data.timeline(mongo, _pid(pid), types=[t for t in (types or "").split(",") if t] or None,
@@ -233,11 +235,13 @@ def get_timeline(pid: str, types: Optional[str] = None, start: Optional[str] = N
 
 
 @app.get("/properties/{pid}/documents")
+@swr.cached("documents", fresh=30, keep=900)
 def get_documents(pid: str, placement: Optional[str] = None, source_type: Optional[str] = None, q: Optional[str] = None, user=CurrentUser):
     return data.documents(mongo, _pid(pid), placement=placement, source_type=source_type, q=q)
 
 
 @app.get("/properties/{pid}/comms")
+@swr.cached("comms", fresh=30, keep=900)
 def get_comms(pid: str, q: Optional[str] = None, user=CurrentUser):
     return data.comms(mongo, _pid(pid), q=q)
 
@@ -256,6 +260,7 @@ def get_wes(pid: str, user=CurrentUser):
 
 
 @app.get("/properties/{pid}/files")
+@swr.cached("files", fresh=30, keep=900)
 def get_files(pid: str, user=CurrentUser):
     """The property's documents as a folder tree — the E-drive layout plus an
     'Email attachments' folder — each leaf opening the exact original."""
@@ -1189,6 +1194,7 @@ def export_briefing(user=CurrentUser):
 
 
 @app.get("/people")
+@swr.cached("people", fresh=30, keep=900)
 def list_people(q: Optional[str] = None, property_id: Optional[str] = None, user=CurrentUser):
     return data.people(mongo, q=q, property_id=property_id)
 
@@ -1248,3 +1254,12 @@ sold_routes.install(app, mongo)
 # is touched.
 from mangotree.notes import routes as notes_routes  # noqa: E402
 notes_routes.install(app, mongo)
+
+# The brain (2026-11-12): one living file per property kept current by every
+# email, sent reply and call note; reply drafts; a chat that already knows the
+# file. One model (Opus 5.5). Own module, own collections.
+from mangotree.brain import routes as brain_routes  # noqa: E402
+brain_routes.install(app, mongo, jobs)
+
+# Any request that changes something empties the remembered answers (see api/swr.py).
+app.add_middleware(swr.ClearOnWrite)

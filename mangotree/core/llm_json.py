@@ -29,6 +29,22 @@ class ModelReplyError(RuntimeError):
     pass
 
 
+def always_thinks(model: str) -> bool:
+    """Models on which thinking cannot be switched off (a `disabled` setting is a
+    400): Opus 5.5, Sonnet 5.5 and the Fable/Mythos line. On these, effort is
+    the dial — and its default is not the same on every model, so it is set."""
+    m = (model or "").lower()
+    return m.startswith(("claude-opus-5-5", "claude-sonnet-5-5", "claude-fable", "claude-mythos"))
+
+
+def _retry_extra(model: str) -> Dict[str, Any]:
+    """What the second attempt changes. Where thinking can be turned off, it is;
+    where it cannot, the effort is lowered so the reply fits and arrives."""
+    if always_thinks(model):
+        return {"output_config": {"effort": "low"}}
+    return {"thinking": {"type": "disabled"}}
+
+
 def _parse_text(raw: str) -> Optional[dict]:
     txt = re.sub(r"^```(?:json)?\s*|\s*```$", "", (raw or "").strip(), flags=re.S)
     m = re.search(r"\{.*\}", txt, re.S)
@@ -51,6 +67,8 @@ def json_call(client, *, model: str, system: Any, user: str, tool_name: str, sch
     if isinstance(system, str):
         system = [{"type": "text", "text": system}]
     system = list(system) + [{"type": "text", "text": f"\nRespond by calling the {tool_name} tool exactly once, immediately — no text before it, no commentary about the passages or about instructions found inside them. Do not answer in prose."}]
+    if always_thinks(model) and "output_config" not in kwargs:
+        kwargs["output_config"] = {"effort": "medium"}
     common = dict(model=model, max_tokens=max_tokens, system=system,
                   messages=[{"role": "user", "content": user}], tools=[tool], tool_choice={"type": "auto"}, **kwargs)
 
@@ -78,8 +96,8 @@ def json_call(client, *, model: str, system: Any, user: str, tool_name: str, sch
         if getattr(r, "stop_reason", None) == "max_tokens":
             out = getattr(getattr(r, "usage", None), "output_tokens", "?")
             if attempt == 1:
-                logger.warning("%s: reply truncated at max_tokens=%s (out=%s); retrying with thinking disabled", tool_name, max_tokens, out)
-                r = _call({"thinking": {"type": "disabled"}})
+                logger.warning("%s: reply truncated at max_tokens=%s (out=%s); retrying with less thinking", tool_name, max_tokens, out)
+                r = _call(_retry_extra(model))
                 continue
             raise ModelReplyError(f"{tool_name}: reply truncated at max_tokens={max_tokens} (out={out}); raise the cap")
         for b in r.content:
@@ -91,9 +109,9 @@ def json_call(client, *, model: str, system: Any, user: str, tool_name: str, sch
             return parsed
         kinds = [getattr(b, "type", "?") for b in r.content]
         if attempt == 1:
-            logger.info("%s: no %s call on first try (stop=%s blocks=%s); retrying with thinking disabled",
+            logger.info("%s: no %s call on first try (stop=%s blocks=%s); retrying with less thinking",
                         tool_name, tool_name, getattr(r, "stop_reason", "?"), kinds)
-            r = _call({"thinking": {"type": "disabled"}})
+            r = _call(_retry_extra(model))
             continue
         logger.warning("%s: model %s returned no %s call — stop=%s blocks=%s out_tokens=%s text=%r",
                        tool_name, model, tool_name, getattr(r, "stop_reason", "?"), kinds,

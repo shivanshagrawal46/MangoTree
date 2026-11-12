@@ -78,8 +78,36 @@ def as_repaired(subject: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
+#: The condition an as-is file is valued at when nobody stated one and no feed graded the house.
+AS_IS_DEFAULT_CONDITION = "C4"
+
+
+def is_as_is(doc: Dict[str, Any]) -> bool:
+    """An as-is file (2026-11-12) asks one question: what is the house worth
+    today, in its current condition. No plan, no rehab budget, no deal, no ARV.
+    Every file without the flag is an ARV file and runs exactly as before."""
+    return (doc or {}).get("mode") == "as_is"
+
+
+def as_it_stands(subject: Dict[str, Any]) -> Dict[str, Any]:
+    """The house an as-is file compares the comps with: today's rooms and area,
+    at today's condition. The engine reads the condition it values at from
+    ``condition_after``, so the current condition is put there on this copy."""
+    out = dict(subject)
+    for k in ("beds_after", "baths_after", "sqft_after"):
+        out[k] = None
+    out["condition_after"] = out.get("condition_current") if out.get("condition_current") in engine.CONDITION_RANK else AS_IS_DEFAULT_CONDITION
+    out["_as_is"] = True
+    return out
+
+
+def valued_subject(doc: Dict[str, Any]) -> Dict[str, Any]:
+    """The subject as the file values it: as it stands (as-is file) or as repaired (ARV file)."""
+    return as_it_stands(doc["subject"]) if is_as_is(doc) else as_repaired(doc["subject"])
+
+
 def new_document(*, subject: Dict[str, Any], assumptions: Dict[str, Any], rehab: Dict[str, Any], settings: Dict[str, Any], user: Dict[str, Any],
-                 property_id: Optional[str] = None, label: Optional[str] = None) -> Dict[str, Any]:
+                 property_id: Optional[str] = None, label: Optional[str] = None, mode: Optional[str] = None) -> Dict[str, Any]:
     st = {"use_rentcast": bool(cfg.RENTCAST_API_KEY), "use_web_search": True, "radius_mi": cfg.COMP_RADIUS_MILES, "months": cfg.COMP_MONTHS,
           "target": cfg.COMP_TARGET, "run_analyst": True, "web_searches": 10,
           # 2026-10-20: recorded sales + subject file (RealEstateAPI), analyst shortlist, HouseCanary condition on the shortlist
@@ -93,7 +121,7 @@ def new_document(*, subject: Dict[str, Any], assumptions: Dict[str, Any], rehab:
     if not (cfg.HOUSECANARY_API_KEY and cfg.HOUSECANARY_API_SECRET):
         st["use_housecanary"] = False
     return {"analysis_id": ArvStore.new_id(), "status": "queued", "created_by": user.get("user_id"), "created_by_name": user.get("name"),
-            "property_id": property_id, "label": label, "subject_input": clean_subject(subject), "subject": clean_subject(subject),
+            "mode": "as_is" if mode == "as_is" else "arv", "property_id": property_id, "label": label, "subject_input": clean_subject(subject), "subject": clean_subject(subject),
             "assumptions": dict(assumptions or {}), "rehab": dict(rehab or {}), "settings": st, "comps": [], "documents": [], "answers": [], "chat": [],
             "phases": [], "data_sources": [], "cost_usd": 0.0}
 
@@ -148,9 +176,37 @@ def arv_used(doc: Dict[str, Any], *, basis: Optional[str] = None) -> Dict[str, A
     return out
 
 
+def as_is_used(doc: Dict[str, Any], *, basis: Optional[str] = None) -> Dict[str, Any]:
+    """The as-is value an as-is file stands on, in the shape of ``arv_used``:
+    the AI analyst's opinion once the review has run, else the engine's sales
+    comparison at the house's condition today (kept on ``valuation``)."""
+    v = doc.get("valuation") or {}
+    an = doc.get("analysis") or {}
+    eng = _num(v.get("arv"))
+    op = _num(an.get("as_is_opinion"))
+    out: Dict[str, Any] = {"engine": eng, "analyst": op, "engine_low": _num(v.get("arv_low")), "engine_high": _num(v.get("arv_high")),
+                           "condition": as_it_stands(doc["subject"])["condition_after"],
+                           "condition_stated": bool((doc.get("subject") or {}).get("condition_current"))}
+    if basis != "engine" and op and op > 0:
+        out.update({"value": op, "low": _num(an.get("as_is_low")) or op, "high": _num(an.get("as_is_high")) or op, "basis": "analyst",
+                    "label": "AI analyst opinion", "model": an.get("model"), "at": an.get("at"),
+                    "diff_pct": round((op - eng) / eng * 100, 1) if eng else None})
+    else:
+        out.update({"value": eng, "low": _num(v.get("arv_low")), "high": _num(v.get("arv_high")), "basis": "engine",
+                    "label": "sales comparison (engine)", "model": None, "at": v.get("computed_at"), "diff_pct": None})
+    return out
+
+
 def recompute(doc: Dict[str, Any], *, basis: Optional[str] = None) -> Dict[str, Any]:
     """Deterministic half: rehab budget, sales comparison, underwriting.
     Underwriting runs on ``arv_used`` (the analyst's ARV once there is one)."""
+    if is_as_is(doc):
+        # One sales comparison at the condition today. No rehab budget, no deal math and no ARV on this file.
+        doc["valuation"] = engine.value(valued_subject(doc), doc.get("comps") or [], doc.get("market") or {}, doc.get("avm"), doc.get("settings") or {})
+        doc["as_is"] = as_is_used(doc, basis=basis)
+        doc["arv"] = doc["rehab_budget"] = doc["underwriting"] = None
+        doc["computed_at"] = datetime.now(timezone.utc).isoformat()
+        return doc
     subj = as_repaired(doc["subject"])
     geo = doc.get("geocode") or {}
     state = geo.get("state") or None
@@ -179,7 +235,7 @@ def _shortlist_and_verify(doc: Dict[str, Any], store: ArvStore, emit: Optional[E
     then verifies only those few plus the subject (condition grade, living
     area, recorded sale). Every step is optional and failure-tolerant."""
     st = doc.get("settings") or {}
-    subj = as_repaired(doc["subject"])
+    subj = valued_subject(doc)
     size = int(st.get("shortlist_size") or cfg.SHORTLIST_SIZE)
     comps = doc.get("comps") or []
     for c in comps:  # a fresh run forgets the last run's picks
@@ -209,7 +265,7 @@ def _shortlist_and_verify(doc: Dict[str, Any], store: ArvStore, emit: Optional[E
                             logger.info("reapi evidence %r: %s", c.get("address"), exc)
                 pool = [c for c in pool if c.get("arms_length") is not False] or pool
             if len(pool) > size:
-                out = analyst.shortlist(subj, pool, size=size, emit=say)
+                out = analyst.shortlist(subj, pool, size=size, emit=say, as_is=is_as_is(doc))
                 doc["shortlist"] = out
                 doc["cost_usd"] = round(float(doc.get("cost_usd") or 0) + float((out.get("usage") or {}).get("total_cost_usd") or 0), 4)
                 _phase(doc, emit, "shortlist", label, "done", "%d chosen from %d candidates (%d qualified of %d)" % (len(out["picks"]), len(pool), sel["qualified"], sel["candidates"]))
@@ -382,7 +438,7 @@ def run(doc: Dict[str, Any], store: ArvStore, emit: Optional[Emit] = None, *, st
             if st.get("use_rentcast") and cfg.RENTCAST_API_KEY:
                 _phase(doc, emit, "avm", "RentCast value and comparables", "running")
                 try:
-                    avm = providers.rentcast_avm(doc["geocode"]["formatted"], as_repaired(doc["subject"]), radius_mi=radius, months=months, comp_count=int(st.get("target") or 6) * 3)
+                    avm = providers.rentcast_avm(doc["geocode"]["formatted"], valued_subject(doc), radius_mi=radius, months=months, comp_count=int(st.get("target") or 6) * 3)
                     if avm:
                         found.extend(avm.pop("comps"))
                         doc["avm"] = avm
@@ -414,8 +470,8 @@ def run(doc: Dict[str, Any], store: ArvStore, emit: Optional[Emit] = None, *, st
             if st.get("use_web_search", True):
                 _phase(doc, emit, "web", "AI web search for recent sales", "running")
                 try:
-                    web = analyst.discover_comps(as_repaired(doc["subject"]), doc["geocode"], radius_mi=radius, months=months, emit=say,
-                                                 max_searches=int(st.get("web_searches") or 10))
+                    web = analyst.discover_comps(valued_subject(doc), doc["geocode"], radius_mi=radius, months=months, emit=say,
+                                                 max_searches=int(st.get("web_searches") or 10), as_is=is_as_is(doc))
                     doc["web_search"] = {"notes": web.get("notes"), "searches": web.get("searches"), "usage": web.get("usage"), "found": len(web.get("comps") or [])}
                     doc["cost_usd"] = round(float(doc.get("cost_usd") or 0) + float((web.get("usage") or {}).get("total_cost_usd") or 0), 4)
                     analyst._geocode_comps(web["comps"], doc["subject"], emit=say)
@@ -438,16 +494,20 @@ def run(doc: Dict[str, Any], store: ArvStore, emit: Optional[Emit] = None, *, st
             _shortlist_and_verify(doc, store, emit, say, partial, sources, radius=radius, months=months)
 
         # ---------------------------------------------------------- compute
-        _phase(doc, emit, "compute", "Score, adjust, reconcile, underwrite", "running")
+        as_is = is_as_is(doc)
+        clabel = "Score, adjust, reconcile" if as_is else "Score, adjust, reconcile, underwrite"
+        _phase(doc, emit, "compute", clabel, "running")
         reviewing = "analyst" in stages and st.get("run_analyst", True)
         # The analyst reviews the engine's math, so while a review is about to
         # run the file is underwritten on the engine; its opinion takes over below.
         recompute(doc, basis="engine" if reviewing else None)
         v = doc["valuation"]
-        _phase(doc, emit, "compute", "Score, adjust, reconcile, underwrite", "done",
-               ("ARV $%s (%s - %s), %s" % (format(int(v["arv"]), ","), format(int(v["arv_low"]), ","), format(int(v["arv_high"]), ","), v["confidence"]["label"])) if v.get("arv") else v.get("reconciliation", {}).get("error", "no value"))
+        _phase(doc, emit, "compute", clabel, "done",
+               ("%s $%s (%s - %s), %s" % ("As-is value" if as_is else "ARV", format(int(v["arv"]), ","), format(int(v["arv_low"]), ","), format(int(v["arv_high"]), ","), v["confidence"]["label"])) if v.get("arv") else v.get("reconciliation", {}).get("error", "no value"))
         partial("valuation", v)
         partial("arv", doc["arv"])
+        if as_is:
+            partial("as_is", doc["as_is"])
         partial("rehab_budget", doc["rehab_budget"])
         partial("underwriting", doc["underwriting"])
         store.save(doc)
@@ -467,6 +527,8 @@ def run(doc: Dict[str, Any], store: ArvStore, emit: Optional[Emit] = None, *, st
                 recompute(doc)
                 partial("arv", doc["arv"])
                 partial("underwriting", doc["underwriting"])
+                if as_is:
+                    partial("as_is", doc["as_is"])
             except Exception as exc:
                 logger.exception("arv analyst failed")
                 doc["analysis_error"] = str(exc)[:300]
@@ -475,6 +537,8 @@ def run(doc: Dict[str, Any], store: ArvStore, emit: Optional[Emit] = None, *, st
                     recompute(doc)
                     partial("arv", doc["arv"])
                     partial("underwriting", doc["underwriting"])
+                    if as_is:
+                        partial("as_is", doc["as_is"])
         doc["status"] = "done"
     except Exception as exc:
         doc["status"] = "failed"

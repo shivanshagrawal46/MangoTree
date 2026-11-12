@@ -133,7 +133,9 @@ RERANK_POOL = {"simple": 60, "moderate": 100, "complex": 150}
 RERANK_STAGE1_MODEL = "rerank-2.5"          # Voyage, cross-encoder
 RERANK_STAGE1_MAX_DOCS = 100                # per call; larger pools are half-split
 RERANK_STAGE1_KEEP = 30           # what stage 2 reads; 40 cost ~40s per Opus pass, 30 ~28s
-RERANK_STAGE2_MODEL = model_for(Seat.ANALYST)  # Opus 5, listwise
+#: Opus 5.5 (admin directive 2026-11-12: one model for everything that reads and
+#: judges). Was the ANALYST seat (Opus 5).
+RERANK_STAGE2_MODEL = "claude-opus-5-5"     # listwise
 RERANK_STAGE2_KEEP = 20
 #: 40 passages × (index, score, reason) is ~3k tokens on its own; with any
 #: preamble the 4k cap was hit and the stage was skipped.
@@ -379,5 +381,8 @@ EMAIL_DEFAULT_SENDER = "Rakesh"
 #: standalone question, alternates, HyDE passage, filters — with a
 #: deterministic fallback if the reply is unusable. The judgement call in
 #: retrieval is the stage-2 rerank, which stays on Opus.
-QUERY_REWRITE_MODEL = model_for(Seat.WORKHORSE)
-QUERY_REWRITE_MAX_OUTPUT = 3000
+#: Opus 5.5 since 2026-11-12 (admin directive: Opus 5.5 only). Thinking cannot be
+#: switched off on it and counts against the output cap, so the cap is raised
+#: and the call runs at low effort — this is structured extraction.
+QUERY_REWRITE_MODEL = "claude-opus-5-5"
+QUERY_REWRITE_MAX_OUTPUT = 8000

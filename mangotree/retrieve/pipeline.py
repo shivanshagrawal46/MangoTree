@@ -309,7 +309,11 @@ class HybridSearch:
                 trace["enumeration"] = {"error": str(exc)[:200]}
 
         if scope.mode == "global" and r.fan_out:
-            props = r.property_ids or [p.property_id for p in PROPERTIES]
+            # Every ACTIVE property (2026-11-12). The sold deals are searched when a
+            # question names one; fanning a general question out over all 47, with a
+            # rerank pass for each, cost about $5 a search and three were being
+            # dropped at the time budget anyway.
+            props = r.property_ids or [p.property_id for p in PROPERTIES if p.property_id not in cfg.ANALYSIS_EXCLUDED_PROPERTIES]
             quota = max(3, keep // max(1, len(props)))
             retrieved_all: List[Hit] = []
             final_all: List[Hit] = []

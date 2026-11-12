@@ -13,8 +13,8 @@ import { AlertTriangle, ArrowLeft, Bot, Calculator, CheckCircle2, ChevronRight, 
 import { toast } from "sonner";
 import { Alert, Dropdown, Popconfirm } from "antd";
 import { Badge, Button, Card, Skeleton, Dialog, DialogContent, Input, Textarea } from "@/components/arv/ui";
-import { cn, money, ago } from "@/lib/utils";
-import { arvApi, subscribeArvJob, PROPERTY_TYPE_LABEL, VERDICT_LABEL, VERDICT_TONE, num, type AnalysisDoc, type Phase, type PropertyType } from "@/lib/arv";
+import { cn, money, ago, fmtDate } from "@/lib/utils";
+import { arvApi, subscribeArvJob, isAsIs, PROPERTY_TYPE_LABEL, VERDICT_LABEL, VERDICT_TONE, num, type AnalysisDoc, type Phase, type PropertyType } from "@/lib/arv";
 import { Gauge, GradeBadge, RangeBar, NumField, SelectField, CONDITION_OPTIONS, TabStrip, Mini } from "./bits";
 import { Overview } from "./overview";
 
@@ -112,8 +112,11 @@ export function Workspace({ id }: { id: string }) {
   const uw = doc.underwriting;
   // The ARV the file is underwritten on: the analyst's opinion once the review has run, else the
   // engine's. Older files carry no ``arv`` block, so the same rule is applied here.
-  const fa = doc.arv || (an?.arv_opinion
-    ? { value: an.arv_opinion, low: an.arv_low || an.arv_opinion, high: an.arv_high || an.arv_opinion, basis: "analyst" as const, engine: v?.arv ?? null, analyst: an.arv_opinion, label: "AI analyst opinion" }
+  // An as-is file stands on its as-is value instead (the ``as_is`` block, same shape): it has no ARV, rehab or deal.
+  const asIs = isAsIs(doc);
+  const op = asIs ? { v: an?.as_is_opinion, lo: an?.as_is_low, hi: an?.as_is_high } : { v: an?.arv_opinion, lo: an?.arv_low, hi: an?.arv_high };
+  const fa = (asIs ? doc.as_is : doc.arv) || (op.v
+    ? { value: op.v, low: op.lo || op.v, high: op.hi || op.v, basis: "analyst" as const, engine: v?.arv ?? null, analyst: op.v, label: "AI analyst opinion" }
     : { value: v?.arv ?? null, low: v?.arv_low ?? null, high: v?.arv_high ?? null, basis: "engine" as const, engine: v?.arv ?? null, analyst: null, label: "sales comparison (engine)" });
   const aiArv = fa.basis === "analyst";
   // The analyst states confidence as high / medium / low; the gauge wants a score and grade.
@@ -125,7 +128,7 @@ export function Workspace({ id }: { id: string }) {
   const title = doc.geocode?.formatted || s.address;
   const facts = [PROPERTY_TYPE_LABEL[s.property_type as PropertyType], s.beds != null ? `${s.beds}${s.beds_after && s.beds_after !== s.beds ? `→${s.beds_after}` : ""} bd` : null,
     s.baths != null ? `${s.baths}${s.baths_after && s.baths_after !== s.baths ? `→${s.baths_after}` : ""} ba` : null, s.sqft ? `${num(s.sqft)}${s.sqft_after && s.sqft_after !== s.sqft ? `→${num(s.sqft_after)}` : ""} sqft` : null,
-    s.lot_sqft ? `${num(s.lot_sqft)} lot` : null, s.year_built ? `built ${s.year_built}` : null, `${s.condition_current || "?"} → ${s.condition_after}`].filter(Boolean);
+    s.lot_sqft ? `${num(s.lot_sqft)} lot` : null, s.year_built ? `built ${s.year_built}` : null, asIs ? `condition ${s.condition_current || doc.as_is?.condition || "?"}` : `${s.condition_current || "?"} → ${s.condition_after}`].filter(Boolean);
   const nDocs = (doc.documents || []).length;
 
   return (
@@ -136,6 +139,7 @@ export function Workspace({ id }: { id: string }) {
             <Link href="/arv" className="text-[11px] text-muted hover:text-fg flex items-center gap-1 mb-1"><ArrowLeft size={11} /> ARV &amp; underwriting</Link>
             <div className="flex items-center gap-2 flex-wrap">
               <h1 className="text-[22px] font-semibold tracking-tight flex items-center gap-2"><span className="h-7 w-7 rounded-lg bg-accent-soft text-accent grid place-items-center"><MapPin size={15} /></span> {title}</h1>
+              {asIs && <Badge tone="info">as-is value</Badge>}
               {doc.label && <Badge tone="accent">{doc.label}</Badge>}
               {doc.property_id && <Link href={`/property/${doc.property_id}`}><Badge tone="info">portfolio property <ChevronRight size={10} /></Badge></Link>}
               {an?.verdict && <Badge tone={VERDICT_TONE[an.verdict] || "neutral"}>{VERDICT_LABEL[an.verdict]}</Badge>}
@@ -151,7 +155,7 @@ export function Workspace({ id }: { id: string }) {
           </div>
           <div className="flex items-center gap-2 shrink-0">
             <a href={arvApi.pdfUrl(id)} target="_blank" rel="noreferrer"><Button size="sm"><FileDown size={13} /> PDF report</Button></a>
-            <a href={arvApi.xlsxUrl(id)}><Button size="sm" variant="ghost"><FileSpreadsheet size={13} /> Calculator</Button></a>
+            {!asIs && <a href={arvApi.xlsxUrl(id)}><Button size="sm" variant="ghost"><FileSpreadsheet size={13} /> Calculator</Button></a>}
             <Dropdown disabled={running} menu={{ items: [
               { key: "both", label: "Re-run comps + review", onClick: () => rerun(["comps", "analyst"]) },
               { key: "analyst", label: "Re-run the review only", onClick: () => rerun(["analyst"]) },
@@ -169,7 +173,7 @@ export function Workspace({ id }: { id: string }) {
           <div className="grid md:grid-cols-[1.7fr_0.75fr_1fr_1fr] divide-y md:divide-y-0 md:divide-x divide-line">
             <div className="p-5 min-w-0">
               <div className="flex items-center justify-between gap-2">
-                <div className="text-[11px] uppercase tracking-wide text-muted font-medium">After repair value <span className="normal-case tracking-normal text-faint font-normal">· {aiArv ? "AI analyst" : "sales comparison"}</span></div>
+                <div className="text-[11px] uppercase tracking-wide text-muted font-medium">{asIs ? "As-is value" : "After repair value"} <span className="normal-case tracking-normal text-faint font-normal">· {asIs ? "today, as it stands · " : ""}{aiArv ? "AI analyst" : "sales comparison"}</span></div>
                 {aiArv ? (an?.confidence && <Badge tone={an.confidence === "high" ? "good" : an.confidence === "low" ? "critical" : "high"}>{an.confidence} confidence</Badge>) : (conf && <GradeBadge conf={conf} />)}
               </div>
               <div className="flex items-end gap-3 mt-1.5">
@@ -177,9 +181,9 @@ export function Workspace({ id }: { id: string }) {
                 {fa.value && <div className="text-[11.5px] text-muted pb-1 leading-snug">{money(fa.low, true)} – {money(fa.high, true)}<br />{aiArv ? <>engine {money(fa.engine, true)} · {v?.reconciliation?.comps_used} comps</> : <>${num(v?.reconciliation?.value_per_sqft, 0)}/sqft · {v?.reconciliation?.comps_used} comps</>}</div>}
               </div>
               <RangeBar low={fa.low} high={fa.high} value={fa.value} compLow={v?.reconciliation?.comp_low} compHigh={v?.reconciliation?.comp_high}
-                marks={[aiArv ? { label: "engine", value: fa.engine, tone: "text-muted" } : { label: "analyst", value: an?.arv_opinion, tone: "text-high" }, { label: doc.avm?.source?.split(" ")[0] || "AVM", value: doc.avm?.value, tone: "text-info" }]} className="mt-2" />
+                marks={[aiArv ? { label: "engine", value: fa.engine, tone: "text-muted" } : { label: "analyst", value: op.v, tone: "text-high" }, { label: doc.avm?.source?.split(" ")[0] || "AVM", value: doc.avm?.value, tone: "text-info" }]} className="mt-2" />
               {/* The AI analyst's as-is value: the house today, before any work. Shown beside the ARV; nothing downstream reads it. */}
-              {an?.as_is_opinion ? (
+              {!asIs && an?.as_is_opinion ? (
                 <div className="mt-3 pt-2.5 border-t border-line flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1" title={an.as_is_basis || undefined}>
                   <div className="text-[11px] uppercase tracking-wide text-muted font-medium">As-is value <span className="normal-case tracking-normal text-faint font-normal">· today{s.condition_current ? `, ${s.condition_current} condition` : ""} · AI analyst</span></div>
                   <div className="flex items-baseline gap-2 tnum">
@@ -194,6 +198,7 @@ export function Workspace({ id }: { id: string }) {
               <Gauge conf={conf} size={128} />
               <div className="text-[10.5px] text-muted text-center leading-snug" title={conf?.reasons?.[0]}>{conf?.label || "Confidence"}{conf?.band_pct ? ` · expect ±${conf.band_pct}%` : ""}</div>
             </div>
+            {asIs ? <AsIsSegments doc={doc} /> : (<>
             <div className="p-5 min-w-0">
               <div className="text-[11px] uppercase tracking-wide text-muted font-medium">Max offer <span className="normal-case tracking-normal text-faint font-normal">· on the {aiArv ? "AI" : "engine"} ARV</span></div>
               <div className="text-[26px] leading-none font-semibold tracking-tight tnum mt-1.5">{money(uw?.mao.recommended)}</div>
@@ -212,13 +217,14 @@ export function Workspace({ id }: { id: string }) {
                 <Mini k={`Cash in · LTARV ${uw.deal.financing.ltarv_pct}%`} v={money(uw.deal.cash_needed, true)} />
               </div>}
             </div>
+            </>)}
           </div>
         </Card>
 
         <TabStrip value={tab} onChange={setTab} className="mt-4" tabs={[
           { key: "overview", label: "Overview", icon: <LayoutGrid size={14} /> },
           { key: "comps", label: "Comps", icon: <MapPin size={14} />, count: doc.comps?.filter((c) => c.selected).length || 0 },
-          { key: "calculator", label: "Rehab & MAO", icon: <Calculator size={14} /> },
+          ...(asIs ? [] : [{ key: "calculator", label: "Rehab & MAO", icon: <Calculator size={14} /> }]),
           { key: "documents", label: "Documents", icon: <FileText size={14} />, count: nDocs },
           { key: "market", label: "Market", icon: <TrendingUp size={14} /> },
           { key: "analyst", label: an ? "Analyst review" : "Analyst", icon: <Bot size={14} />, busy: running && !an },
@@ -227,10 +233,10 @@ export function Workspace({ id }: { id: string }) {
 
       <div className="p-6 space-y-4">
         {(running || doc.status === "failed" || (doc.phases || []).some((p) => p.status === "failed")) && <Progress phases={doc.phases || []} log={log} running={running} error={doc.error} />}
-        <BudgetGap doc={doc} setDoc={setDoc} setTab={setTab} />
+        {!asIs && <BudgetGap doc={doc} setDoc={setDoc} setTab={setTab} />}
         {tab === "overview" && <Overview doc={doc} setTab={setTab} />}
         {tab === "comps" && <CompsTab doc={doc} patch={patch} setDoc={setDoc} saving={saving} running={running} onRerun={rerun} />}
-        {tab === "calculator" && <CalculatorTab doc={doc} patch={patch} setDoc={setDoc} saving={saving} running={running} status={status.data} />}
+        {tab === "calculator" && !asIs && <CalculatorTab doc={doc} patch={patch} setDoc={setDoc} saving={saving} running={running} status={status.data} />}
         {tab === "documents" && <DocumentsTab doc={doc} patch={patch} setDoc={setDoc} saving={saving} running={running} onRerun={rerun} />}
         {tab === "market" && <MarketTab doc={doc} />}
         {tab === "analyst" && <AnalystTab doc={doc} patch={patch} setDoc={setDoc} saving={saving} running={running} onRerun={rerun} />}
@@ -267,6 +273,38 @@ function BudgetGap({ doc, setDoc, setTab }: { doc: AnalysisDoc; setDoc: (d: Anal
   );
 }
 
+/* The two right-hand hero segments of an as-is file: the condition the value is set from, and the other
+   figures to hold it against. (An ARV file shows the max offer and the deal there.) */
+function AsIsSegments({ doc }: { doc: AnalysisDoc }) {
+  const s = doc.subject;
+  const cond = s.condition_current || doc.as_is?.condition || null;
+  const means = CONDITION_OPTIONS.find(([k]) => k === cond)?.[1].split(" · ")[1];
+  const rec = doc.records;
+  return (
+    <>
+      <div className="p-5 min-w-0">
+        <div className="text-[11px] uppercase tracking-wide text-muted font-medium">Condition today <span className="normal-case tracking-normal text-faint font-normal">· the value is set from here</span></div>
+        <div className="text-[26px] leading-none font-semibold tracking-tight tnum mt-1.5">{cond || "—"}</div>
+        {means && <div className="text-[11.5px] text-muted mt-1 leading-snug">{means}</div>}
+        <div className="mt-3 space-y-1">
+          <Mini k="Source" v={s.condition_current ? (s.fact_sources?.condition_current || "entered") : "not stated · C4 assumed"} tone={s.condition_current ? undefined : "text-high"} />
+          <Mini k="HouseCanary grade" v={doc.housecanary?.subject?.condition || "—"} />
+          <Mini k="Known issues" v={s.known_issues?.length || "none ticked"} />
+        </div>
+      </div>
+      <div className="p-5 min-w-0">
+        <div className="text-[11px] uppercase tracking-wide text-muted font-medium">Other reference points</div>
+        <div className="mt-3 space-y-1">
+          <Mini k="Sales comparison (engine)" v={money(doc.valuation?.arv, true)} />
+          <Mini k={`${doc.avm?.source?.split(" ")[0] || "AVM"} model value`} v={money(doc.avm?.value, true)} />
+          <Mini k={`Last sale${rec?.last_sale_date ? ` · ${fmtDate(rec.last_sale_date, "MMM yy")}` : ""}`} v={money(rec?.last_sale_price, true)} />
+          <Mini k="ZIP typical value" v={money(doc.market?.zhvi?.value, true)} />
+        </div>
+      </div>
+    </>
+  );
+}
+
 function LoadingFile({ slow, onRetry }: { slow: boolean; onRetry: () => void }) {
   return (
     <div className="p-6 space-y-3">
@@ -285,7 +323,7 @@ function upsertPhase(list: Phase[], p: Phase): Phase[] {
 function applyPartial(d: AnalysisDoc, key: string, value: any): AnalysisDoc {
   if (key.startsWith("market_")) return { ...d, market: { ...(d.market || { gaps: [] }), [key.slice(7)]: value } as any };
   if (key === "document") { const list = (d.documents || []).slice(); const i = list.findIndex((x) => x.doc_id === value.doc_id); if (i === -1) list.push(value); else list[i] = { ...list[i], ...value }; return { ...d, documents: list }; }
-  if (["geocode", "subject", "records", "market", "avm", "comps", "valuation", "arv", "rehab_budget", "underwriting", "analysis", "profile", "shortlist", "housecanary"].includes(key)) return { ...d, [key]: value } as AnalysisDoc;
+  if (["geocode", "subject", "records", "market", "avm", "comps", "valuation", "arv", "as_is", "rehab_budget", "underwriting", "analysis", "profile", "shortlist", "housecanary"].includes(key)) return { ...d, [key]: value } as AnalysisDoc;
   return d;
 }
 
@@ -318,6 +356,7 @@ function Progress({ phases, log, running, error }: { phases: Phase[]; log: strin
 
 function EditSubject({ open, onOpenChange, doc, patch, onRerun }: { open: boolean; onOpenChange: (v: boolean) => void; doc: AnalysisDoc; patch: (b: any) => Promise<void>; onRerun: (s: string[]) => void }) {
   const s = doc.subject;
+  const asIs = isAsIs(doc);   // no "after the work" fields on an as-is file
   // Remounted by the parent (key) each time it opens, so the draft starts empty.
   const [f, setF] = React.useState<Record<string, unknown>>({});
   const val = (k: string) => (k in f ? f[k] : (s as unknown as Record<string, unknown>)[k]) as any;
@@ -341,10 +380,10 @@ function EditSubject({ open, onOpenChange, doc, patch, onRerun }: { open: boolea
           <SelectField label="Basement" value={val("basement") || "unknown"} onChange={(v) => set("basement", v)} options={[["unknown", "Unknown"], ["none", "None"], ["unfinished", "Unfinished"], ["finished", "Finished"]]} />
           <SelectField label="Pool" value={val("pool") === true ? "yes" : val("pool") === false ? "no" : "unknown"} onChange={(v) => set("pool", v === "unknown" ? null : v === "yes")} options={[["unknown", "Unknown"], ["no", "No"], ["yes", "Yes"]]} />
           <SelectField label="Condition today" value={val("condition_current") || ""} onChange={(v) => set("condition_current", v || null)} options={[["", "Not sure"], ...CONDITION_OPTIONS]} />
-          <SelectField label="Condition after" value={val("condition_after")} onChange={(v) => set("condition_after", v)} options={CONDITION_OPTIONS.slice(0, 4)} />
+          {!asIs && <><SelectField label="Condition after" value={val("condition_after")} onChange={(v) => set("condition_after", v)} options={CONDITION_OPTIONS.slice(0, 4)} />
           <NumField label="Bedrooms after" value={val("beds_after")} onCommit={(v) => set("beds_after", v)} placeholder="same" />
           <NumField label="Bathrooms after" value={val("baths_after")} onCommit={(v) => set("baths_after", v)} step={0.5} placeholder="same" />
-          <NumField label="Living area after" value={val("sqft_after")} onCommit={(v) => set("sqft_after", v)} suffix="sqft" placeholder="same" />
+          <NumField label="Living area after" value={val("sqft_after")} onCommit={(v) => set("sqft_after", v)} suffix="sqft" placeholder="same" /></>}
           <SelectField label="Occupancy" value={val("occupancy") || ""} onChange={(v) => set("occupancy", v || null)} options={[["", "Unknown"], ["vacant", "Vacant"], ["owner", "Owner occupied"], ["tenant", "Tenant in place"]]} />
           <NumField label="Roof age" value={val("roof_age_years")} onCommit={(v) => set("roof_age_years", v)} suffix="yrs" />
           <NumField label="HOA" value={val("hoa_monthly")} onCommit={(v) => set("hoa_monthly", v)} prefix="$" suffix="/mo" />

@@ -12,7 +12,7 @@ import { Mail, FileText, Check, Layers, Trash2, ExternalLink, MessagesSquare } f
 import { api } from "@/lib/api";
 import { Badge, Button, Card, CardHeader, Skeleton, Empty, Tabs, TabsList, TabsTrigger } from "@/components/ui";
 import { useEvidence } from "@/components/evidence";
-import { ThreadDialog } from "../property/[pid]/page";
+import { ThreadDialog } from "@/components/brain/tabs";
 import { cn, fmtDate, propertyLabel } from "@/lib/utils";
 import type { ArtifactRow, PropertySummary } from "@/lib/types";
 

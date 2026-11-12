@@ -52,7 +52,8 @@ export function subscribeJob(jobId: string, onEvent: (e: SSEEvent) => void, onEn
     try { onEvent(JSON.parse(ev.data)); } catch {}
   };
   const kinds = ["job", "agent_start", "agent_step", "agent_sufficiency_gate", "agent_budget", "agent_done",
-                 "phase", "second_reader", "status", "property", "result", "error", "done", "end"];
+                 "phase", "second_reader", "status", "property", "result", "error", "done", "end",
+                 "delta", "round", "tool"];
   kinds.forEach((k) => es.addEventListener(k, handler as EventListener));
   es.addEventListener("end", () => { es.close(); onEnd?.(); });
   es.onerror = () => {

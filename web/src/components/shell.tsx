@@ -6,31 +6,45 @@ import { usePathname, useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Command } from "cmdk";
 import { motion } from "framer-motion";
-import { LayoutGrid, Building2, CheckSquare, Inbox, Users, MessageSquare, Search, LogOut, Moon, Sun, AlertTriangle, ChevronRight, HardHat, ClipboardList, BellRing, FileBadge, Calculator, TrendingUp, Archive } from "lucide-react";
+import { LayoutGrid, Building2, CheckSquare, Inbox, Users, MessageSquare, Search, LogOut, Moon, Sun, AlertTriangle, ChevronRight, HardHat, ClipboardList, BellRing, FileBadge, Calculator, TrendingUp, Archive, Mail, ChevronDown, Reply, Receipt } from "lucide-react";
 import { api } from "@/lib/api";
 import { useUser } from "@/components/providers";
 import { Kbd } from "@/components/ui";
 import { cn, initials, propertyLabel } from "@/lib/utils";
 import type { PropertySummary } from "@/lib/types";
 
+/* Three things: today, a chat that knows the files, and the replies waiting.
+   The analysis tools follow. Everything the system used to show as its own
+   screen (next steps, follow-ups, tasks, cards) now lives on the property file
+   as open items; those screens stay reachable under "Older screens". */
 const NAV = [
-  { href: "/", label: "Dashboard", icon: LayoutGrid },
-  { href: "/ask", label: "Ask anything", icon: MessageSquare },
+  { href: "/", label: "Today", icon: LayoutGrid },
+  { href: "/replies", label: "To reply", icon: Reply },
+  { href: "/bills", label: "Bills", icon: Receipt },
+  { href: "/ask", label: "Ask", icon: MessageSquare },
+  { href: "/drafts", label: "Drafts", icon: Mail },
+  { href: "/arv", label: "ARV & underwriting", icon: Calculator },
+  { href: "/sold", label: "Sold deals", icon: Archive },
+  { href: "/notes", label: "Notes analysis", icon: TrendingUp },
+];
+const OLDER_NAV = [
+  { href: "/classic", label: "Old dashboard", icon: LayoutGrid },
   { href: "/next-steps", label: "Next steps", icon: ClipboardList },
   { href: "/followups", label: "Follow-ups", icon: BellRing },
   { href: "/tasks", label: "Tasks", icon: CheckSquare },
   { href: "/permits", label: "Permits", icon: FileBadge },
-  { href: "/arv", label: "ARV & underwriting", icon: Calculator },
-  { href: "/sold", label: "Sold deals", icon: Archive },
-  { href: "/notes", label: "Notes analysis", icon: TrendingUp },
   { href: "/review", label: "Review", icon: Inbox },
   { href: "/people", label: "People", icon: Users },
 ];
-// JP Sir and Manjunath Sir see only what is theirs (admin directive 2026-09-16):
-// the desk, questions, their follow-ups and tasks. No portfolio views.
+// JP Sir and Manjunath Sir see what is theirs: today, the chat, their drafts.
 const TEAM_NAV = [
-  { href: "/", label: "My desk", icon: LayoutGrid },
-  { href: "/ask", label: "Ask anything", icon: MessageSquare },
+  { href: "/", label: "Today", icon: LayoutGrid },
+  { href: "/replies", label: "To reply", icon: Reply },
+  { href: "/bills", label: "Bills", icon: Receipt },
+  { href: "/ask", label: "Ask", icon: MessageSquare },
+  { href: "/drafts", label: "Drafts", icon: Mail },
+];
+const TEAM_OLDER_NAV = [
   { href: "/followups", label: "My follow-ups", icon: BellRing },
   { href: "/tasks", label: "My tasks", icon: CheckSquare },
 ];
@@ -88,6 +102,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     // Poll while any answer is running so the sidebar spinner clears on its own.
     refetchInterval: (query) => ((query.state.data?.answering?.length ?? 0) > 0 ? 15_000 : false) });
   const answering = new Set((dash.data?.answering || []).map((a) => a.property_id || "__global__"));
+  const counts = useQuery({ queryKey: ["brain", "counts"], queryFn: () => api.get<{ drafts: number; bills?: number; open: Record<string, number> }>("/brain/counts"), enabled: rkb, staleTime: 60_000, refetchInterval: 120_000 });
+  const [older, setOlder] = React.useState(false);
 
   React.useEffect(() => { if (!loading && !user) router.replace("/login"); }, [loading, user, router]);
   // A contractor session has nothing here (the server refuses every RKB route
@@ -106,11 +122,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const unplaced = dash.data?.unplaced || 0;
   const ceo = user.role === "ceo";
   const nav = ceo ? NAV : TEAM_NAV;
+  const olderNav = ceo ? OLDER_NAV : TEAM_OLDER_NAV;
+  const olderActive = olderNav.some((n) => path.startsWith(n.href));
   const toggleTheme = () => { const d = !document.documentElement.classList.contains("dark"); document.documentElement.classList.toggle("dark", d); localStorage.setItem("mt-theme", d ? "dark" : "light"); };
 
   return (
     <div className="min-h-screen">
-      <aside className="fixed inset-y-0 left-0 z-30 w-[232px] border-r border-line bg-elev/80 backdrop-blur flex flex-col">
+      <aside className="fixed inset-y-0 left-0 z-30 w-[212px] border-r border-line bg-elev/80 backdrop-blur flex flex-col">
         <div className="px-4 pt-4 pb-3 flex items-center gap-2.5">
           <div className="h-8 w-8 rounded-xl bg-accent text-white grid place-items-center font-bold text-sm">M</div>
           <div><div className="text-[13px] font-semibold tracking-tight leading-none">MangoTree</div><div className="text-[11px] text-faint mt-0.5">RKB Consulting Group</div></div>
@@ -126,27 +144,40 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           {nav.map(({ href, label, icon: Icon }) => {
             const active = href === "/" ? path === "/" : path.startsWith(href);
             return (
-              <Link key={href} href={href} className={cn("flex items-center gap-2.5 h-9 px-2.5 rounded-lg text-[13px] transition", active ? "bg-accent-soft text-accent font-medium" : "text-muted hover:bg-sunken hover:text-fg")}>
-                <Icon size={15} /> <span className="flex-1">{label}</span>
-                {href === "/review" && unplaced > 0 && <span className="text-[10px] font-semibold bg-high-soft text-high rounded-full px-1.5 h-4 grid place-items-center">{unplaced}</span>}
-                {href === "/ask" && answering.has("__global__") && <span title="Answering a question" className="h-3.5 w-3.5 rounded-full border-2 border-accent border-t-transparent animate-spin shrink-0" />}
+              <Link key={href} href={href} className={cn("flex items-center gap-2.5 h-8 px-2.5 rounded-lg text-[12.5px] transition", active ? "bg-accent-soft text-accent font-medium" : "text-muted hover:bg-sunken hover:text-fg")}>
+                <Icon size={14} /> <span className="flex-1">{label}</span>
+                {href === "/replies" && (counts.data?.drafts || 0) > 0 && <span className="text-[10px] font-semibold bg-accent text-white rounded-full px-1.5 h-4 min-w-4 grid place-items-center">{counts.data!.drafts}</span>}
+                {href === "/bills" && (counts.data?.bills || 0) > 0 && <span className="text-[10px] font-semibold bg-sunken text-muted rounded-full px-1.5 h-4 min-w-4 grid place-items-center">{counts.data!.bills}</span>}
               </Link>
             );
           })}
         </nav>
         {ceo && <div className="px-4 pt-4 pb-1 text-[10px] uppercase tracking-wider text-faint flex items-center gap-1.5"><Building2 size={11} /> Properties</div>}
         <div className="px-2 space-y-0.5">
-          {ceo && (props.data || []).map((p) => {
-            const active = path === `/property/${p.property_id}`;
-            const dot = { critical: "bg-critical", watch: "bg-high", good: "bg-good" }[p.health?.level || "good"];
+          {ceo && [...(props.data || []).map((p) => ({ id: p.property_id, label: p.address })), { id: "_general", label: "General & portfolio" }].map((p) => {
+            const active = path === `/property/${p.id}` || path.startsWith(`/property/${p.id}/`);
+            const n = counts.data?.open?.[p.id] || 0;
             return (
-              <Link key={p.property_id} href={`/property/${p.property_id}`} className={cn("flex items-center gap-2 h-8 px-2.5 rounded-lg text-[12.5px] transition", active ? "bg-sunken text-fg font-medium" : "text-muted hover:bg-sunken hover:text-fg")}>
-                <span className={cn("h-1.5 w-1.5 rounded-full shrink-0", dot)} /> <span className="truncate flex-1">{p.address}</span>
-                {answering.has(p.property_id) && <span title="Answering a question" className="h-3.5 w-3.5 rounded-full border-2 border-accent border-t-transparent animate-spin shrink-0" />}
+              <Link key={p.id} href={`/property/${p.id}`} className={cn("flex items-center gap-2 h-7 px-2.5 rounded-md text-[12px] transition", active ? "bg-sunken text-fg font-medium" : "text-muted hover:bg-sunken hover:text-fg")}>
+                <span className="truncate flex-1">{p.label}</span>
+                {n > 0 && <span title={`${n} item${n === 1 ? "" : "s"} need you`} className="text-[10px] font-semibold text-high bg-high-soft rounded-full px-1.5 h-4 min-w-4 grid place-items-center">{n}</span>}
               </Link>
             );
           })}
         </div>
+        <button type="button" onClick={() => setOlder((v) => !v)} className="mt-3 w-full px-4 pt-2 pb-1 text-[10px] uppercase tracking-wider text-faint flex items-center gap-1.5 hover:text-muted">
+          <ChevronDown size={11} className={cn("transition", !(older || olderActive) && "-rotate-90")} /> Older screens
+        </button>
+        {(older || olderActive) && (
+          <nav className="px-2 space-y-0.5">
+            {olderNav.map(({ href, label, icon: Icon }) => (
+              <Link key={href} href={href} className={cn("flex items-center gap-2.5 h-8 px-2.5 rounded-lg text-[12.5px] transition", path.startsWith(href) ? "bg-sunken text-fg font-medium" : "text-faint hover:bg-sunken hover:text-fg")}>
+                <Icon size={13} /> <span className="flex-1">{label}</span>
+                {href === "/review" && unplaced > 0 && <span className="text-[10px] font-semibold bg-high-soft text-high rounded-full px-1.5 h-4 grid place-items-center">{unplaced}</span>}
+              </Link>
+            ))}
+          </nav>
+        )}
         </div>
         <div className="border-t border-line p-3 flex items-center gap-2 shrink-0">
           <div className="h-8 w-8 rounded-full bg-accent-soft text-accent grid place-items-center text-xs font-semibold">{initials(user.full_name || user.name)}</div>
@@ -156,7 +187,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       </aside>
 
-      <main className="ml-[232px] min-w-0 min-h-screen flex flex-col">
+      <main className="ml-[212px] min-w-0 min-h-screen flex flex-col">
         {(dash.data?.degrades?.length ?? 0) > 0 && (
           <div className="bg-high-soft text-high text-xs px-5 py-2 flex items-center gap-2 border-b border-high/20"><AlertTriangle size={13} /> {(dash.data?.degrades || []).join(" · ")}</div>
         )}
@@ -180,7 +211,7 @@ function Palette({ open, onOpenChange, properties, nav }: { open: boolean; onOpe
       <div className="flex items-center gap-2 px-4 border-b border-line"><Search size={15} className="text-faint" /><Command.Input value={q} onValueChange={setQ} placeholder="Property, person, document, or a question…" className="h-12 flex-1 bg-transparent text-sm outline-none placeholder:text-faint" /><Kbd>esc</Kbd></div>
       <Command.List className="max-h-[380px] overflow-y-auto p-2">
         <Command.Empty className="px-3 py-6 text-center text-sm text-muted">Nothing yet — keep typing.</Command.Empty>
-        {q.length > 6 && <Command.Group heading="Ask" className="text-[10px] uppercase tracking-wider text-faint px-2 pt-2 pb-1"><Item onSelect={() => go(`/ask?q=${encodeURIComponent(q)}`)} icon={MessageSquare} label={`Ask: “${q}”`} sub="Full investigation across every property" /></Command.Group>}
+        {q.length > 6 && <Command.Group heading="Ask" className="text-[10px] uppercase tracking-wider text-faint px-2 pt-2 pb-1"><Item onSelect={() => go(`/ask?q=${encodeURIComponent(q)}`)} icon={MessageSquare} label={`Ask: “${q}”`} sub="Ask across every property" /></Command.Group>}
         <Command.Group heading="Go to" className="text-[10px] uppercase tracking-wider text-faint px-2 pt-2 pb-1">
           {nav.map((n) => <Item key={n.href} onSelect={() => go(n.href)} icon={n.icon} label={n.label} />)}
         </Command.Group>

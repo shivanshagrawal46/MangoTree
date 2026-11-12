@@ -11,7 +11,7 @@ import { Loader2, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 import { Badge, Button, Card } from "@/components/arv/ui";
 import { money } from "@/lib/utils";
-import { arvApi, type ArvDocument } from "@/lib/arv";
+import { arvApi, isAsIs, type ArvDocument } from "@/lib/arv";
 import { Tile } from "./bits";
 import { DocCard, DropZone, NoDocs, useDocUploader } from "./documents-drop";
 import type { TabProps } from "./comps";
@@ -74,7 +74,7 @@ export function DocumentsTab({ doc, setDoc, running, onRerun }: TabProps & { onR
               <DocCard d={d} appliedFacts={doc.subject.fact_sources} defaultOpen={docs.length <= 3}
                 onApplyFacts={(keys) => act(d, "facts", keys)}
                 isBudget={doc.rehab?.mode === "lines" && doc.rehab?.source_doc_id === d.doc_id}
-                onApplyRehab={(d.extracted?.rehab_items.length || 0) > 0 ? () => act(d, "rehab") : undefined}
+                onApplyRehab={!isAsIs(doc) && (d.extracted?.rehab_items.length || 0) > 0 ? () => act(d, "rehab") : undefined}
                 onApplyComps={(d.extracted?.comps.length || 0) > 0 ? () => act(d, "comps") : undefined}
                 onRemove={() => remove(d)} />
             </div>

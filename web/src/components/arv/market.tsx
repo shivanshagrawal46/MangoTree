@@ -9,7 +9,7 @@ import { Statistic } from "antd";
 import { Droplets, Landmark, Percent, TrendingDown, TrendingUp, Users } from "lucide-react";
 import { Badge, Card } from "@/components/arv/ui";
 import { cn, money, fmtDate } from "@/lib/utils";
-import { num, pct, type AnalysisDoc } from "@/lib/arv";
+import { isAsIs, num, pct, type AnalysisDoc } from "@/lib/arv";
 import { H, Row } from "./bits";
 
 function Tip({ active, payload, label, fmt }: any) {
@@ -84,7 +84,7 @@ export function MarketTab({ doc }: { doc: AnalysisDoc }) {
             <Row label="Vacancy" value={pct(a.vacancy_pct)} />
             <Row label="Median year built" value={a.median_year_built ?? "—"} />
             <Row label="Population" value={num(a.population)} />
-            <div className="col-span-2 text-[10.5px] text-faint mt-1">{a.source} · {a.vintage}. The subject&apos;s ARV {doc.valuation?.arv && a.median_home_value ? `is ${num(doc.valuation.arv / a.median_home_value, 1)}× the tract median — ` : ""}a renovated house far above its tract&apos;s median takes longer to sell.</div>
+            <div className="col-span-2 text-[10.5px] text-faint mt-1">{a.source} · {a.vintage}. {isAsIs(doc) ? <>The subject&apos;s as-is value {doc.valuation?.arv && a.median_home_value ? `is ${num(doc.valuation.arv / a.median_home_value, 1)}× the tract median.` : "against the tract median."}</> : <>The subject&apos;s ARV {doc.valuation?.arv && a.median_home_value ? `is ${num(doc.valuation.arv / a.median_home_value, 1)}× the tract median — ` : ""}a renovated house far above its tract&apos;s median takes longer to sell.</>}</div>
           </div>
         ) : <div className="text-sm text-muted">Census ACS did not answer for this tract.</div>}
       </Card>

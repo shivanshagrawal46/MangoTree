@@ -323,8 +323,10 @@ def adjust(subject: Dict[str, Any], comp: Dict[str, Any], rates: Dict[str, Any])
     c_cond = comp.get("condition") or "C3"
     if s_cond in CONDITION_RANK and c_cond in CONDITION_RANK and s_cond != c_cond:
         steps = CONDITION_RANK[c_cond] - CONDITION_RANK[s_cond]
-        line("condition", "Condition (as repaired)", price * steps * rates["condition_step_pct"] / 100.0,
-             "subject as repaired %s (%s) vs comp %s (%s): %+d step(s) at %.0f%% each" % (s_cond, CONDITION_LABEL[s_cond], c_cond, CONDITION_LABEL.get(c_cond, ""), steps, rates["condition_step_pct"]), rates["condition_step_pct"])
+        # An as-is file (pipeline.as_it_stands) compares at the condition today; the wording says so. The arithmetic is the same.
+        how = "as is today" if subject.get("_as_is") else "as repaired"
+        line("condition", "Condition (%s)" % how, price * steps * rates["condition_step_pct"] / 100.0,
+             "subject %s %s (%s) vs comp %s (%s): %+d step(s) at %.0f%% each" % (how, s_cond, CONDITION_LABEL[s_cond], c_cond, CONDITION_LABEL.get(c_cond, ""), steps, rates["condition_step_pct"]), rates["condition_step_pct"])
     for extra in comp.get("manual_adjustments") or []:
         amt = _f(extra.get("amount"))
         if amt:

@@ -52,7 +52,7 @@ def pdf(doc: Dict[str, Any], *, user_name: str = "") -> bytes:
 
     buf = io.BytesIO()
     pdoc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=14 * mm, rightMargin=14 * mm, topMargin=14 * mm, bottomMargin=16 * mm,
-                             title="ARV analysis", author="MangoTree")
+                             title="As-is value" if doc.get("mode") == "as_is" else "ARV analysis", author="MangoTree")
     ss = getSampleStyleSheet()
     st = {"h1": ParagraphStyle("h1", parent=ss["Title"], fontSize=17, leading=21, spaceAfter=2, alignment=0),
           "h2": ParagraphStyle("h2", parent=ss["Heading2"], fontSize=12, leading=15, spaceBefore=10, spaceAfter=4, textColor=colors.HexColor("#1f6f5f")),
@@ -69,8 +69,10 @@ def pdf(doc: Dict[str, Any], *, user_name: str = "") -> bytes:
     an = doc.get("analysis") or {}
     uw = doc.get("underwriting") or {}
     rb = doc.get("rehab_budget") or {}
+    # An as-is file (pipeline.is_as_is): the value of the house as it stands. No plan, budget, deal or ARV sections.
+    as_is = doc.get("mode") == "as_is"
 
-    story.append(P("After Repair Value — " + _esc(geo.get("formatted") or subj.get("address")), st["h1"]))
+    story.append(P(("As-Is Value — " if as_is else "After Repair Value — ") + _esc(geo.get("formatted") or subj.get("address")), st["h1"]))
     story.append(P("MangoTree · RKB Consulting Group · %s%s · analysis %s" % (datetime.now(timezone.utc).strftime("%B %d, %Y"),
                    (" · prepared for " + _esc(user_name)) if user_name else "", _esc(doc.get("analysis_id"))), st["small"]))
     story.append(Spacer(1, 6))
@@ -79,12 +81,13 @@ def pdf(doc: Dict[str, Any], *, user_name: str = "") -> bytes:
         ("%s bd" % subj["beds"]) if subj.get("beds") is not None else None, ("%s ba" % subj["baths"]) if subj.get("baths") is not None else None,
         ("%s sqft" % _n(subj.get("sqft"))) if subj.get("sqft") else None, ("lot %s sqft" % _n(subj.get("lot_sqft"))) if subj.get("lot_sqft") else None,
         ("built %s" % subj["year_built"]) if subj.get("year_built") else None,
-        ("as repaired %s" % subj.get("condition_after")) if subj.get("condition_after") else None] if x)
+        (("condition today %s" % subj["condition_current"]) if subj.get("condition_current") else None) if as_is
+        else (("as repaired %s" % subj.get("condition_after")) if subj.get("condition_after") else None)] if x)
     story.append(P(facts, st["p"]))
     story.append(Spacer(1, 8))
     # The ARV the file is underwritten on: the AI analyst's opinion once the
     # review has run (``doc["arv"]``), else the engine's sales comparison.
-    fa = doc.get("arv") or {"value": v.get("arv"), "low": v.get("arv_low"), "high": v.get("arv_high"), "basis": "engine"}
+    fa = (doc.get("as_is") if as_is else doc.get("arv")) or {"value": v.get("arv"), "low": v.get("arv_low"), "high": v.get("arv_high"), "basis": "engine"}
     ai_based = fa.get("basis") == "analyst"
     head = [[P("<b>ARV (%s)</b>" % ("AI analyst" if ai_based else "sales comparison"), st["p"]), P("<b>Range</b>", st["p"]), P("<b>Confidence</b>", st["p"]),
              P("<b>%s</b>" % ("Engine (sales comparison)" if ai_based else "Analyst opinion"), st["p"]), P("<b>Recommended MAO</b>", st["p"])],
@@ -92,6 +95,13 @@ def pdf(doc: Dict[str, Any], *, user_name: str = "") -> bytes:
              P("%s (%s/100, ±%s%%)" % (_esc(conf.get("label")), conf.get("score"), conf.get("band_pct")) if ai_based is False else _esc(an.get("confidence") or conf.get("label")), st["p"]),
              P("%s<br/>%s – %s" % (_m(v.get("arv")), _m(v.get("arv_low")), _m(v.get("arv_high"))) if ai_based else ("%s<br/>%s – %s" % (_m(an.get("arv_opinion")), _m(an.get("arv_low")), _m(an.get("arv_high"))) if an else "—"), st["p"]),
              P("%s<br/><font size=6.5 color='#6b6b76'>on the %s ARV</font>" % (_m((uw.get("mao") or {}).get("recommended")), "AI" if ai_based else "engine"), st["p"])]]
+    if as_is:
+        head[0][0] = P("<b>As-is value (%s)</b>" % ("AI analyst" if ai_based else "sales comparison"), st["p"])
+        head[0][4] = P("<b>Condition today</b>", st["p"])
+        if not ai_based:
+            head[1][3] = P(("%s<br/>%s – %s" % (_m(an.get("as_is_opinion")), _m(an.get("as_is_low")), _m(an.get("as_is_high")))) if an else "—", st["p"])
+        head[1][4] = P("%s<br/><font size=6.5 color='#6b6b76'>%s</font>" % (_esc(fa.get("condition") or subj.get("condition_current") or "—"),
+                                                                              "valued as it stands" if fa.get("condition_stated", True) else "not stated; assumed"), st["p"])
     t = Table(head, colWidths=[42 * mm, 36 * mm, 38 * mm, 36 * mm, 30 * mm])
     t.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#d3cfc5")), ("INNERGRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#e6e3dc")),
                            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#efede8")), ("VALIGN", (0, 0), (-1, -1), "TOP")]))
@@ -173,55 +183,64 @@ def pdf(doc: Dict[str, Any], *, user_name: str = "") -> bytes:
         story.append(P(_md(an["market_read"]), st["p"]))
 
     # ------------------------------------------------------- rehab & deal
-    story.append(P("Rehab budget", st["h2"]))
-    story.append(P("%s Total %s (%s/sqft): subtotal %s, location adjustment %s, permits %s, overhead &amp; profit %s, contingency %s." % (_esc(rb.get("basis")), _m(rb.get("total")), _n(rb.get("per_sqft"), nd=1), _m(rb.get("subtotal")),
-                   _m(rb.get("location_adjustment")), _m(rb.get("permit_cost")), _m(rb.get("oh_and_p")), _m(rb.get("contingency"))), st["p"]))
-    lines = [l for l in rb.get("lines") or [] if l.get("amount")]
-    if lines:
-        half = (len(lines) + 1) // 2
-        cols = [lines[:half], lines[half:]]
-        rows = []
-        for i in range(half):
-            r = []
-            for col in cols:
-                if i < len(col):
-                    r += [col[i]["label"], _m(col[i]["amount"])]
-                else:
-                    r += ["", ""]
-            rows.append(r)
-        t = Table(rows, colWidths=[48 * mm, 24 * mm, 48 * mm, 24 * mm])
-        t.setStyle(TableStyle([("FONTSIZE", (0, 0), (-1, -1), 7.5), ("ALIGN", (1, 0), (1, -1), "RIGHT"), ("ALIGN", (3, 0), (3, -1), "RIGHT"), ("LINEBELOW", (0, 0), (-1, -1), 0.2, colors.HexColor("#e6e3dc"))]))
-        story.append(t)
-    if an.get("rehab_read"):
-        story.append(P(_md(an["rehab_read"]), st["p"]))
+    if not as_is:
+        story.append(P("Rehab budget", st["h2"]))
+        story.append(P("%s Total %s (%s/sqft): subtotal %s, location adjustment %s, permits %s, overhead &amp; profit %s, contingency %s." % (_esc(rb.get("basis")), _m(rb.get("total")), _n(rb.get("per_sqft"), nd=1), _m(rb.get("subtotal")),
+                       _m(rb.get("location_adjustment")), _m(rb.get("permit_cost")), _m(rb.get("oh_and_p")), _m(rb.get("contingency"))), st["p"]))
+        lines = [l for l in rb.get("lines") or [] if l.get("amount")]
+        if lines:
+            half = (len(lines) + 1) // 2
+            cols = [lines[:half], lines[half:]]
+            rows = []
+            for i in range(half):
+                r = []
+                for col in cols:
+                    if i < len(col):
+                        r += [col[i]["label"], _m(col[i]["amount"])]
+                    else:
+                        r += ["", ""]
+                rows.append(r)
+            t = Table(rows, colWidths=[48 * mm, 24 * mm, 48 * mm, 24 * mm])
+            t.setStyle(TableStyle([("FONTSIZE", (0, 0), (-1, -1), 7.5), ("ALIGN", (1, 0), (1, -1), "RIGHT"), ("ALIGN", (3, 0), (3, -1), "RIGHT"), ("LINEBELOW", (0, 0), (-1, -1), 0.2, colors.HexColor("#e6e3dc"))]))
+            story.append(t)
+        if an.get("rehab_read"):
+            story.append(P(_md(an["rehab_read"]), st["p"]))
 
-    story.append(P("Deal", st["h2"]))
-    d = uw.get("deal") or {}
-    mao = uw.get("mao") or {}
-    a = uw.get("assumptions") or {}
-    rows = [["Purchase price (%s)" % _esc(uw.get("price_basis")), _m(d.get("purchase_price")), "MAO, %s%% rule" % _n(mao.get("rule_pct")), _m(mao.get("rule"))],
-            ["Rehab (with adders)", _m(uw.get("rehab_total")), "MAO, profit target %s" % _m(mao.get("target_profit")), _m(mao.get("profit_target"))],
-            ["Buying costs", _m((uw.get("buying") or {}).get("total")), "Recommended MAO", _m(mao.get("recommended"))],
-            ["Holding costs (%s months)" % _n(a.get("months_held")), _m((uw.get("holding") or {}).get("total")), "Profit", _m(d.get("profit"))],
-            ["Selling costs", _m((uw.get("selling") or {}).get("total")), "Profit % of ARV", "%s%%" % d.get("profit_pct_of_arv")],
-            ["Financing costs", _m((d.get("financing") or {}).get("total")), "Cash needed", _m(d.get("cash_needed"))],
-            ["Total project cost", _m(d.get("total_project_cost")), "Cash ROI / annualized", "%s%% / %s%%" % (d.get("cash_roi_pct"), d.get("annualized_roi_pct"))],
-            ["Loan (%s)" % _esc((d.get("financing") or {}).get("binding")), _m((d.get("financing") or {}).get("loan")), "LTARV / LTC", "%s%% / %s%%" % ((d.get("financing") or {}).get("ltarv_pct"), (d.get("financing") or {}).get("ltc_pct"))]]
-    t = Table(rows, colWidths=[52 * mm, 30 * mm, 52 * mm, 30 * mm])
-    t.setStyle(TableStyle([("FONTSIZE", (0, 0), (-1, -1), 8), ("ALIGN", (1, 0), (1, -1), "RIGHT"), ("ALIGN", (3, 0), (3, -1), "RIGHT"), ("LINEBELOW", (0, 0), (-1, -1), 0.2, colors.HexColor("#e6e3dc")),
-                           ("FONTNAME", (2, 2), (3, 2), "Helvetica-Bold")]))
-    story.append(t)
-    for ch in uw.get("checks") or []:
-        story.append(P("%s %s: %s (limit %s). %s" % ("✓" if ch.get("ok") else "✗", _esc(ch.get("label")), ch.get("value"), ch.get("limit"), _esc(ch.get("note"))), st["small"]))
-    if an.get("mao_reason"):
-        story.append(P("<b>Analyst on the offer:</b> %s %s" % (_m(an.get("mao_opinion")), _md(an["mao_reason"])), st["p"]))
+        story.append(P("Deal", st["h2"]))
+        d = uw.get("deal") or {}
+        mao = uw.get("mao") or {}
+        a = uw.get("assumptions") or {}
+        rows = [["Purchase price (%s)" % _esc(uw.get("price_basis")), _m(d.get("purchase_price")), "MAO, %s%% rule" % _n(mao.get("rule_pct")), _m(mao.get("rule"))],
+                ["Rehab (with adders)", _m(uw.get("rehab_total")), "MAO, profit target %s" % _m(mao.get("target_profit")), _m(mao.get("profit_target"))],
+                ["Buying costs", _m((uw.get("buying") or {}).get("total")), "Recommended MAO", _m(mao.get("recommended"))],
+                ["Holding costs (%s months)" % _n(a.get("months_held")), _m((uw.get("holding") or {}).get("total")), "Profit", _m(d.get("profit"))],
+                ["Selling costs", _m((uw.get("selling") or {}).get("total")), "Profit % of ARV", "%s%%" % d.get("profit_pct_of_arv")],
+                ["Financing costs", _m((d.get("financing") or {}).get("total")), "Cash needed", _m(d.get("cash_needed"))],
+                ["Total project cost", _m(d.get("total_project_cost")), "Cash ROI / annualized", "%s%% / %s%%" % (d.get("cash_roi_pct"), d.get("annualized_roi_pct"))],
+                ["Loan (%s)" % _esc((d.get("financing") or {}).get("binding")), _m((d.get("financing") or {}).get("loan")), "LTARV / LTC", "%s%% / %s%%" % ((d.get("financing") or {}).get("ltarv_pct"), (d.get("financing") or {}).get("ltc_pct"))]]
+        t = Table(rows, colWidths=[52 * mm, 30 * mm, 52 * mm, 30 * mm])
+        t.setStyle(TableStyle([("FONTSIZE", (0, 0), (-1, -1), 8), ("ALIGN", (1, 0), (1, -1), "RIGHT"), ("ALIGN", (3, 0), (3, -1), "RIGHT"), ("LINEBELOW", (0, 0), (-1, -1), 0.2, colors.HexColor("#e6e3dc")),
+                               ("FONTNAME", (2, 2), (3, 2), "Helvetica-Bold")]))
+        story.append(t)
+        for ch in uw.get("checks") or []:
+            story.append(P("%s %s: %s (limit %s). %s" % ("✓" if ch.get("ok") else "✗", _esc(ch.get("label")), ch.get("value"), ch.get("limit"), _esc(ch.get("note"))), st["small"]))
+        if an.get("mao_reason"):
+            story.append(P("<b>Analyst on the offer:</b> %s %s" % (_m(an.get("mao_opinion")), _md(an["mao_reason"])), st["p"]))
 
     # ----------------------------------------------------------- analyst
     if an:
         story.append(PageBreak())
         story.append(P("Analyst review — %s, effort %s" % (_esc(an.get("model")), _esc(an.get("effort"))), st["h2"]))
-        story.append(P("<b>Opinion of value %s (%s – %s), %s confidence.</b> %s" % (_m(an.get("arv_opinion")), _m(an.get("arv_low")), _m(an.get("arv_high")), _esc(an.get("confidence")), _esc(an.get("confidence_reason"))), st["p"]))
-        if an.get("as_is_opinion"):
+        if as_is:
+            story.append(P("<b>Opinion of as-is value %s (%s – %s), %s confidence.</b> %s" % (_m(an.get("as_is_opinion")), _m(an.get("as_is_low")), _m(an.get("as_is_high")), _esc(an.get("confidence")), _esc(an.get("confidence_reason"))), st["p"]))
+            for k in ("as_is_basis", "buyer_pool"):
+                if an.get(k):
+                    story.append(P(_md(an[k]), st["p"]))
+            if an.get("condition_read"):
+                story.append(P("<b>Condition:</b> " + _md(an["condition_read"]), st["p"]))
+        else:
+            story.append(P("<b>Opinion of value %s (%s – %s), %s confidence.</b> %s" % (_m(an.get("arv_opinion")), _m(an.get("arv_low")), _m(an.get("arv_high")), _esc(an.get("confidence")), _esc(an.get("confidence_reason"))), st["p"]))
+        if an.get("as_is_opinion") and not as_is:
             story.append(P("<b>As-is value today %s (%s – %s), before any work.</b> %s" % (_m(an.get("as_is_opinion")), _m(an.get("as_is_low")), _m(an.get("as_is_high")), _esc(an.get("as_is_basis") or "")), st["p"]))
         for para in str(an.get("summary") or "").split("\n\n"):
             if para.strip():

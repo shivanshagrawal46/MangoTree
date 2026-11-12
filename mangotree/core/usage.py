@@ -18,6 +18,7 @@ from typing import Any, Dict, Optional
 PRICES: Dict[str, tuple] = {
     "claude-fable-5-1": (10.0, 50.0, 0.25, 12.50),
     "claude-fable-5": (10.0, 50.0, 1.00, 12.50),
+    "claude-opus-5-5": (4.0, 20.0, 0.20, 5.00),
     "claude-opus-5": (5.0, 25.0, 0.50, 6.25),
     "claude-sonnet-5": (2.0, 10.0, 0.20, 2.50),
     "claude-haiku-4-5": (1.0, 5.0, 0.10, 1.25),

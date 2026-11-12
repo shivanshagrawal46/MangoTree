@@ -175,6 +175,9 @@ def logout(response: Response) -> None:
     response.delete_cookie(COOKIE, path="/")
 
 
+_SESSIONS: Dict[str, Any] = {}
+
+
 def current_session(request: Request) -> Dict[str, Any]:
     """Whoever is signed in — RKB or contractor. Only /auth/me, /auth/logout and
     /auth/password use this; every other route takes one of the two below."""
@@ -182,10 +185,19 @@ def current_session(request: Request) -> Dict[str, Any]:
     uid = read_token(token) if token else None
     if not uid:
         raise HTTPException(401, "not signed in")
+    # The signed token proves who this is. Whether the account is still active is
+    # asked of the database at most once every 30 seconds per user, not on every
+    # request — a page makes a dozen requests, and each lookup is a round trip.
+    hit = _SESSIONS.get(uid)
+    if hit and time.time() - hit[0] < 30:
+        return dict(hit[1])
     doc = get_mongo().db["users"].find_one({"user_id": uid, "active": {"$ne": False}})
     if not doc:
+        _SESSIONS.pop(uid, None)
         raise HTTPException(401, "user disabled")
-    return public_user(doc)
+    user = public_user(doc)
+    _SESSIONS[uid] = (time.time(), user)
+    return dict(user)
 
 
 def current_user(request: Request) -> Dict[str, Any]:
@@ -227,6 +239,7 @@ def change_password(mongo: Mongo, user_id: str, old: str, new: str) -> None:
     if len(new) < 8:
         raise HTTPException(400, "new password must be at least 8 characters")
     mongo.db["users"].update_one({"user_id": user_id}, {"$set": {"password_hash": hash_password(new)}})
+    _SESSIONS.pop(user_id, None)
 
 
 CurrentUser = Depends(current_user)

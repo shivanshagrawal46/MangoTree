@@ -130,6 +130,8 @@ export type Analysis = {
   headline: string; arv_opinion: number; arv_low: number; arv_high: number; agrees_with_engine: boolean; confidence: string; confidence_reason: string; summary: string;
   /** The house's value today, before any work (2026-11-04). Separate from the ARV; the ARV and the underwriting never read it. */
   as_is_opinion?: number | null; as_is_low?: number | null; as_is_high?: number | null; as_is_basis?: string | null;
+  /** Only on an as-is file's review (it has no ARV, verdict, rehab read or max offer). */
+  buyer_pool?: string | null; condition_read?: string | null;
   summary_points?: string[]; value_drivers?: { factor: string; impact_usd: number; why: string }[];
   verdict?: "fund" | "fund_with_conditions" | "renegotiate" | "pass"; verdict_reason?: string;
   comp_notes: { comp_id: string; verdict: "keep" | "drop" | "caution" | "add"; note: string; suggested_condition?: string; suggested_adjustments?: { label: string; amount: number; why: string }[] }[];
@@ -140,13 +142,20 @@ export type Analysis = {
 
 /** The one ARV the file is underwritten on: the AI analyst's opinion once the review has run, else the engine's sales comparison. */
 export type ArvUsed = { value: number | null; low: number | null; high: number | null; basis: "analyst" | "engine"; label: string; engine: number | null; analyst: number | null;
-  engine_low?: number | null; engine_high?: number | null; model?: string | null; at?: string | null; diff_pct?: number | null };
+  engine_low?: number | null; engine_high?: number | null; model?: string | null; at?: string | null; diff_pct?: number | null;
+  /** On an as-is file's ``as_is`` block: the condition the house is valued at, and whether anyone stated it. */
+  condition?: string | null; condition_stated?: boolean };
+
+/** An as-is file (2026-11-12) values the house as it stands today: no plan, no rehab budget, no deal and no ARV. */
+export const isAsIs = (d?: { mode?: string | null } | null): boolean => d?.mode === "as_is";
 
 export type Phase = { key: string; label: string; status: "running" | "done" | "skipped" | "failed"; detail?: string; at?: string };
 export type ChatMsg = { role: "user" | "assistant"; content: string; by?: string; by_name?: string; at: string; model?: string };
 export type Records = Record<string, any> | null;
 
 export type AnalysisDoc = {
+  /** "as_is" = an as-is value file; absent or "arv" = an ARV file. */
+  mode?: "arv" | "as_is"; as_is?: ArvUsed | null;
   analysis_id: string; status: "queued" | "running" | "done" | "failed"; error?: string | null; job_id?: string; created_at: string; updated_at: string;
   created_by?: string; created_by_name?: string; property_id?: string | null; label?: string | null;
   subject: Subject; subject_input?: Subject; geocode?: Geocode; records?: Records; market?: Market; avm?: Avm | null; comps: Comp[]; documents?: ArvDocument[];
@@ -159,6 +168,7 @@ export type AnalysisDoc = {
 };
 
 export type AnalysisSummary = {
+  mode?: "arv" | "as_is"; as_is?: Partial<ArvUsed> | null;
   analysis_id: string; created_at: string; updated_at?: string; created_by_name?: string; status: string; error?: string | null; label?: string | null; property_id?: string | null;
   /** Set when a contractor login (Wes) started the file: "contractor", with the organisation name. */
   created_side?: "contractor" | "rkb"; created_org?: string; created_org_name?: string;
@@ -178,7 +188,7 @@ export const arvApi = {
   status: () => api.get<ArvStatus>("/arv/status"),
   geocode: (q: string) => api.get<Geocode>(`/arv/geocode?q=${encodeURIComponent(q)}`),
   list: (limit = 50) => api.get<{ items: AnalysisSummary[] }>(`/arv/analyses?limit=${limit}`),
-  create: (body: { subject: Partial<Subject>; assumptions?: Assumptions; rehab?: RehabInput; settings?: Record<string, any>; property_id?: string | null; label?: string | null; document_ids?: string[] }) =>
+  create: (body: { subject: Partial<Subject>; assumptions?: Assumptions; rehab?: RehabInput; settings?: Record<string, any>; property_id?: string | null; label?: string | null; document_ids?: string[]; mode?: "arv" | "as_is" }) =>
     api.post<{ analysis_id: string; job_id: string }>("/arv/analyses", body),
   /** Upload documents. Without an analysis id they are staged for the wizard; the job reads each one. */
   uploadDocuments: (files: File[], opts: { analysisId?: string; hint?: string; address?: string } = {}) => {

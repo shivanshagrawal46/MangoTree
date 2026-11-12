@@ -18,6 +18,8 @@ import { Pill } from "@/components/arv/bits";
 /** The ARV a file is read on: the AI analyst's opinion once the review has run, else the engine's sales comparison. */
 function fileArv(it: AnalysisSummary): { arv: number; arv_low?: number | null; arv_high?: number | null; ai: boolean } {
   const an = it.analysis;
+  // An as-is file carries an as-is value in the same place: the analyst's once reviewed, else the engine's.
+  if (it.mode === "as_is" && an?.as_is_opinion) return { arv: an.as_is_opinion, arv_low: an.as_is_low || an.as_is_opinion, arv_high: an.as_is_high || an.as_is_opinion, ai: true };
   if (an?.arv_opinion) return { arv: an.arv_opinion, arv_low: an.arv_low || an.arv_opinion, arv_high: an.arv_high || an.arv_opinion, ai: true };
   const v = it.valuation;
   return { arv: v?.arv || 0, arv_low: v?.arv_low, arv_high: v?.arv_high, ai: false };
@@ -82,14 +84,14 @@ export default function ArvPage() {
       },
     },
     {
-      title: "After repair value", key: "arv", width: 200, sorter: (a, b) => fileArv(a).arv - fileArv(b).arv,
+      title: "Value", key: "arv", width: 200, sorter: (a, b) => fileArv(a).arv - fileArv(b).arv,
       render: (_, it) => {
         // The analyst's ARV once the review has run, else the engine's — the same number the file is underwritten on.
         const v = fileArv(it);
         const span = v.arv_low && v.arv_high && v.arv_high > v.arv_low ? v : null;
         return (
           <div>
-            <div className="text-[15px] font-semibold tnum tracking-tight">{v.arv ? money(v.arv) : it.status === "running" ? <span className="text-faint text-[12px]">computing…</span> : "—"}</div>
+            <div className="text-[15px] font-semibold tnum tracking-tight flex items-center gap-1.5">{v.arv ? money(v.arv) : it.status === "running" ? <span className="text-faint text-[12px]">computing…</span> : "—"}<Pill tone={it.mode === "as_is" ? "info" : "neutral"}>{it.mode === "as_is" ? "as-is" : "ARV"}</Pill></div>
             {span && <div className="relative h-1.5 mt-1 rounded-full bg-sunken overflow-hidden"><div className="absolute inset-y-0 bg-accent/30" style={{ left: "8%", right: "8%" }} /><div className="absolute inset-y-0 w-[2px] bg-accent" style={{ left: `${8 + ((v.arv - v.arv_low!) / (v.arv_high! - v.arv_low!)) * 84}%` }} /></div>}
             {span && <div className="text-[10px] text-faint tnum mt-0.5">{money(v.arv_low, true)} – {money(v.arv_high, true)}{v.ai ? " · AI" : ""}</div>}
           </div>
@@ -137,7 +139,7 @@ export default function ArvPage() {
             <div className="h-10 w-10 rounded-2xl bg-accent text-white grid place-items-center shrink-0"><Sparkles size={18} /></div>
             <div className="min-w-0 flex-1">
               <h2 className="text-[17px] font-semibold tracking-tight">Start a file</h2>
-              <p className="text-xs text-muted mt-0.5">Six short steps: address, documents, the house, the plan, the deal, review. Drop the inspection report and the contractor&apos;s bid and the model reads them into the file.</p>
+              <p className="text-xs text-muted mt-0.5">Address, documents, then choose: the as-is value (the house and its condition today, nothing more) or the full ARV file (the plan and the deal too). Drop the inspection report and the contractor&apos;s bid and the model reads them into the file.</p>
               <form onSubmit={(e) => { e.preventDefault(); start(); }} className="mt-4 flex flex-col sm:flex-row gap-2">
                 <Input size="large" value={addr} onChange={(e) => setAddr(e.target.value)} placeholder="Property address in the United States" prefix={<MapPin size={15} className="text-faint" />} autoFocus className="flex-1" />
                 <Button variant="primary" size="lg" type="submit">Continue <ArrowRight size={15} /></Button>
@@ -158,7 +160,7 @@ export default function ArvPage() {
           <Card className="p-4"><Statistic title="Files" value={items.length} /><div className="text-[11px] text-muted mt-0.5">{valued.length} with a value</div></Card>
           <Card className="p-4"><Statistic title="Running now" value={running} styles={{ content: { color: running ? "var(--accent)" : undefined } }} /><div className="text-[11px] text-muted mt-0.5">{running ? "stages stream in live" : "nothing in progress"}</div></Card>
           <Card className="p-4"><Statistic title="Strong files" value={strong} styles={{ content: { color: "var(--good)" } }} /><div className="text-[11px] text-muted mt-0.5">confidence grade A or B</div></Card>
-          <Card className="p-4"><Statistic title="Value on the desk" value={money(valued.reduce((a, i) => a + (i.valuation?.arv || 0), 0), true)} /><div className="text-[11px] text-muted mt-0.5">sum of ARVs</div></Card>
+          <Card className="p-4"><Statistic title="Value on the desk" value={money(valued.reduce((a, i) => a + (i.valuation?.arv || 0), 0), true)} /><div className="text-[11px] text-muted mt-0.5">sum of ARVs and as-is values</div></Card>
         </div>
       )}
 

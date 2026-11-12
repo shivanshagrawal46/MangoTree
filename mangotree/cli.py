@@ -1243,6 +1243,131 @@ def cmd_portal_tools(args) -> int:
     return 0
 
 
+def cmd_brain(args) -> int:
+    """The property files: open them, keep them current, import the money workbooks."""
+    from concurrent.futures import ThreadPoolExecutor
+    from mangotree.brain import config as bc
+    from mangotree.brain.store import BrainStore, all_file_ids, name_of
+    from mangotree.brain.updater import Updater
+    mongo = get_mongo()
+    store = BrainStore(mongo)
+    up = Updater(mongo, store)
+    if args.action == "money":
+        from mangotree.brain.money import import_workbooks
+        rep = import_workbooks(store, args.files, by="cli")
+        for f in rep["files"]:
+            print(f"  {f}")
+        print(f"  figures stored for {len(rep['properties'])} properties")
+        return 0
+    if args.action == "status":
+        files = {f["property_id"]: f for f in store.list_files()}
+        for pid in all_file_ids():
+            f = files.get(pid)
+            if not f:
+                print(f"  {pid:<16} (no file yet)")
+                continue
+            print(f"  {pid:<16} updated {f.get('updated_at'):%m-%d %H:%M}  open items {len(BrainStore.open_items(f)):>2}  {str(f.get('headline'))[:90]}")
+        print(f"  drafts waiting: {store.drafts.count_documents({'status': 'ready'})}   records waiting to be read: {len(up.pending())}")
+        return 0
+    if args.action == "sitework":
+        # Read the last month of site logs and photos for each property and say how the work is going.
+        from mangotree.brain.sitework import SiteWork
+        from mangotree.brain.store import active_property_ids
+        sw = SiteWork(mongo, store)
+        ids = list(args.property or []) or active_property_ids()
+        total = 0.0
+        with ThreadPoolExecutor(max_workers=max(1, min(args.workers, 3))) as pool:
+            for pid, a in zip(ids, pool.map(sw.analyse, ids)):
+                if not a:
+                    print(f"  {pid:<16} no site log in the last month (or the reading failed)", flush=True)
+                    continue
+                total += a["cost_usd"]
+                print(f"  {pid:<16} {a['overall']:<12} work {a['workmanship']:<11} pace {a['pace']:<10} | {a['photos_shown']}/{a['photos_posted']} photos | "
+                      f"{len(a['observations'])} observations ({a['dropped_unsupported']} dropped) | ${a['cost_usd']:.2f} | {a['one_line'][:110]}", flush=True)
+        print(f"  cost ${total:.2f}")
+        return 0
+    if args.action in ("buildertrend", "buildertrend-receive", "after-pull", "photos-status", "photos-to-server", "photos-delete-local"):
+        from pathlib import Path
+        from mangotree.brain.buildertrend import Buildertrend, ServerStorageMissing
+        from mangotree.brain.sitework import after_pull
+        from mangotree.config.settings import PROJECT_ROOT
+        folder = Path(PROJECT_ROOT) / "data" / "buildertrend"
+        bt = Buildertrend(mongo)
+        try:
+            if args.action == "buildertrend-receive":
+                # Take a pull from the browser and load it straight to the database and the server's storage.
+                from mangotree.brain.bt_intake import serve
+                serve(mongo)
+            elif args.action == "buildertrend":
+                # Load a pull saved under data/buildertrend, then read again every property that got new logs.
+                print(bt.import_pull(folder))
+                print(after_pull(mongo, workers=args.workers))
+            elif args.action == "after-pull":
+                print(after_pull(mongo, workers=args.workers))
+            elif args.action == "photos-status":
+                print(bt.photos_status())
+            elif args.action == "photos-to-server":
+                # Upload the photos that are only on this machine to the server's storage, checking each one.
+                print(bt.move_photos_to_server(folder))
+            elif args.action == "photos-delete-local":
+                # Remove this machine's copies — only of photos confirmed on the server. Needs --force.
+                if not args.force:
+                    print("This deletes the photo files on this machine (those confirmed on the server). Run it again with --force to go ahead.")
+                    return 1
+                print(bt.delete_local_copies(folder))
+        except ServerStorageMissing as exc:
+            print(f"NOT DONE: {exc}")
+            return 1
+        return 0
+    if args.action == "stage":
+        from mangotree.brain.snapshot import STAGE_LABEL, refresh_stage
+        from mangotree.brain.store import active_property_ids
+        ids = list(args.property or []) or active_property_ids()
+        with ThreadPoolExecutor(max_workers=max(1, args.workers)) as pool:
+            for pid, s in zip(ids, pool.map(lambda p: refresh_stage(mongo, store, p), ids)):
+                if not s:
+                    print(f"  {pid:<16} (no file, or could not be read)")
+                    continue
+                print(f"  {pid:<16} {STAGE_LABEL[s['stage']]:<22}{' [recovery]' if s['recovery'] else ''} closing {str(s['closing_date'])[:10]} | "
+                      f"build by {str(s['construction_expected'])[:10]} | sale by {str(s['sale_expected'])[:10]} | {s['one_line'][:90]}", flush=True)
+        return 0
+    if args.action == "run":
+        out = up.run_pending(max_items=args.limit, write_drafts=not args.no_drafts, emit=lambda k, p: print(f"  {p.get('text', p)}"))
+        print(f"  read {out.get('read', 0)}, drafts written {out.get('drafts', 0)}, errors {out.get('errors', 0)}, still waiting {out.get('remaining', 0)}")
+        return 0
+    if args.action == "bootstrap":
+        ids = all_file_ids() if args.all else list(args.property or [])
+        if not ids:
+            print("name a property with --property <id>, or use --all")
+            return 1
+        if not args.force:
+            have = {f["property_id"] for f in store.list_files() if f.get("built_at")}
+            skip = [i for i in ids if i in have]
+            ids = [i for i in ids if i not in have]
+            if skip:
+                print(f"  already open (use --force to rebuild): {', '.join(skip)}")
+        total = 0.0
+
+        def one(pid):
+            try:
+                return up.bootstrap(pid, write_drafts=not args.no_drafts)
+            except Exception as exc:
+                logger.exception("bootstrap failed for %s", pid)
+                return {"property_id": pid, "error": f"{type(exc).__name__}: {exc}"[:200]}
+
+        with ThreadPoolExecutor(max_workers=max(1, args.workers)) as pool:
+            for r in pool.map(one, ids):
+                if r.get("error"):
+                    print(f"  {r['property_id']:<16} FAILED {r['error']}")
+                    continue
+                total += float(r.get("cost_usd") or 0)
+                print(f"  {r['property_id']:<16} {r['emails_read']:>3} emails, {r['calls_read']} calls read -> {r['open_items']} open items, "
+                      f"{len(r['drafts'])} drafts, ${r.get('cost_usd')}, {r['elapsed_s']}s", flush=True)
+        print(f"  file-building cost ${total:.2f} (drafts are costed on each draft)")
+        return 0
+    return 1
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="mangotree", description="MangoTree ingestion")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -1415,6 +1540,18 @@ def main(argv=None) -> int:
     p_draft.add_argument("--subject", required=True)
     p_draft.add_argument("--body-file", required=True, help="plain-text body; blank line = new paragraph")
     p_draft.set_defaults(func=cmd_outlook_draft)
+
+    p_brain = sub.add_parser("brain", help="the property files: bootstrap | run | status | money")
+    p_brain.add_argument("action", choices=["bootstrap", "run", "status", "money", "stage", "buildertrend", "buildertrend-receive", "after-pull",
+                                           "photos-status", "photos-to-server", "photos-delete-local", "sitework"])
+    p_brain.add_argument("files", nargs="*", help="workbook paths, for 'money'")
+    p_brain.add_argument("--property", nargs="*", help="property ids, for 'bootstrap'")
+    p_brain.add_argument("--all", action="store_true", help="every active property plus the general file")
+    p_brain.add_argument("--force", action="store_true", help="rebuild files that already exist")
+    p_brain.add_argument("--no-drafts", action="store_true", help="do not write reply drafts")
+    p_brain.add_argument("--workers", type=int, default=3)
+    p_brain.add_argument("--limit", type=int, default=60, help="records to read in one 'run'")
+    p_brain.set_defaults(func=cmd_brain)
 
     args = parser.parse_args(argv)
     try:

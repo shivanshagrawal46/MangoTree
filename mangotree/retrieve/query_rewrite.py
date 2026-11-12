@@ -226,11 +226,14 @@ class QueryRewriter:
         parts.append(f"\n<<<QUESTION — DATA>>>\n{question}\n<<<END QUESTION>>>")
 
         try:
+            from mangotree.core.llm_json import always_thinks
+            extra = {"output_config": {"effort": "low"}} if always_thinks(self.model) else {}
             response = self.client.messages.create(
                 model=self.model,
                 max_tokens=cfg.QUERY_REWRITE_MAX_OUTPUT,
                 system=[{"type": "text", "text": _SYSTEM, "cache_control": {"type": "ephemeral"}}],
                 messages=[{"role": "user", "content": "\n".join(parts)}],
+                **extra,
             )
         except Exception as exc:
             logger.warning("Query rewrite call failed (%s); deterministic fallback", exc)

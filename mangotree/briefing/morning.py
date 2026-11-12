@@ -566,6 +566,21 @@ class Scheduler:
         self._last_poll = datetime.now(timezone.utc)
         return out
 
+    def run_brain(self) -> Dict[str, Any]:
+        """Read newly arrived records into the property files (and draft replies)."""
+        from mangotree.brain import config as bc
+        from mangotree.brain.store import BrainStore
+        from mangotree.brain.updater import Updater
+        store = BrainStore(self.mongo)
+        if not store.setting(bc.SETTING_ENABLED, True):
+            return {"skipped": "switched off"}
+        out = Updater(self.mongo, store).run_pending(max_items=25)
+        if out.get("read"):
+            from mangotree.api import swr
+            swr.clear()
+            self._record("brain", not out.get("errors"), {k: out.get(k) for k in ("read", "drafts", "errors", "remaining")})
+        return out
+
     def _record(self, job: str, ok: bool, detail: Any) -> None:
         self.runs.insert_one({"job": job, "ok": ok, "detail": detail if isinstance(detail, (dict, list, str, int)) else str(detail),
                               "at": datetime.now(timezone.utc)})
@@ -589,6 +604,16 @@ class Scheduler:
                 logger.exception("mail intake failed")
                 self._record("intake", False, str(exc)[:400])
                 self._last_poll = datetime.now(timezone.utc)
+        # The property files (2026-11-12): whatever the arrival chain has finished
+        # with is read into its property's file — status, open items, the activity
+        # log, and a reply draft where one is owed. One Opus 5.5 call per record;
+        # this is light work and does not wait for the daily cycle. Switch:
+        # settings.brain_enabled.
+        if self.intake_enabled:
+            try:
+                self.run_brain()
+            except Exception:
+                logger.exception("property-file update failed")
         # A person's question outranks everything below. Heavy passes wait for
         # the next tick (60s) until no answer is in flight.
         try:

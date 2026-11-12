@@ -112,6 +112,11 @@ class JobRunner:
                 job.emit("error", {"error": job.error})
                 self.coll.update_one({"job_id": job.job_id}, {"$set": {"status": "failed", "error": job.error, "finished_at": datetime.now(timezone.utc)}})
             finally:
+                try:
+                    from . import swr
+                    swr.clear()             # whatever the job did, pages must not answer from before it
+                except Exception:
+                    pass
                 job.emit("end", {"status": job.status})
 
         threading.Thread(target=run, name=f"job-{job.job_id}", daemon=True).start()

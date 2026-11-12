@@ -28,6 +28,7 @@ class CreateBody(BaseModel):
     settings: Dict[str, Any] = {}
     property_id: Optional[str] = None
     label: Optional[str] = None
+    mode: Optional[str] = None     # "as_is" = value the house as it stands, nothing else; anything else is an ARV file
     document_ids: List[str] = []   # staged uploads (POST /arv/documents) to attach before the run
 
 
@@ -174,7 +175,7 @@ def install(app, mongo, jobs) -> None:
         if pid and is_contractor(user) and pid not in (user.get("property_ids") or []):
             pid = None
         doc = pipeline.new_document(subject=body.subject, assumptions=body.assumptions, rehab=body.rehab, settings=body.settings, user=user,
-                                    property_id=pid, label=body.label)
+                                    property_id=pid, label=body.label, mode=body.mode)
         if is_contractor(user):
             # Stamped on the file itself, so every list, PDF and workbook that
             # shows "by ..." reads "Wes Stone (ROI Blocks)" without a lookup.
@@ -210,7 +211,7 @@ def install(app, mongo, jobs) -> None:
         # Files saved before the analyst's ARV became the file's ARV carry no
         # ``arv`` block and a max offer on the engine's number; one deterministic
         # recompute brings them in line (no model calls).
-        if doc.get("status") == "done" and doc.get("analysis") and not doc.get("arv"):
+        if doc.get("status") == "done" and doc.get("analysis") and not doc.get("arv") and not pipeline.is_as_is(doc):
             try:
                 pipeline.recompute(doc)
                 store.save(doc)
@@ -465,11 +466,13 @@ def install(app, mongo, jobs) -> None:
         doc = _get(aid, user)
         name = re.sub(r"[^A-Za-z0-9]+", "-", (doc.get("geocode") or {}).get("formatted") or doc["subject"].get("address") or aid).strip("-")[:60]
         return Response(report.pdf(doc, user_name=user.get("name") or ""), media_type="application/pdf",
-                        headers={"Content-Disposition": 'inline; filename="ARV-%s.pdf"' % name})
+                        headers={"Content-Disposition": 'inline; filename="%s-%s.pdf"' % ("As-Is-Value" if pipeline.is_as_is(doc) else "ARV", name)})
 
     @app.get("/arv/analyses/{aid}/calculator.xlsx")
     def arv_xlsx(aid: str, user=CurrentArvUser):
         doc = _get(aid, user)
+        if pipeline.is_as_is(doc):
+            raise HTTPException(400, "An as-is value file has no rehab budget or deal, so there is no calculator to export.")
         name = re.sub(r"[^A-Za-z0-9]+", "-", (doc.get("geocode") or {}).get("formatted") or doc["subject"].get("address") or aid).strip("-")[:60]
         return Response(report.xlsx(doc), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         headers={"Content-Disposition": 'attachment; filename="MAO-Rehab-Calculator-%s.xlsx"' % name})

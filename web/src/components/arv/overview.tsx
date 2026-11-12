@@ -10,7 +10,7 @@ import * as React from "react";
 import { AlertTriangle, Bot, ChevronRight, HelpCircle, Loader2 } from "lucide-react";
 import { Badge, Card } from "@/components/arv/ui";
 import { cn, money, fmtDate } from "@/lib/utils";
-import { PROPERTY_TYPE_LABEL, VERDICT_LABEL, VERDICT_TONE, fmtFact, num, type AnalysisDoc, type PropertyType } from "@/lib/arv";
+import { PROPERTY_TYPE_LABEL, VERDICT_LABEL, VERDICT_TONE, fmtFact, isAsIs, num, type AnalysisDoc, type PropertyType } from "@/lib/arv";
 import { CheckLine, Compare, Disclosure, MorePill, RangeBar, Tile } from "./bits";
 import { TYPE_TONE } from "./documents-drop";
 import { PropertyFile } from "./feeds-ui";
@@ -29,9 +29,14 @@ export function Overview({ doc, setTab }: { doc: AnalysisDoc; setTab: (t: string
   const points = an?.summary_points?.length ? an.summary_points : an?.summary ? sentences(an.summary).slice(0, 6) : [];
   const drivers = (an?.value_drivers || []).slice().sort((a, b) => Math.abs(b.impact_usd) - Math.abs(a.impact_usd));
   const engineArv = v?.arv;
-  const diff = an && engineArv ? ((an.arv_opinion - engineArv) / engineArv) * 100 : null;
+  // An as-is file reads on the analyst's as-is value; an ARV file on its ARV. Same screen, the as-is file without the deal.
+  const asIs = isAsIs(doc);
+  const op = asIs ? { v: an?.as_is_opinion, lo: an?.as_is_low, hi: an?.as_is_high } : { v: an?.arv_opinion, lo: an?.arv_low, hi: an?.arv_high };
+  const what = asIs ? "As-is value" : "ARV";
+  const diff = an && engineArv && op.v ? ((op.v - engineArv) / engineArv) * 100 : null;
   const failedChecks = (uw?.checks || []).filter((c) => !c.ok);
   const s = doc.subject;
+  const condText = asIs ? `${s.condition_current || doc.as_is?.condition || "?"} today` : `${s.condition_current || "?"} → ${s.condition_after}`;
 
   return (
     <div className="space-y-5">
@@ -52,14 +57,15 @@ export function Overview({ doc, setTab }: { doc: AnalysisDoc; setTab: (t: string
             <div className="lg:w-[400px] shrink-0 border-t lg:border-t-0 lg:border-l border-line bg-sunken/30 p-5">
               <div className="text-[11px] uppercase tracking-wide text-muted font-medium mb-3">Analyst against the engine</div>
               <Compare rows={[
-                { label: "Analyst", value: an.arv_opinion, low: an.arv_low, high: an.arv_high, tone: "bg-high" },
+                { label: "Analyst", value: op.v, low: op.lo, high: op.hi, tone: "bg-high" },
                 { label: "Engine", value: engineArv, low: v?.arv_low, high: v?.arv_high, tone: "bg-accent" },
                 ...(doc.avm?.value ? [{ label: doc.avm.source?.split(" ")[0] || "AVM", value: doc.avm.value, low: doc.avm.low, high: doc.avm.high, tone: "bg-info" }] : []),
               ]} />
-              <div className="mt-3 pt-3 border-t border-line grid grid-cols-2 gap-3">
+              {asIs && an.buyer_pool && <div className="mt-3 pt-3 border-t border-line"><div className="text-[10.5px] uppercase tracking-wide text-muted font-medium">Who buys it as it stands</div><div className="text-[12.5px] mt-1 leading-snug">{an.buyer_pool}</div></div>}
+              {!asIs && <div className="mt-3 pt-3 border-t border-line grid grid-cols-2 gap-3">
                 <div><div className="text-[10.5px] uppercase tracking-wide text-muted font-medium">Analyst max offer</div><div className="text-[17px] font-semibold tnum tracking-tight">{money(an.mao_opinion, true)}</div></div>
                 <div><div className="text-[10.5px] uppercase tracking-wide text-muted font-medium">Engine max offer</div><div className="text-[17px] font-semibold tnum tracking-tight">{money(uw?.mao.recommended, true)}</div></div>
-              </div>
+              </div>}
             </div>
           </div>
         </Card>
@@ -85,7 +91,7 @@ export function Overview({ doc, setTab }: { doc: AnalysisDoc; setTab: (t: string
           )}
           {drivers.length > 0 && (
             <Card className="p-5">
-              <Head title="What moves the number" right={<span className="text-[11px] text-muted">effect on the ARV</span>} />
+              <Head title="What moves the number" right={<span className="text-[11px] text-muted">effect on the {asIs ? "as-is value" : "ARV"}</span>} />
               <Drivers drivers={drivers} limit={4} />
             </Card>
           )}
@@ -102,12 +108,12 @@ export function Overview({ doc, setTab }: { doc: AnalysisDoc; setTab: (t: string
               <Arrow /><Step label="Qualified" value={num(v.selection.qualified)} sub="passed the filters" />
               <Arrow /><Step label="Used" value={num(rec.comps_used)} sub="weighted" />
               <Arrow /><Step label="Weighted mean" value={money(rec.weighted_mean, true)} sub={`median ${money(rec.weighted_median, true)}`} />
-              <Arrow /><Step label="Sales comparison" value={money(rec.sales_comparison, true)} sub={`${money(rec.ppsf_used, true)}/sqft × ${num(s.sqft_after || s.sqft)}`} />
+              <Arrow /><Step label="Sales comparison" value={money(rec.sales_comparison, true)} sub={`${money(rec.ppsf_used, true)}/sqft × ${num(asIs ? s.sqft : s.sqft_after || s.sqft)}`} />
               {rec.avm && rec.avm.value ? <><Arrow /><Step label={rec.avm.source.split(" ")[0] + " AVM"} value={money(rec.avm.value, true)} sub="blended 20%" /></> : null}
-              <Arrow /><Step label="ARV" value={money(v.arv, true)} sub={`${money(v.arv_low, true)} – ${money(v.arv_high, true)}`} strong />
+              <Arrow /><Step label={what} value={money(v.arv, true)} sub={`${money(v.arv_low, true)} – ${money(v.arv_high, true)}`} strong />
             </div>
             <RangeBar low={v.arv_low} high={v.arv_high} value={v.arv} compLow={rec.comp_low} compHigh={rec.comp_high}
-              marks={[{ label: "analyst", value: an?.arv_opinion, tone: "text-high" }, { label: doc.avm?.source?.split(" ")[0] || "AVM", value: doc.avm?.value, tone: "text-info" }]} className="mt-2" />
+              marks={[{ label: "analyst", value: op.v, tone: "text-high" }, { label: doc.avm?.source?.split(" ")[0] || "AVM", value: doc.avm?.value, tone: "text-info" }]} className="mt-2" />
             <ul className="grid gap-1.5 sm:grid-cols-2 mt-3">
               <CheckLine ok={!!rec.bracketing?.size}>Bracketed on size</CheckLine>
               <CheckLine ok={!!rec.bracketing?.value}>Bracketed on adjusted value</CheckLine>
@@ -189,7 +195,7 @@ export function Overview({ doc, setTab }: { doc: AnalysisDoc; setTab: (t: string
           )}
         </Disclosure>
 
-        <Disclosure title="Subject" preview={[PROPERTY_TYPE_LABEL[s.property_type as PropertyType], s.beds != null ? `${s.beds} bd` : null, s.baths != null ? `${s.baths} ba` : null, s.sqft ? `${num(s.sqft)} sqft` : null, s.year_built ? `built ${s.year_built}` : null, `${s.condition_current || "?"} → ${s.condition_after}`].filter(Boolean).join(" · ")}>
+        <Disclosure title="Subject" preview={[PROPERTY_TYPE_LABEL[s.property_type as PropertyType], s.beds != null ? `${s.beds} bd` : null, s.baths != null ? `${s.baths} ba` : null, s.sqft ? `${num(s.sqft)} sqft` : null, s.year_built ? `built ${s.year_built}` : null, condText].filter(Boolean).join(" · ")}>
           <dl className="grid grid-cols-[auto_1fr] md:grid-cols-[auto_1fr_auto_1fr] gap-x-4 gap-y-1 text-[12.5px]">
             <KV k="Address" v={doc.geocode?.formatted || s.address} />
             <KV k="County · tract" v={`${doc.geocode?.county || "—"} · ${doc.geocode?.tract || "—"}`} />
@@ -202,7 +208,7 @@ export function Overview({ doc, setTab }: { doc: AnalysisDoc; setTab: (t: string
             <KV k="Exterior · roof" v={`${s.exterior || "—"} · ${s.roof_age_years != null ? `${s.roof_age_years} yrs` : "—"}`} src={s.fact_sources?.roof_age_years} />
             <KV k="Heat · cool" v={`${(s.heating || "—").replace(/_/g, " ")} · ${(s.cooling || "—").replace(/_/g, " ")}`} />
             <KV k="Pool · waterfront" v={`${fmtFact("pool", s.pool)} · ${fmtFact("waterfront", s.waterfront)}`} />
-            <KV k="Condition" v={`${s.condition_current || "?"} → ${s.condition_after}`} src={s.fact_sources?.condition_current} />
+            <KV k="Condition" v={condText} src={s.fact_sources?.condition_current} />
             <KV k="Occupancy · HOA" v={`${s.occupancy || "—"} · ${s.hoa_monthly ? `$${num(s.hoa_monthly)}/mo` : "—"}`} />
             {doc.records?.last_sale_price && <KV k="Last sale" v={`${money(doc.records.last_sale_price)} · ${fmtDate(doc.records.last_sale_date)}`} />}
           </dl>

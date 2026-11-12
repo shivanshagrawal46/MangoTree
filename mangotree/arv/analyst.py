@@ -126,6 +126,99 @@ _COMPS_SCHEMA = {
 }
 
 
+# ------------------------------------------------------------ as-is files
+#: An as-is file (pipeline.is_as_is, 2026-11-12) asks for one number: the value
+#: of the house today, in its current condition. It has its own instructions and
+#: its own reply shape; the ARV review above is not touched by any of it.
+SYSTEM_AS_IS = """You are the chief valuation analyst for RKB Consulting Group, a renovation lender in the United States. This file asks for ONE number: the AS-IS market value of the house, meaning what it would sell for today, in the condition it is in now, with no work done. There is no renovation plan, no rehab budget and no deal in this file. Do not give an After Repair Value, a maximum offer or a lending verdict.
+
+Standards you hold the file to
+- Sales comparison approach, subject valued AS IT STANDS at its current condition (as_is_condition in the file, UAD C1-C6: stated by the person, or graded by HouseCanary, or assumed C4 when nobody said). The current condition is the reference point for the whole valuation: every comp is read against it.
+- The best evidence is closed, arm's-length sales of similar houses nearby that sold in a similar condition: dated or tired houses sold as they stood, investor purchases at a market price, estate sales that were exposed to the market. A renovated resale is evidence of the ceiling, not of this house: bring it down by what the market actually pays for the difference (the cost of the work, plus an investor's margin, plus the months it takes), and say what you used. A shell, auction or bank sale is the floor unless the subject is itself a shell.
+- Name the buyer. A C1-C3 house sells to an owner-occupant with a mortgage. A C5-C6 house usually sells to an investor for cash, and often cannot be financed at all, which lowers the price beyond the repair cost. Say which pool this house sells to and what that does to the number.
+- The engine's condition adjustment is a flat percentage per C grade. That usually understates the discount for a house that needs heavy work. The engine's arithmetic is correct by construction; your job is whether its INPUTS and CHOICES are right: comp selection, each comp's condition, the $/sqft rate, the market trend, whether a comp is really a sale or a listing.
+- Time / market-conditions adjustments are mandatory: each sale is walked forward from its sale date with the ZIP home-value index in the file. Say if the index looks wrong for this street.
+- Other evidence, each with its weight: the subject's own last sale and listing history, an as-is appraisal or a contract price among the documents (strong), the AVM (a model that assumes average condition; discount it for a house in worse shape), the tax assessment (weak).
+- Known issues (structure, water, roof, systems, title, tenant in place) each lower what a buyer pays today. Price the large ones in dollars.
+- Bracketing: the subject should sit inside the comps' range of size, age and adjusted value. Extrapolation outside the range must be called out.
+- Never invent a sale. If you doubt a comp, say what would verify it (listing page, MLS, county record).
+- Dollar figures rounded to the nearest $1,000 in prose; ranges as low-high.
+- Documents in the file (inspection, appraisal, listing, photos, title, tax) are evidence that outranks assumptions: a measured living area beats a typed one, an inspector's finding changes the condition. Cite the document by name when you lean on it, and say when the stated condition and the documents disagree.
+
+Write for the CEO who will act on the number. Every sentence carries a number or a decision. The single most important caveat comes first."""
+
+_AS_IS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "headline": {"type": "string", "description": "One sentence: the as-is value and the biggest caveat."},
+        "as_is_opinion": {"type": "number", "description": "Your point opinion of the house's market value TODAY, in its current condition with no work done, USD."},
+        "as_is_low": {"type": "number"}, "as_is_high": {"type": "number"},
+        "as_is_basis": {"type": "string", "description": "One or two sentences: what the number rests on (which sales in similar condition, the last sale, a contract price, the AVM, an as-is appraisal)."},
+        "buyer_pool": {"type": "string", "description": "One sentence: who buys this house as it stands (owner-occupant with a mortgage, investor for cash) and what that does to the price."},
+        "agrees_with_engine": {"type": "boolean", "description": "True if your opinion is within the engine's range."},
+        "confidence": {"type": "string", "enum": ["high", "good", "moderate", "low", "very_low"]},
+        "confidence_reason": {"type": "string"},
+        "summary_points": {"type": "array", "minItems": 3, "maxItems": 7, "items": {"type": "string"},
+                           "description": "The review as 3-7 bullets a CEO reads in twenty seconds. Each one sentence, at most 24 words, with a number or a named comp or document. Order: value, comps, condition, market."},
+        "summary": {"type": "string", "description": "The fuller reasoning behind the bullets, two to four short paragraphs (markdown allowed). Read only by someone who wants the detail."},
+        "value_drivers": {"type": "array", "maxItems": 6, "description": "What would move the as-is value most, each as a signed dollar effect on the point value, largest first.",
+                          "items": {"type": "object", "properties": {"factor": {"type": "string", "description": "Short label, e.g. 'Roof at end of life'."}, "impact_usd": {"type": "number", "description": "Signed: negative lowers the value."}, "why": {"type": "string"}},
+                                    "required": ["factor", "impact_usd", "why"]}},
+        "comp_notes": _ANALYSIS_SCHEMA["properties"]["comp_notes"],
+        "adjustment_critique": _ANALYSIS_SCHEMA["properties"]["adjustment_critique"],
+        "market_read": {"type": "string"},
+        "condition_read": {"type": "string", "description": "Does the stated condition match the evidence (documents, known issues, the HouseCanary grade, the listing)? What would a buyer's inspector find, and what does each large item cost the price?"},
+        "risks": _ANALYSIS_SCHEMA["properties"]["risks"],
+        "questions": _ANALYSIS_SCHEMA["properties"]["questions"],
+        "next_steps": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["headline", "as_is_opinion", "as_is_low", "as_is_high", "as_is_basis", "buyer_pool", "agrees_with_engine", "confidence", "confidence_reason", "summary_points", "summary",
+                 "value_drivers", "comp_notes", "market_read", "condition_read", "risks", "questions", "next_steps"],
+}
+
+
+def _is_as_is(doc: Dict[str, Any]) -> bool:
+    return (doc or {}).get("mode") == "as_is"
+
+
+def _as_is_file(payload: Dict[str, Any], doc: Dict[str, Any]) -> Dict[str, Any]:
+    """The file as an as-is review reads it: no plan, budget or deal blocks, the
+    subject without its as-repaired fields, and the engine's figure named for
+    what it is on this file (the as-is indication, not an ARV)."""
+    out = {"file_type": "AS-IS VALUE ONLY. Value the house as it stands today. There is no renovation plan, rehab budget or deal in this file.",
+           "as_is_condition": (doc.get("as_is") or {}).get("condition"),
+           "as_is_condition_source": "stated by the person or graded by a feed" if (doc.get("as_is") or {}).get("condition_stated") else "nobody stated it; C4 assumed, so say what the evidence suggests",
+           **payload}
+    for k in ("rehab_budget", "rehab_lines", "underwriting"):
+        out.pop(k, None)
+    subj = dict(out.get("subject") or {})
+    for k in ("condition_after", "beds_after", "baths_after", "sqft_after", "planned_work"):
+        subj.pop(k, None)
+    out["subject"] = subj
+    v = dict(out.get("valuation") or {})
+    for k in ("arv", "arv_low", "arv_high"):
+        if k in v:
+            v["engine_as_is" + k[3:]] = v.pop(k)
+    out["valuation"] = v
+    return out
+
+
+def _analyze_as_is(doc: Dict[str, Any], emit: Optional[Callable[[str], None]] = None) -> Dict[str, Any]:
+    if emit:
+        emit("Claude Opus 5.5 is reading the file for its as-is value (effort %s)…" % cfg.ARV_EFFORT)
+    user = ("Review this file and return the house's AS-IS value by calling the as_is_analysis tool.\n\n"
+            "FILE:\n" + _file_for_model(doc) +
+            "\n\nNotes: comp_id values must be copied exactly. If the person already answered questions (user_answers), use the answers and do not ask them again. "
+            "Your as_is_opinion is your own number: agree with the engine only if the evidence supports it. Do not give an after-repair value.")
+    before = METER.snapshot()
+    out = _structured(system=[{"type": "text", "text": SYSTEM_AS_IS, "cache_control": {"type": "ephemeral"}}], user=user,
+                      tool_name="as_is_analysis", schema=_AS_IS_SCHEMA, description="The structured as-is value review.", max_tokens=24000)
+    out["model"] = cfg.ARV_MODEL
+    out["effort"] = cfg.ARV_EFFORT
+    out["usage"] = METER.summarize(METER.diff(before, METER.snapshot()))
+    return out
+
+
 def _structured(*, system: Any, user: Any, tool_name: str, schema: Dict[str, Any], description: str, max_tokens: int) -> Dict[str, Any]:
     """One tool-shaped reply from Opus 5.5. ``core.llm_json.json_call`` is not
     used here because its retry path disables thinking, which this model
@@ -188,10 +281,14 @@ def _file_for_model(doc: Dict[str, Any]) -> str:
         "user_notes": (doc.get("subject") or {}).get("notes"), "user_answers": doc.get("answers") or [],
         "previous_analysis_questions": [q.get("question") for q in ((doc.get("analysis") or {}).get("questions") or [])],
     }
+    if _is_as_is(doc):
+        payload = _as_is_file(payload, doc)
     return json.dumps(payload, indent=1, default=str)
 
 
 def analyze(doc: Dict[str, Any], emit: Optional[Callable[[str], None]] = None) -> Dict[str, Any]:
+    if _is_as_is(doc):
+        return _analyze_as_is(doc, emit)
     if emit:
         emit("Claude Opus 5.5 is reading the file (effort %s)…" % cfg.ARV_EFFORT)
     user = ("Review this ARV file and return your analysis by calling the arv_analysis tool.\n\n"
@@ -209,7 +306,7 @@ def analyze(doc: Dict[str, Any], emit: Optional[Callable[[str], None]] = None) -
 
 
 def discover_comps(subject: Dict[str, Any], geo: Dict[str, Any], *, radius_mi: float, months: int, emit: Optional[Callable[[str], None]] = None,
-                   max_searches: int = 12) -> Dict[str, Any]:
+                   max_searches: int = 12, as_is: bool = False) -> Dict[str, Any]:
     """Find recent sales near the subject with web search. Returns comps
     (source=web) and the model's notes on what it could and could not find."""
     addr = geo.get("formatted") or subject.get("address")
@@ -237,6 +334,19 @@ def discover_comps(subject: Dict[str, Any], geo: Dict[str, Any], *, radius_mi: f
         "'listed' when you only saw an asking price, 'estimated' when a site estimate is all there is. Include the page URL for each. "
         "Do not report the subject itself. Do not fabricate: a comp you cannot source is left out and mentioned in search_notes."
     ) % (addr, desc or "details unknown", radius_mi, months)
+    if as_is:
+        cond = subject.get("condition_after") or "C4"   # on an as-is subject this is the condition today
+        prompt = (
+            "Find recently SOLD comparable homes for an AS-IS market value analysis: what the subject would sell for today, as it stands, with no work done.\n"
+            "Subject: %s (%s), current condition %s on the UAD scale (C1 new, C3 well kept, C4 dated, C5 needs major work, C6 uninhabitable).\n"
+            "Look for closed sales within about %.1f miles and the last %d months, similar size and type, preferring homes that sold in a condition like the subject's "
+            "(for a house needing work: as-is, dated, estate and investor purchases; for a well-kept house: ordinary owner-occupant sales). Add one or two renovated resales as the ceiling. "
+            "Search public listing pages (Zillow, Redfin, Realtor.com, Homes.com, Trulia, Movoto, county records, local brokerage sold pages). "
+            "Read the sold price, sold date, beds, baths, living area, lot, year built and the condition it sold in (renovated, dated, as-is, needs work). "
+            "Report 5 to 10 comps by calling report_comps exactly once when done; mark price_basis 'closed' only when the page states a sold price, "
+            "'listed' when you only saw an asking price, 'estimated' when a site estimate is all there is. Include the page URL for each. "
+            "Do not report the subject itself. Do not fabricate: a comp you cannot source is left out and mentioned in search_notes."
+        ) % (addr, desc or "details unknown", cond, radius_mi, months)
     messages: List[Dict[str, Any]] = [{"role": "user", "content": prompt}]
     if emit:
         emit("Searching the web for recent sales near %s…" % addr)
@@ -304,7 +414,7 @@ def _geocode_comps(comps: List[Dict[str, Any]], subject: Dict[str, Any], emit=No
 
 
 def chat(doc: Dict[str, Any], history: List[Dict[str, str]], question: str, on_delta: Optional[Callable[[str], None]] = None) -> Dict[str, Any]:
-    system = [{"type": "text", "text": SYSTEM + "\n\nYou are answering follow-up questions about ONE valuation file, given below. Answer from the file; "
+    system = [{"type": "text", "text": (SYSTEM_AS_IS if _is_as_is(doc) else SYSTEM) + "\n\nYou are answering follow-up questions about ONE valuation file, given below. Answer from the file; "
                "if the answer needs a fact that is not in it, say what to check. Keep answers under 250 words unless a table is asked for.\n\nFILE:\n" + _file_for_model(doc),
                "cache_control": {"type": "ephemeral"}}]
     msgs: List[Dict[str, Any]] = []
@@ -344,7 +454,8 @@ _SHORTLIST_SCHEMA = {
 }
 
 
-def shortlist(subject: Dict[str, Any], candidates: List[Dict[str, Any]], *, size: int, emit: Optional[Callable[[str], None]] = None) -> Dict[str, Any]:
+def shortlist(subject: Dict[str, Any], candidates: List[Dict[str, Any]], *, size: int, emit: Optional[Callable[[str], None]] = None,
+              as_is: bool = False) -> Dict[str, Any]:
     """Opus 5.5 chooses ``size`` comps from the scored candidates. Rules decided
     who is eligible (distance, recency, size, type, arm's length); the model
     decides between them from the deed and MLS evidence: a renovated resale,
@@ -367,8 +478,20 @@ def shortlist(subject: Dict[str, Any], candidates: List[Dict[str, Any]], *, size
             "Pick exactly %d unless fewer are defensible; list every other candidate under rejected with one reason each. Copy comp_id values exactly."
             "\n\nSUBJECT (as repaired to %s):\n%s\n\nCANDIDATES:\n%s") % (
         size, size, subject.get("condition_after") or "C2", json.dumps(subj, default=str), json.dumps(rows, indent=1, default=str))
+    if as_is:
+        cond = subject.get("condition_after") or "C4"   # on an as-is subject this is the condition today
+        subj_today = {k: v for k, v in subj.items() if k not in ("condition_after", "planned_work")}
+        user = ("Choose the %d comparable sales that best support an AS-IS market value for this subject (what it would sell for today, as it stands, with no work done), from the candidates below. "
+                "Every candidate already passed the distance, recency, size and type filters and carries a similarity score from the engine. "
+                "Your job is judgement the engine cannot do: read each candidate's deed and MLS evidence and prefer closed, arm's-length, market sales of a house that sold in a condition like the subject's today "
+                "(a cash sale to an investor or LLC at a price well under the renovated sales is an as-is comp; a resale months after a cheap purchase is a renovated comp; an auction, bank or $10,000 transfer is not a market price). "
+                "The grid values the subject AS IT STANDS at condition %s, so sales in similar condition are the comps that matter; keep at most one renovated resale, and only as a stated ceiling. "
+                "Bracket the subject: at least one comp larger and one smaller, one newer and one older where possible. "
+                "Pick exactly %d unless fewer are defensible; list every other candidate under rejected with one reason each. Copy comp_id values exactly."
+                "\n\nSUBJECT (as it stands today, condition %s):\n%s\n\nCANDIDATES:\n%s") % (
+            size, cond, size, cond, json.dumps(subj_today, default=str), json.dumps(rows, indent=1, default=str))
     before = METER.snapshot()
-    out = _structured(system=[{"type": "text", "text": SYSTEM, "cache_control": {"type": "ephemeral"}}], user=user, tool_name="shortlist_comps",
+    out = _structured(system=[{"type": "text", "text": SYSTEM_AS_IS if as_is else SYSTEM, "cache_control": {"type": "ephemeral"}}], user=user, tool_name="shortlist_comps",
                       schema=_SHORTLIST_SCHEMA, description="The chosen comparable sales with reasons, and the rejected ones with reasons.", max_tokens=8000)
     ids = {c["comp_id"]: c for c in candidates}
     picks = [p for p in (out.get("picks") or []) if p.get("comp_id") in ids][:size]

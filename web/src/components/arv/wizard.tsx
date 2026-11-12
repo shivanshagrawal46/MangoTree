@@ -1,16 +1,19 @@
 "use client";
 
-/* The intake. Six short steps that take everything a lender's underwriter
-   would ask for, in a fixed order, so no file arrives half-described:
+/* The intake. Short steps that take everything a lender's underwriter would
+   ask for, in a fixed order, so no file arrives half-described:
 
      1 Address      checked live against the US Census geocoder
      2 Documents    inspection, appraisal, bid, listing, photos — read by the
                     model; every fact is offered, none applied silently
-     3 The house    rooms, structure, systems, site, condition, known issues
-     4 The plan     planned work, scope tier or a contractor's bid, the house
-                    as it will be (rooms, area, condition)
-     5 The deal     price, exit, timing, financing, holding and selling costs
-     6 Review       what will run, what it costs, run
+     3 As-is or ARV the one choice that shapes the rest (2026-11-12): an as-is
+                    file asks for the house and its condition today and stops
+                    there; an ARV file goes on to the plan and the deal
+     4 The house    rooms, structure, systems, site, condition, known issues
+     5 The plan     ARV only: planned work, scope tier or a contractor's bid,
+                    the house as it will be (rooms, area, condition)
+     6 The deal     ARV only: price, exit, timing, financing, costs
+     7 Review       what will run, what it costs, run
 
    State is one object; each step reads and writes its slice. The right rail
    shows the file as it builds and how complete it is. */
@@ -20,7 +23,7 @@ import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { useMutation } from "@tanstack/react-query";
 import { Checkbox, Input as AntInput, Progress, Steps } from "antd";
-import { ArrowLeft, ArrowRight, Building2, Check, CheckCircle2, ClipboardList, DollarSign, FileText, Hammer, Home, Loader2, MapPin, Search, Sparkles, XCircle } from "lucide-react";
+import { ArrowLeft, ArrowRight, Building2, Check, CheckCircle2, ClipboardList, DollarSign, FileText, Hammer, Home, Loader2, MapPin, Scale, Search, Sparkles, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { Badge, Button, Card, Input, Textarea } from "@/components/arv/ui";
 import { cn, money } from "@/lib/utils";
@@ -32,6 +35,8 @@ import { DocCard, DropZone, NoDocs, rehabLinesFrom, useDocUploader } from "./doc
 const CompMap = dynamic(() => import("./comp-map"), { ssr: false });
 
 type Form = {
+  /** "" until the person picks on the as-is-or-ARV step. */
+  mode: "" | "arv" | "as_is";
   address: string; property_type: PropertyType; property_id: string; label: string; acquisition_type: string;
   docs: ArvDocument[]; fact_sources: Record<string, string>;
   beds: number | null; baths: number | null; sqft: number | null; lot_sqft: number | null; stories: number | null; year_built: number | null; garage_spaces: number | null; parking: string;
@@ -46,7 +51,7 @@ type Form = {
 };
 
 const INITIAL: Form = {
-  address: "", property_type: "single_family", property_id: "", label: "", acquisition_type: "mls", docs: [], fact_sources: {},
+  mode: "", address: "", property_type: "single_family", property_id: "", label: "", acquisition_type: "mls", docs: [], fact_sources: {},
   beds: null, baths: null, sqft: null, lot_sqft: null, stories: null, year_built: null, garage_spaces: null, parking: "", basement: "unknown", pool: "unknown", waterfront: "unknown",
   foundation: "", exterior: "", roof_age_years: null, heating: "", cooling: "", condition_current: "", occupancy: "", hoa_monthly: null, zoning: "", view: "", known_issues: [], notes: "",
   planned_work: [], scope: "moderate", level: "mid", budget_mode: "tier", budget_doc_id: "", budget_touched: false, lump_sum: null, beds_after: null, baths_after: null, sqft_after: null, condition_after: "C2",
@@ -55,16 +60,17 @@ const INITIAL: Form = {
   use_web_search: true, use_rentcast: true, use_reapi: true, use_housecanary: true, radius_mi: 1.0, months: 12, web_searches: 10,
 };
 
-const STEPS = [
+const ALL_STEPS = [
   { key: "address", label: "Address", icon: MapPin, blurb: "Where the house is, and what kind of house." },
   { key: "documents", label: "Documents", icon: FileText, blurb: "Anything on paper: inspection, appraisal, bids, listing, photos." },
+  { key: "goal", label: "As-is or ARV", icon: Scale, blurb: "What you need from this file: the value today, or the value after the work." },
   { key: "house", label: "The house", icon: Home, blurb: "Rooms, structure, systems, site and condition today." },
   { key: "plan", label: "The plan", icon: Hammer, blurb: "What will be done, what it costs, what the house becomes." },
   { key: "deal", label: "The deal", icon: DollarSign, blurb: "Price, exit, timing, money." },
   { key: "review", label: "Review & run", icon: ClipboardList, blurb: "Check the file and start the analysis." },
 ] as const;
 
-type StepKey = (typeof STEPS)[number]["key"];
+type StepKey = (typeof ALL_STEPS)[number]["key"];
 
 /* Map a document fact onto the form. */
 const FACT_TO_FORM: Record<string, keyof Form> = { property_type: "property_type", beds: "beds", baths: "baths", sqft: "sqft", lot_sqft: "lot_sqft", year_built: "year_built", stories: "stories", garage_spaces: "garage_spaces",
@@ -76,7 +82,11 @@ export function Wizard({ status, initialAddress, initialPropertyId }: { status?:
   const [f, setF] = React.useState<Form>({ ...INITIAL, address: initialAddress || "", property_id: initialPropertyId || "" });
   const set = <K extends keyof Form>(k: K, v: Form[K]) => setF((s) => ({ ...s, [k]: v }));
   const [step, setStep] = React.useState<StepKey>("address");
+  // An as-is file stops at the house: no plan and no deal are asked for or calculated.
+  const asIs = f.mode === "as_is";
+  const STEPS = ALL_STEPS.filter((s) => !asIs || (s.key !== "plan" && s.key !== "deal"));
   const idx = STEPS.findIndex((s) => s.key === step);
+  const goalIdx = STEPS.findIndex((s) => s.key === "goal");
 
   // ----------------------------------------------------------- geocode
   const [geo, setGeo] = React.useState<Geocode | null>(null);
@@ -140,10 +150,11 @@ export function Wizard({ status, initialAddress, initialPropertyId }: { status?:
           address: f.address, property_type: f.property_type, beds: f.beds, baths: f.baths, sqft: f.sqft, lot_sqft: f.lot_sqft, stories: f.stories, year_built: f.year_built, garage_spaces: f.garage_spaces,
           parking: f.parking || null, basement: f.basement as any, pool: yn(f.pool), waterfront: yn(f.waterfront), foundation: f.foundation || null, exterior: f.exterior || null, roof_age_years: f.roof_age_years,
           heating: f.heating || null, cooling: f.cooling || null, condition_current: (f.condition_current || null) as any, condition_after: f.condition_after as any, occupancy: (f.occupancy || null) as any,
-          hoa_monthly: f.hoa_monthly, zoning: f.zoning || null, view: f.view || null, known_issues: f.known_issues, planned_work: f.planned_work, notes: f.notes || null,
-          beds_after: f.beds_after, baths_after: f.baths_after, sqft_after: f.sqft_after, fact_sources: f.fact_sources,
+          hoa_monthly: f.hoa_monthly, zoning: f.zoning || null, view: f.view || null, known_issues: f.known_issues, planned_work: asIs ? [] : f.planned_work, notes: f.notes || null,
+          beds_after: asIs ? null : f.beds_after, baths_after: asIs ? null : f.baths_after, sqft_after: asIs ? null : f.sqft_after, fact_sources: f.fact_sources,
         },
-        rehab: rehab as any,
+        mode: asIs ? "as_is" : "arv",
+        rehab: (asIs ? {} : rehab) as any,
         assumptions: {
           purchase_price: f.purchase_price, list_price: f.list_price, months_held: f.months_held, rule_pct: f.rule_pct, profit_target_pct: f.profit_target_pct, exit_strategy: f.exit_strategy, acquisition_type: f.acquisition_type,
           finance: f.finance, ltc_pct: f.ltc_pct, ltarv_pct: f.ltarv_pct, rate_pct: f.rate_pct, points_pct: f.points_pct, property_taxes_annual: f.property_taxes_annual, insurance_annual: f.insurance_annual,
@@ -170,11 +181,11 @@ export function Wizard({ status, initialAddress, initialPropertyId }: { status?:
         <Link href="/arv" className="text-[11px] text-muted hover:text-fg flex items-center gap-1 mb-1"><ArrowLeft size={11} /> ARV &amp; underwriting</Link>
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h1 className="text-xl font-semibold tracking-tight">New ARV file</h1>
+            <h1 className="text-xl font-semibold tracking-tight">{asIs ? "New as-is value file" : "New ARV file"}</h1>
             <div className="text-xs text-muted mt-0.5">{STEPS[idx].blurb}</div>
           </div>
-          <Steps size="small" current={idx} onChange={(i) => { const k = STEPS[i].key; if (i === 0 || canLeaveAddress) setStep(k); }} className="arv-steps max-w-[760px]"
-            items={STEPS.map((st, i) => { const Icon = st.icon; return { title: st.label, icon: i < idx ? undefined : <span className="grid place-items-center h-full"><Icon size={13} /></span>, disabled: i > 0 && !canLeaveAddress }; })} />
+          <Steps size="small" current={idx} onChange={(i) => { const k = STEPS[i].key; if ((i === 0 || canLeaveAddress) && (i <= goalIdx || f.mode)) setStep(k); }} className={cn("arv-steps", STEPS.length > 6 ? "max-w-[900px]" : "max-w-[760px]")}
+            items={STEPS.map((st, i) => { const Icon = st.icon; return { title: st.label, icon: i < idx ? undefined : <span className="grid place-items-center h-full"><Icon size={13} /></span>, disabled: (i > 0 && !canLeaveAddress) || (i > goalIdx && !f.mode) }; })} />
         </div>
       </div>
 
@@ -237,10 +248,32 @@ export function Wizard({ status, initialAddress, initialPropertyId }: { status?:
             </Card>
           )}
 
+          {step === "goal" && (
+            <Card className="p-6">
+              <Section title="What do you need from this file?" sub="Pick one. It decides what you are asked next and what is calculated." />
+              <div className="grid gap-3 md:grid-cols-2 mt-4">
+                {([
+                  ["as_is", "As-is value", "What the house is worth today, as it stands.", ["You give the rooms, the area and the condition today", "Nearby sales in similar condition, read by the AI analyst", "No renovation plan, no budget, no deal, no ARV"], Home],
+                  ["arv", "ARV (after repair value)", "What the house will be worth after the work, and whether the deal works.", ["You give the house, the plan and the deal", "Rehab budget, maximum offer, profit and lender checks", "Also reports the as-is value"], Hammer],
+                ] as const).map(([k, title, sub, points, Icon]) => (
+                  <button key={k} type="button" onClick={() => { set("mode", k); setStep("house"); }} className={cn("rounded-2xl border p-5 text-left transition", f.mode === k ? "border-accent bg-accent-soft/60" : "border-line hover:border-line-strong")}>
+                    <div className="flex items-center gap-2.5">
+                      <span className={cn("h-8 w-8 rounded-xl grid place-items-center shrink-0", f.mode === k ? "bg-accent text-white" : "bg-sunken text-muted")}><Icon size={15} /></span>
+                      <div className="text-[15px] font-semibold tracking-tight">{title}</div>
+                      {f.mode === k && <Check size={15} className="text-accent ml-auto" />}
+                    </div>
+                    <div className="text-[12.5px] text-muted mt-2">{sub}</div>
+                    <ul className="mt-3 space-y-1.5 text-[12px]">{points.map((p) => <li key={p} className="flex items-start gap-2"><span className="mt-[7px] h-1 w-1 rounded-full bg-faint shrink-0" />{p}</li>)}</ul>
+                  </button>
+                ))}
+              </div>
+            </Card>
+          )}
+
           {step === "house" && (
             <div className="space-y-4">
               <Card className="p-6">
-                <Section title="Size and rooms" sub="As the house is today. The plan step records what changes." />
+                <Section title="Size and rooms" sub={asIs ? "As the house is today." : "As the house is today. The plan step records what changes."} />
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3">
                   <Field label="Bedrooms" source={f.fact_sources.beds}><NumField value={f.beds} onCommit={(v) => set("beds", v)} placeholder="3" /></Field>
                   <Field label="Bathrooms" source={f.fact_sources.baths}><NumField value={f.baths} onCommit={(v) => set("baths", v)} step={0.5} placeholder="1.5" /></Field>
@@ -266,7 +299,7 @@ export function Wizard({ status, initialAddress, initialPropertyId }: { status?:
                 </div>
               </Card>
               <Card className="p-6">
-                <Section title="Condition today" sub="UAD scale. C4 is the typical tired house a flipper buys; C5 and C6 need everything." />
+                <Section title="Condition today" sub={asIs ? "UAD scale. This is the reference point: the as-is value is set from the condition you pick here. C4 is a dated but livable house; C5 and C6 need everything." : "UAD scale. C4 is the typical tired house a flipper buys; C5 and C6 need everything."} />
                 <div className="grid gap-2 md:grid-cols-3 mt-3">
                   {CONDITION_OPTIONS.map(([k, l]) => (
                     <button key={k} type="button" onClick={() => set("condition_current", k)} className={cn("rounded-xl border px-3 py-2.5 text-left transition", f.condition_current === k ? "border-accent bg-accent-soft/60" : "border-line hover:border-line-strong")}>
@@ -282,7 +315,7 @@ export function Wizard({ status, initialAddress, initialPropertyId }: { status?:
                 </div>
               </Card>
               <Card className="p-6">
-                <Section title="Known issues" sub="Tick what you know or suspect. Each one changes the scope the analyst expects to see in the budget." />
+                <Section title="Known issues" sub={asIs ? "Tick what you know or suspect. Each one lowers what a buyer would pay for the house as it stands." : "Tick what you know or suspect. Each one changes the scope the analyst expects to see in the budget."} />
                 <div className="flex flex-wrap gap-2 mt-3">
                   {KNOWN_ISSUES.map(([k, l]) => <Chip key={k} tone="critical" on={f.known_issues.includes(k)} onClick={() => set("known_issues", toggle(f.known_issues, k))}>{l}</Chip>)}
                 </div>
@@ -396,8 +429,9 @@ export function Wizard({ status, initialAddress, initialPropertyId }: { status?:
                   <ReviewBlock title="Address" onEdit={() => setStep("address")} rows={[["Address", geo?.formatted || f.address], ["Type", PROPERTY_TYPE_LABEL[f.property_type]], ["Source", ACQUISITION.find(([k]) => k === f.acquisition_type)?.[1] || "—"], ["County · tract", `${geo?.county || "—"} · ${geo?.tract || "—"}`]]} />
                   <ReviewBlock title={`Documents · ${f.docs.filter((d) => d.status === "done").length}`} onEdit={() => setStep("documents")} rows={f.docs.length ? f.docs.slice(0, 4).map((d) => [d.extracted?.doc_type_label || "reading…", d.extracted?.title || d.filename] as [string, string]) : [["None", "An inspection or bid would strengthen the file"]]} />
                   <ReviewBlock title="The house" onEdit={() => setStep("house")} rows={[["Rooms", `${f.beds ?? "?"} bd · ${f.baths ?? "?"} ba · ${f.sqft ? f.sqft.toLocaleString() + " sqft" : "? sqft"}`], ["Built · lot", `${f.year_built ?? "?"} · ${f.lot_sqft ? f.lot_sqft.toLocaleString() + " sqft" : "?"}`], ["Condition", f.condition_current || "not set"], ["Issues", f.known_issues.length ? f.known_issues.map((k) => KNOWN_ISSUES.find(([kk]) => kk === k)?.[1].split(" /")[0]).join(", ") : "none ticked"]]} />
-                  <ReviewBlock title="The plan" onEdit={() => setStep("plan")} rows={[["Work", f.planned_work.length ? f.planned_work.map((k) => PLANNED_WORK.find(([kk]) => kk === k)?.[1]).join(", ") : "not ticked"], ["Budget", `${f.budget_mode === "doc" ? "bid" : f.budget_mode === "lump" ? "own number" : `${scopes[f.scope]?.label || f.scope} · ${f.level}`} · ${money(budgetFigure, true)}`], ["After", `${f.beds_after ?? f.beds ?? "?"} bd · ${f.baths_after ?? f.baths ?? "?"} ba · ${(f.sqft_after || f.sqft)?.toLocaleString() || "?"} sqft · ${f.condition_after}`]]} />
-                  <ReviewBlock title="The deal" onEdit={() => setStep("deal")} rows={[["Price", f.purchase_price ? money(f.purchase_price) : `at the MAO${f.list_price ? ` · asking ${money(f.list_price, true)}` : ""}`], ["Exit · months", `${EXIT.find(([k]) => k === f.exit_strategy)?.[1].split(" (")[0]} · ${f.months_held}`], ["Rules", `${f.rule_pct}% · ${f.profit_target_pct}% profit`], ["Money", f.finance ? `${f.ltc_pct}% LTC / ${f.ltarv_pct}% LTARV · ${f.rate_pct}% + ${f.points_pct} pts` : "all cash"]]} />
+                  <ReviewBlock title="What you need" onEdit={() => setStep("goal")} rows={asIs ? [["File", "As-is value only"], ["Valued at", `condition today${f.condition_current ? ` · ${f.condition_current}` : " · not picked yet"}`], ["Not run", "ARV, rehab budget, deal"]] : [["File", "ARV (after repair value)"], ["Includes", "rehab budget, max offer, deal"], ["Also", "the as-is value"]]} />
+                  {!asIs && <ReviewBlock title="The plan" onEdit={() => setStep("plan")} rows={[["Work", f.planned_work.length ? f.planned_work.map((k) => PLANNED_WORK.find(([kk]) => kk === k)?.[1]).join(", ") : "not ticked"], ["Budget", `${f.budget_mode === "doc" ? "bid" : f.budget_mode === "lump" ? "own number" : `${scopes[f.scope]?.label || f.scope} · ${f.level}`} · ${money(budgetFigure, true)}`], ["After", `${f.beds_after ?? f.beds ?? "?"} bd · ${f.baths_after ?? f.baths ?? "?"} ba · ${(f.sqft_after || f.sqft)?.toLocaleString() || "?"} sqft · ${f.condition_after}`]]} />}
+                  {!asIs && <ReviewBlock title="The deal" onEdit={() => setStep("deal")} rows={[["Price", f.purchase_price ? money(f.purchase_price) : `at the MAO${f.list_price ? ` · asking ${money(f.list_price, true)}` : ""}`], ["Exit · months", `${EXIT.find(([k]) => k === f.exit_strategy)?.[1].split(" (")[0]} · ${f.months_held}`], ["Rules", `${f.rule_pct}% · ${f.profit_target_pct}% profit`], ["Money", f.finance ? `${f.ltc_pct}% LTC / ${f.ltarv_pct}% LTARV · ${f.rate_pct}% + ${f.points_pct} pts` : "all cash"]]} />}
                   <div className="rounded-xl border border-line p-3.5 bg-sunken/40">
                     <div className="text-[10.5px] uppercase tracking-wide text-muted font-medium mb-2 flex items-center gap-1"><Search size={11} /> Comparable search</div>
                     <div className="grid grid-cols-3 gap-2">
@@ -416,12 +450,13 @@ export function Wizard({ status, initialAddress, initialPropertyId }: { status?:
               </Card>
               <Card className="p-6 flex flex-wrap items-center justify-between gap-4 border-accent/30 bg-gradient-to-br from-accent-soft/50 to-transparent">
                 <div>
-                  <div className="text-[15px] font-semibold tracking-tight">Run the analysis</div>
-                  <div className="text-xs text-muted mt-0.5 max-w-xl">Locate · public records · market context · comparable sales · score, adjust, reconcile · MAO calculator · AI review. About {f.use_web_search ? "4–7" : "1–2"} minutes.</div>
+                  <div className="text-[15px] font-semibold tracking-tight">{asIs ? "Get the as-is value" : "Run the analysis"}</div>
+                  <div className="text-xs text-muted mt-0.5 max-w-xl">{asIs ? "Locate · public records · market context · nearby sales in similar condition · score, adjust, reconcile · AI review of the as-is value. No ARV, rehab budget or deal is calculated." : "Locate · public records · market context · comparable sales · score, adjust, reconcile · MAO calculator · AI review."} About {f.use_web_search ? "4–7" : "1–2"} minutes.</div>
+                  {asIs && !f.condition_current && <div className="text-xs text-high mt-1">Pick the condition today on <button type="button" className="underline" onClick={() => setStep("house")}>the house step</button>. The as-is value is set from it.</div>}
                   {readingDocs && <div className="text-xs text-high mt-1 flex items-center gap-1.5"><Loader2 size={12} className="animate-spin" /> {uploader.busy && readingCount === 0 ? "Uploading documents…" : `Reading ${readingCount} of ${f.docs.length} document${f.docs.length === 1 ? "" : "s"}…`} The run starts once every document has been read, so the AI review sees all of them.</div>}
                 </div>
-                <Button variant="primary" size="lg" disabled={!geo || create.isPending || readingDocs} onClick={() => create.mutate()} className="min-w-[200px]">
-                  {create.isPending || readingDocs ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />} {readingDocs ? (readingCount ? `Reading ${readingCount} of ${f.docs.length}…` : "Uploading…") : "Run the analysis"}
+                <Button variant="primary" size="lg" disabled={!geo || create.isPending || readingDocs || (asIs && !f.condition_current)} onClick={() => create.mutate()} className="min-w-[200px]">
+                  {create.isPending || readingDocs ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />} {readingDocs ? (readingCount ? `Reading ${readingCount} of ${f.docs.length}…` : "Uploading…") : asIs ? "Get the as-is value" : "Run the analysis"}
                 </Button>
               </Card>
             </div>
@@ -430,7 +465,7 @@ export function Wizard({ status, initialAddress, initialPropertyId }: { status?:
           {/* ---------------------------------------------- nav */}
           <div className="flex items-center justify-between">
             <Button variant="ghost" onClick={back} disabled={idx === 0}><ArrowLeft size={14} /> Back</Button>
-            {step !== "review" && <Button variant="primary" onClick={next} disabled={step === "address" && !canLeaveAddress}>{step === "documents" && f.docs.length === 0 ? "Skip for now" : "Continue"} <ArrowRight size={14} /></Button>}
+            {step !== "review" && <Button variant="primary" onClick={next} disabled={(step === "address" && !canLeaveAddress) || (step === "goal" && !f.mode)}>{step === "documents" && f.docs.length === 0 ? "Skip for now" : "Continue"} <ArrowRight size={14} /></Button>}
           </div>
         </div>
 
@@ -455,9 +490,9 @@ export function Wizard({ status, initialAddress, initialPropertyId }: { status?:
               <RailRow ok={!!geo} label="Address located" sub={geo ? `${geo.provider} · ${geo.precision || "rooftop"}` : "type it above"} />
               <RailRow ok={f.docs.some((d) => d.status === "done")} label={`${f.docs.filter((d) => d.status === "done").length} document${f.docs.filter((d) => d.status === "done").length === 1 ? "" : "s"} read`} sub={Object.keys(f.fact_sources).length ? `${Object.keys(f.fact_sources).length} facts taken from them` : f.docs.length ? "reading…" : "none"} />
               <RailRow ok={f.beds != null && f.baths != null && !!f.sqft} label="Rooms and area" sub={f.sqft ? `${f.beds ?? "?"} bd · ${f.baths ?? "?"} ba · ${f.sqft.toLocaleString()} sqft` : "needed for every adjustment"} />
-              <RailRow ok={!!f.condition_current} label="Condition today" sub={f.condition_current || "the comps are adjusted from here"} />
-              <RailRow ok={f.planned_work.length > 0 || f.budget_mode !== "tier"} label="Plan and budget" sub={budgetFigure ? money(budgetFigure) : "tier estimate until a bid lands"} />
-              <RailRow ok={!!(f.purchase_price || f.list_price)} label="Price" sub={f.purchase_price ? money(f.purchase_price) : f.list_price ? `asking ${money(f.list_price)}` : "underwriting at the MAO"} />
+              <RailRow ok={!!f.condition_current} label="Condition today" sub={f.condition_current || (asIs ? "the as-is value is set from here" : "the comps are adjusted from here")} />
+              {!asIs && <RailRow ok={f.planned_work.length > 0 || f.budget_mode !== "tier"} label="Plan and budget" sub={budgetFigure ? money(budgetFigure) : "tier estimate until a bid lands"} />}
+              {!asIs && <RailRow ok={!!(f.purchase_price || f.list_price)} label="Price" sub={f.purchase_price ? money(f.purchase_price) : f.list_price ? `asking ${money(f.list_price)}` : "underwriting at the MAO"} />}
             </ul>
           </Card>
           <div className="text-[10.5px] text-faint leading-snug px-1">What you type always wins over records and documents. Every number stays editable in the workspace, with an instant recompute.</div>
@@ -533,12 +568,13 @@ function FactsFound({ docs, applied, onApply }: { docs: ArvDocument[]; applied: 
 }
 
 function completeness(f: Form, located: boolean): { score: number; missing: string[] } {
-  const checks: [boolean, string, number][] = [
+  const planAndDeal = ["planned work", "a real budget (bid or your number)", "a price"];   // not part of an as-is file
+  const checks = ([
     [located, "address", 2], [f.beds != null, "bedrooms", 1], [f.baths != null, "bathrooms", 1], [!!f.sqft, "living area", 2], [!!f.year_built, "year built", 1], [!!f.lot_sqft, "lot size", 0.5],
     [!!f.condition_current, "condition today", 1.5], [f.basement !== "unknown", "basement", 0.5], [!!f.foundation || !!f.exterior, "structure", 0.5], [!!f.heating || !!f.cooling, "systems", 0.5],
     [f.planned_work.length > 0, "planned work", 1], [f.budget_mode !== "tier" || !!f.lump_sum, "a real budget (bid or your number)", 1], [!!(f.purchase_price || f.list_price), "a price", 1],
     [f.docs.some((d) => d.status === "done"), "a document", 1.5], [f.known_issues.length > 0 || f.notes.trim().length > 20, "known issues or notes", 0.5],
-  ];
+  ] as [boolean, string, number][]).filter((c) => f.mode !== "as_is" || !planAndDeal.includes(c[1]));
   const total = checks.reduce((a, c) => a + c[2], 0);
   const got = checks.filter((c) => c[0]).reduce((a, c) => a + c[2], 0);
   return { score: got / total, missing: checks.filter((c) => !c[0]).map((c) => c[1]) };

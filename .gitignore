@@ -36,3 +36,12 @@ credit_card/
 Briardale Material List/
 *.zip
 
+
+# Buildertrend pull (logs, bills, photos) — data, not code
+data/buildertrend/
+
+# Client and legal documents kept on this machine only — never in the repository
+Allison/
+out/513-allison-foreclosure-documents/
+out/910-bayshore-quinn-legal-billing.pdf
+.vscode/

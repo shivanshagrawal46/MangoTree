@@ -1,0 +1,150 @@
+"use client";
+
+/* Bills — every contractor bill RKB is handling, on one line each: the bill, the
+   property, the bill date, and RKB's four steps as tick boxes. Each tick records
+   when it was made and by whom, and the page shows how long the bill took. */
+
+import * as React from "react";
+import Link from "next/link";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
+import { ChevronRight } from "lucide-react";
+import { api } from "@/lib/api";
+import { Card, Checkbox, Skeleton } from "@/components/ui";
+import { BillLines, usd } from "@/components/brain/side";
+import { ago, cn, fmtDate } from "@/lib/utils";
+import { errText, type Bill } from "@/lib/brain";
+
+type Mark = { at: string; by?: string; by_name?: string } | null | undefined;
+type Row = {
+  bill_id: number; property_id?: string; property: string; number?: string; title?: string; pay_to?: string; amount?: number | null;
+  bill_date?: string | null; bill_day?: string | null; due_day?: string | null; past_due?: boolean; buildertrend_status?: string; in_buildertrend?: boolean;
+  approvers?: string[]; line_items?: Bill["line_items"]; created_by?: string; documents?: number; steps: Record<string, Mark>;
+};
+type Resp = { view: "open" | "paid"; steps: { key: string; label: string }[]; rows: Row[]; pulled_at?: string | null;
+  held_back?: { in_review: number; in_review_amount: number; held: number; held_amount: number } };
+
+/* "3d 4h", "5h 20m", "12 min" — the time between two moments. */
+function took(from?: string | null, to?: string | null) {
+  if (!from || !to) return null;
+  const ms = new Date(to).getTime() - new Date(from).getTime();
+  if (Number.isNaN(ms) || ms < 0) return null;
+  const min = Math.round(ms / 60_000), h = Math.floor(min / 60), d = Math.floor(h / 24);
+  return d >= 1 ? `${d}d ${h % 24}h` : h >= 1 ? `${h}h ${min % 60}m` : `${Math.max(1, min)} min`;
+}
+const nowIso = () => new Date().toISOString();
+const daysOpen = (from?: string | null) => (from ? Math.floor((Date.now() - new Date(from).getTime()) / 86_400_000) : 0);
+
+const COLS = "grid-cols-[minmax(220px,1fr)_150px_88px_104px_repeat(4,112px)_100px]";
+
+export default function BillsPage() {
+  const qc = useQueryClient();
+  const [view, setView] = React.useState<"open" | "paid">("open");
+  const [open, setOpen] = React.useState<number | null>(null);
+  const key = ["brain", "bills", view];
+  const q = useQuery({ queryKey: key, queryFn: () => api.get<Resp>(`/brain/bills?view=${view}`), placeholderData: (p) => p, refetchInterval: 60_000 });
+  const rows = q.data?.rows || [];
+  const steps = q.data?.steps || [];
+
+  const tick = async (r: Row, step: string, done: boolean) => {
+    // Show the tick at once; the server's own time replaces this one when it answers.
+    qc.setQueryData<Resp>(key, (cur) => cur ? { ...cur, rows: cur.rows.map((x) => x.bill_id === r.bill_id ? { ...x, steps: { ...x.steps, [step]: done ? { at: nowIso(), by_name: "you" } : null } } : x) } : cur);
+    try {
+      await api.post(`/brain/bills/${r.bill_id}/steps`, { step, done });
+      if (step === "paid" && done) toast.success(`Marked paid — ${took(r.bill_date, nowIso()) || "same day"} from the bill date`);
+    } catch (e) { toast.error(errText(e)); }
+    qc.invalidateQueries({ queryKey: ["brain", "bills"] });
+    qc.invalidateQueries({ queryKey: ["brain", "counts"] });
+  };
+
+  const total = rows.reduce((a, r) => a + (r.amount || 0), 0);
+  const oldest = rows.reduce((m, r) => Math.max(m, daysOpen(r.bill_date)), 0);
+  const paidTimes = rows.map((r) => (r.steps.paid && r.bill_date ? new Date(r.steps.paid.at).getTime() - new Date(r.bill_date).getTime() : null)).filter((x): x is number => x != null && x >= 0);
+  const avgDays = paidTimes.length ? paidTimes.reduce((a, b) => a + b, 0) / paidTimes.length / 86_400_000 : null;
+
+  return (
+    <div className="px-6 py-6 max-w-[1400px] mx-auto">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="text-[20px] font-semibold tracking-tight">Bills</h1>
+          <p className="text-[12.5px] text-muted mt-0.5">
+            {!q.data ? "Loading…" : view === "open"
+              ? (rows.length ? <>{rows.length} bill{rows.length === 1 ? "" : "s"} to process · {usd(total)} · oldest is {oldest} days old</> : "No bill is waiting.")
+              : (rows.length ? <>{rows.length} paid · {usd(total)}{avgDays != null ? ` · on average ${avgDays.toFixed(1)} days from bill date to paid` : ""}</> : "No bill has been marked paid yet.")}
+            {q.data?.pulled_at && <span className="text-faint"> · Buildertrend read {ago(q.data.pulled_at)}</span>}
+          </p>
+        </div>
+        <div className="inline-flex rounded-lg bg-sunken p-0.5 border border-line">
+          {([["open", "To process"], ["paid", "Paid"]] as const).map(([k, l]) => (
+            <button key={k} type="button" onClick={() => { setView(k); setOpen(null); }} className={cn("h-7 px-3 rounded-md text-[12.5px] font-medium transition", view === k ? "bg-elev text-fg shadow-[var(--shadow-sm)]" : "text-muted hover:text-fg")}>{l}</button>
+          ))}
+        </div>
+      </div>
+
+      <Card className="mt-4 overflow-x-auto">
+        <div className="min-w-[1180px]">
+          <div className={cn("grid gap-3 px-4 py-2 border-b border-line text-[9.5px] font-semibold uppercase tracking-[0.09em] text-faint items-end", COLS)}>
+            <div>Bill</div><div>Property</div><div>Bill date</div><div className="text-right">Amount</div>
+            {steps.map((s) => <div key={s.key} className="text-center leading-tight">{s.label}</div>)}
+            <div className="text-right">Time taken</div>
+          </div>
+          {!q.data ? <div className="p-4 space-y-2.5"><Skeleton className="h-10" /><Skeleton className="h-10" /><Skeleton className="h-10" /></div>
+            : rows.length === 0 ? <div className="px-4 py-8 text-[13px] text-muted text-center">{view === "open" ? "No bill is in review in Buildertrend, and none is part-way through." : "Tick “Paid” on a bill and it moves here with its times."}</div>
+              : rows.map((r) => {
+                const paid = r.steps.paid;
+                const days = daysOpen(r.bill_date);
+                return (
+                  <div key={r.bill_id} className="border-b border-line/70 last:border-0">
+                    <div className={cn("grid gap-3 px-4 py-2.5 items-start", COLS)}>
+                      <button type="button" onClick={() => setOpen(open === r.bill_id ? null : r.bill_id)} className="min-w-0 text-left flex gap-1.5">
+                        <ChevronRight size={13} className={cn("mt-[3px] shrink-0 text-faint transition", open === r.bill_id && "rotate-90")} />
+                        <span className="min-w-0">
+                          <span className="block text-[13px] font-medium leading-snug truncate">{r.title || r.number}</span>
+                          <span className="block text-[11px] text-faint truncate">{r.number}{r.pay_to ? ` · ${r.pay_to}` : ""}</span>
+                          <span className="block text-[10.5px] text-faint truncate">Buildertrend: {r.buildertrend_status}{r.approvers?.length ? ` · approver there: ${r.approvers.join(", ")}` : ""}</span>
+                        </span>
+                      </button>
+                      <div className="min-w-0 text-[12.5px] truncate">{r.property_id ? <Link href={`/property/${r.property_id}?tab=bills`} className="hover:text-accent hover:underline">{r.property}</Link> : r.property}</div>
+                      <div className="text-[12.5px] tnum">
+                        {fmtDate(r.bill_day, "d MMM yy")}
+                        {r.due_day && <div className={cn("text-[10.5px]", r.past_due && !paid ? "text-critical font-medium" : "text-faint")}>due {fmtDate(r.due_day, "d MMM")}</div>}
+                      </div>
+                      <div className="text-[13px] font-semibold tnum text-right">{usd(r.amount)}</div>
+                      {steps.map((s) => {
+                        const m = r.steps[s.key];
+                        return (
+                          <div key={s.key} className="flex flex-col items-center text-center">
+                            <Checkbox checked={!!m} onCheckedChange={(v) => tick(r, s.key, v)} size={18} label={`${s.label} — ${r.title || r.number}`} className="rounded-md" />
+                            {m && (
+                              <div className="mt-1 text-[10.5px] leading-tight text-muted">
+                                <div className="tnum">{fmtDate(m.at, "d MMM, HH:mm")}</div>
+                                <div className="text-faint">{took(r.bill_date, m.at) ? `+${took(r.bill_date, m.at)}` : ""}{m.by_name ? ` · ${m.by_name.replace(/ Sir$/, "")}` : ""}</div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                      <div className="text-right text-[12.5px] tnum">
+                        {paid ? <><div className="font-semibold text-good">{took(r.bill_date, paid.at) || "—"}</div><div className="text-[10.5px] text-faint">bill date to paid</div></>
+                          : <><div className={cn("font-semibold", days > 14 ? "text-critical" : days > 7 ? "text-high" : "text-fg")}>{days} day{days === 1 ? "" : "s"}</div><div className="text-[10.5px] text-faint">open so far</div></>}
+                      </div>
+                    </div>
+                    {open === r.bill_id && <div className="px-4 pb-3 pl-[34px] max-w-3xl"><BillLines b={r as unknown as Bill} /></div>}
+                  </div>
+                );
+              })}
+        </div>
+      </Card>
+      {q.data?.held_back && q.data.held_back.held > 0 && (
+        <p className="mt-2.5 text-[12px] text-muted">
+          Hold-back bills are not listed: RKB keeps 10% of every draw until the work is complete.
+          {" "}<b className="text-fg font-semibold tnum">{usd(q.data.held_back.held_amount)}</b> is held across {q.data.held_back.held} hold-back bills
+          {q.data.held_back.in_review > 0 ? <> ({q.data.held_back.in_review} of them, {usd(q.data.held_back.in_review_amount)}, entered with the bills now in review)</> : null}.
+        </p>
+      )}
+      <p className="mt-2.5 text-[11px] text-faint leading-relaxed">
+        A bill appears here when Buildertrend shows it in review, and stays until it is ticked paid. Each tick records the time and who made it; “+2d 3h” is the time since the bill date. Unticking a box removes its time.
+      </p>
+    </div>
+  );
+}

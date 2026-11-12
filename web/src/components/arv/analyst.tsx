@@ -13,7 +13,7 @@ import { AlertTriangle, Bot, CheckCircle2, ChevronDown, ChevronUp, HelpCircle, H
 import { toast } from "sonner";
 import { Badge, Button, Card, Textarea } from "@/components/arv/ui";
 import { cn, money, ago } from "@/lib/utils";
-import { arvApi, subscribeArvJob, VERDICT_LABEL, VERDICT_TONE, type AnalysisDoc } from "@/lib/arv";
+import { arvApi, subscribeArvJob, isAsIs, VERDICT_LABEL, VERDICT_TONE, type AnalysisDoc } from "@/lib/arv";
 import { Disclosure, H } from "./bits";
 import { Drivers, emphasise, sentences } from "./overview";
 import type { TabProps } from "./comps";
@@ -41,7 +41,10 @@ export function AnalystTab({ doc, patch, setDoc, running, onRerun }: TabProps & 
     );
   }
   const engineArv = doc.valuation?.arv;
-  const diff = engineArv ? ((an.arv_opinion - engineArv) / engineArv) * 100 : null;
+  // An as-is file's review carries an as-is value and no ARV, rehab read or max offer.
+  const asIs = isAsIs(doc);
+  const op = asIs ? { v: an.as_is_opinion, lo: an.as_is_low, hi: an.as_is_high } : { v: an.arv_opinion, lo: an.arv_low, hi: an.arv_high };
+  const diff = engineArv && op.v ? ((op.v - engineArv) / engineArv) * 100 : null;
   const points = an.summary_points?.length ? an.summary_points : sentences(an.summary).slice(0, 6);
   const drivers = (an.value_drivers || []).slice().sort((a, b) => Math.abs(b.impact_usd) - Math.abs(a.impact_usd));
   const notes = an.comp_notes || [];
@@ -67,10 +70,10 @@ export function AnalystTab({ doc, patch, setDoc, running, onRerun }: TabProps & 
               </div>
             </div>
             <div className="text-right shrink-0">
-              <div className="text-[10.5px] uppercase tracking-wide text-muted font-medium">Analyst&apos;s ARV</div>
-              <div className="text-2xl font-semibold tracking-tight tnum">{money(an.arv_opinion)}</div>
-              <div className="text-[11px] text-muted tnum">{money(an.arv_low, true)} – {money(an.arv_high, true)}{diff !== null ? <span className={cn("ml-1", Math.abs(diff) > 5 ? "text-high" : "text-good")}>({diff > 0 ? "+" : ""}{diff.toFixed(1)}% vs engine)</span> : null}</div>
-              {an.as_is_opinion ? (
+              <div className="text-[10.5px] uppercase tracking-wide text-muted font-medium">{asIs ? "Analyst's as-is value" : "Analyst's ARV"}</div>
+              <div className="text-2xl font-semibold tracking-tight tnum">{money(op.v)}</div>
+              <div className="text-[11px] text-muted tnum">{money(op.lo, true)} – {money(op.hi, true)}{diff !== null ? <span className={cn("ml-1", Math.abs(diff) > 5 ? "text-high" : "text-good")}>({diff > 0 ? "+" : ""}{diff.toFixed(1)}% vs engine)</span> : null}</div>
+              {!asIs && an.as_is_opinion ? (
                 <div className="mt-2.5 pt-2 border-t border-line" title={an.as_is_basis || undefined}>
                   <div className="text-[10.5px] uppercase tracking-wide text-muted font-medium">As-is value today</div>
                   <div className="text-[17px] font-semibold tracking-tight tnum">{money(an.as_is_opinion)}</div>
@@ -80,7 +83,7 @@ export function AnalystTab({ doc, patch, setDoc, running, onRerun }: TabProps & 
             </div>
           </div>
           <div className="text-[12px] text-muted mt-3 flex items-start gap-1.5">{an.agrees_with_engine ? <CheckCircle2 size={13} className="text-good mt-0.5 shrink-0" /> : <AlertTriangle size={13} className="text-high mt-0.5 shrink-0" />} <span>{an.confidence_reason}{an.verdict_reason ? ` ${an.verdict_reason}` : ""}</span></div>
-          {an.as_is_opinion && an.as_is_basis ? <div className="text-[12px] text-muted mt-1.5 flex items-start gap-1.5"><Home size={13} className="mt-0.5 shrink-0" /> <span><b className="text-fg">As-is {money(an.as_is_opinion)}.</b> {an.as_is_basis}</span></div> : null}
+          {an.as_is_opinion && an.as_is_basis ? <div className="text-[12px] text-muted mt-1.5 flex items-start gap-1.5"><Home size={13} className="mt-0.5 shrink-0" /> <span><b className="text-fg">As-is {money(an.as_is_opinion)}.</b> {an.as_is_basis}{asIs && an.buyer_pool ? ` ${an.buyer_pool}` : ""}</span></div> : null}
           <ol className="mt-4 space-y-2">
             {points.map((p, i) => <li key={i} className="flex items-start gap-3 text-[13px] leading-snug"><span className="mt-[2px] h-5 w-5 rounded-full bg-sunken text-muted grid place-items-center text-[10.5px] font-semibold shrink-0">{i + 1}</span><span>{emphasise(p)}</span></li>)}
           </ol>
@@ -89,7 +92,7 @@ export function AnalystTab({ doc, patch, setDoc, running, onRerun }: TabProps & 
 
         {drivers.length > 0 && (
           <Card className="p-5">
-            <H right={<span className="text-[11px] text-muted">signed effect on the ARV</span>}>What moves the number</H>
+            <H right={<span className="text-[11px] text-muted">signed effect on the {asIs ? "as-is value" : "ARV"}</span>}>What moves the number</H>
             <Drivers drivers={drivers} limit={6} />
           </Card>
         )}
@@ -133,8 +136,10 @@ export function AnalystTab({ doc, patch, setDoc, running, onRerun }: TabProps & 
         ) : null}
 
         <Disclosure title="Market read" preview={sentences(an.market_read)[0]}><Md text={an.market_read} /></Disclosure>
+        {asIs ? (an.condition_read ? <Disclosure title="Condition read" preview={sentences(an.condition_read)[0]} defaultOpen><Md text={an.condition_read} /></Disclosure> : null) : (<>
         <Disclosure title="Rehab read" preview={sentences(an.rehab_read)[0]}><Md text={an.rehab_read} /></Disclosure>
         <Disclosure title={`Maximum offer · analyst ${money(an.mao_opinion, true)} · engine ${money(doc.underwriting?.mao.recommended, true)}`} preview={sentences(an.mao_reason)[0]}><Md text={an.mao_reason} /></Disclosure>
+        </>)}
       </div>
 
       <div className="space-y-3 min-w-0">
@@ -221,7 +226,12 @@ export function Chat({ doc, setDoc }: { doc: AnalysisDoc; setDoc: (d: AnalysisDo
       });
     } catch (e: any) { toast.error(e.message); setBusy(false); setLive(null); }
   };
-  const suggestions = [
+  const suggestions = isAsIs(doc) ? [
+    "Which single comp drives the as-is value most, and what if I drop it?",
+    "What would a cash investor pay for it this month, and why?",
+    "Which known issue costs the price the most?",
+    "How far would the value move if the condition is one grade worse than stated?",
+  ] : [
     "Which single comp drives the value most, and what if I drop it?",
     "What ARV would you defend to a lender's appraiser, and why?",
     "Where is the rehab budget most likely to be wrong?",
@@ -231,7 +241,7 @@ export function Chat({ doc, setDoc }: { doc: AnalysisDoc; setDoc: (d: AnalysisDo
     <Card className="p-5 flex flex-col">
       <H><span className="flex items-center gap-1.5"><MessageSquare size={13} /> Ask the analyst about this file</span></H>
       <div className="space-y-3 max-h-[440px] overflow-y-auto pr-1">
-        {msgs.length === 0 && live === null && <div className="text-[12px] text-muted">The analyst has the whole file: subject, documents, comps and adjustments, market, rehab, deal. Ask it anything; it streams back.</div>}
+        {msgs.length === 0 && live === null && <div className="text-[12px] text-muted">The analyst has the whole file: subject, documents, comps and adjustments, market{isAsIs(doc) ? "" : ", rehab, deal"}. Ask it anything; it streams back.</div>}
         {msgs.map((m, i) => (
           <div key={i} className={cn("text-[12.5px] rounded-xl px-3 py-2", m.role === "user" ? "bg-sunken ml-6" : "bg-accent-soft/40 mr-2")}>
             <div className="text-[10px] uppercase tracking-wide text-muted mb-0.5">{m.role === "user" ? (m.by_name || "You") : "Analyst"} · {ago(m.at)}</div>
@@ -243,7 +253,7 @@ export function Chat({ doc, setDoc }: { doc: AnalysisDoc; setDoc: (d: AnalysisDo
       </div>
       {msgs.length === 0 && <div className="flex flex-wrap gap-1.5 mt-3">{suggestions.map((s) => <button key={s} onClick={() => ask(s)} disabled={busy} className="text-[11px] px-2.5 h-7 rounded-full border border-line text-muted hover:border-accent hover:text-accent transition text-left">{s}</button>)}</div>}
       <div className="mt-3 flex items-end gap-2">
-        <Textarea rows={2} value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(); } }} placeholder="Ask about a comp, an adjustment, the budget, the offer…" className="text-[12.5px]" />
+        <Textarea rows={2} value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(); } }} placeholder={isAsIs(doc) ? "Ask about a comp, an adjustment, the condition, the buyer…" : "Ask about a comp, an adjustment, the budget, the offer…"} className="text-[12.5px]" />
         <Button variant="primary" size="icon" disabled={busy || !q.trim()} onClick={() => ask()} className="h-10 w-10 rounded-xl shrink-0">{busy ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}</Button>
       </div>
     </Card>

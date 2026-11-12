@@ -1,248 +1,151 @@
 "use client";
 
-/* The home screen. One glance: what needs a person, what's handled, what's new,
-   how the money looks, what's due. Then your tasks. Nothing decorative. */
+/* Today — the one page to open in the morning. Replies that are written and
+   waiting, what needs you, what changed, and every property in a line.
+   Nothing here has to be asked for. */
 
 import * as React from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
-import { motion } from "framer-motion";
-import { ArrowRight, Inbox, AlertTriangle, CalendarClock, CheckSquare, Sparkles, Bot, MessageSquare, TrendingUp, FileDown, Building2 } from "lucide-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
+import { ArrowRight, RefreshCw } from "lucide-react";
 import { api, subscribeJob } from "@/lib/api";
-import { Badge, Button, Card, CardHeader, Skeleton, Stat } from "@/components/ui";
-import { useEvidence } from "@/components/evidence";
-import { MoneyFlow, PortfolioBars } from "@/components/charts";
-import { TaskBoard } from "@/components/tasks";
-import { BriefingHero, CardsFeed, DeadlinesBoard } from "@/components/briefing";
-import { NextStepsPanel } from "@/components/nextsteps";
-import { FollowupList } from "@/components/followups";
-import { Desk } from "@/components/desk";
+import { Badge, Button, Card, Skeleton } from "@/components/ui";
 import { useUser } from "@/components/providers";
-import { cn, fmtDate, ago, money, HEALTH, propertyLabel } from "@/lib/utils";
-import type { Dashboard, PropertySummary, LedgerPortfolio } from "@/lib/types";
-import { Figure } from "@/components/ledger";
+import { ReplyList } from "@/components/brain/replies";
+import { ActivityList, ItemRow } from "@/components/brain/file";
+import { ago, cn, fmtDate } from "@/lib/utils";
+import { errText, type Home, type OpenItem } from "@/lib/brain";
 
-export default function DashboardPage() {
-  const { user } = useUser();
-  // JP Sir and Manjunath Sir get their desk, not the portfolio (admin directive
-  // 2026-09-16): their next steps, their follow-ups, their tasks.
-  if (user && user.role !== "ceo") return <Desk />;
-  return <CeoDashboard />;
+function greeting() {
+  const h = new Date().getHours();
+  return h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening";
 }
 
-function CeoDashboard() {
-  const q = useQuery({ queryKey: ["dashboard"], queryFn: () => api.get<Dashboard>("/dashboard"), refetchInterval: 90_000 });
-  const lq = useQuery({ queryKey: ["ledger-portfolio"], queryFn: () => api.get<LedgerPortfolio>("/ledger"), refetchInterval: 300_000 });
-  const ledger = lq.data;
-  const router = useRouter();
-  const { open } = useEvidence();
-  const [ask, setAsk] = React.useState("");
-  if (q.isLoading || !q.data) return <div className="p-6 space-y-4"><Skeleton className="h-40 rounded-3xl" /><div className="grid gap-4 md:grid-cols-4">{[...Array(4)].map((_, i) => <Skeleton key={i} className="h-24" />)}</div><Skeleton className="h-64" /></div>;
+export default function TodayPage() {
+  const { user } = useUser();
+  const qc = useQueryClient();
+  const [days, setDays] = React.useState(3);
+  const q = useQuery({ queryKey: ["brain", "home", days], queryFn: () => api.get<Home>(`/brain/home?days=${days}`), placeholderData: (prev) => prev, refetchInterval: 120_000 });
+  const [reading, setReading] = React.useState<string | null>(null);
+  const refresh = () => qc.invalidateQueries({ queryKey: ["brain"] });
+
+  if (q.isLoading || !q.data) return <div className="p-8 max-w-6xl mx-auto space-y-4"><Skeleton className="h-10 w-80" /><Skeleton className="h-40" /><Skeleton className="h-72" /></div>;
   const d = q.data;
-  const na = d.needs_attention;
-  const me = d.user;
-  const owner = { rakesh: "Rakesh", jp: "JP", manjunath: "Manjunath" }[me.user_id] || "Rakesh";
-  const portfolio = d.portfolio;
-  const critical = portfolio.filter((p) => p.health.level === "critical");
-  const hour = new Date().getHours();
-  const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
-  const attention = [
-    { n: na.overdue_tasks.length, label: "tasks past due", sub: na.overdue_tasks[0]?.title, href: "/tasks?status=open", icon: CheckSquare, tone: "critical" },
-    { n: na.risk_events.length, label: "default / legal events in 60 days", sub: na.risk_events[0] ? `${propertyLabel(na.risk_events[0].property_id)} — ${na.risk_events[0].title}` : "", href: na.risk_events[0] ? `/property/${na.risk_events[0].property_id}?tab=timeline` : "/", icon: AlertTriangle, tone: "critical" },
-    { n: na.deadlines.length, label: "dated items in the next 3 weeks", sub: na.deadlines[0]?.title, href: "#deadlines", icon: CalendarClock, tone: "high" },
-    { n: na.unplaced.count, label: "documents waiting to be placed", sub: na.unplaced.oldest ? `oldest ${ago(na.unplaced.oldest)}` : "", href: "/review", icon: Inbox, tone: "high" },
-    { n: na.suggested_tasks, label: "AI-suggested tasks to accept or drop", sub: "each with its evidence", href: "/tasks?status=suggested", icon: Sparkles, tone: "accent" },
-    { n: na.low_confidence, label: "low-confidence placements", sub: "filed, but worth a glance", href: "/review", icon: Inbox, tone: "neutral" },
-  ].filter((a) => a.n > 0);
-  const total = attention.reduce((a, x) => a + x.n, 0);
+  const ceo = user?.role === "ceo";
+  const me = user?.user_id || d.me;
+  const mine = d.todos.filter((t) => t.owner === me);
+  const drafts = ceo ? d.drafts : d.drafts.filter((x) => x.sender === me);
+  const overdue = mine.filter((t) => t.overdue).length;
+
+  const close = async (item: OpenItem, status: "done" | "dropped") => {
+    qc.setQueryData<Home>(["brain", "home", days], (cur) => cur ? { ...cur, todos: cur.todos.filter((t) => t.id !== item.id) } : cur);
+    try {
+      await api.patch(`/brain/properties/${item.property_id}/items/${item.id}`, { status });
+      toast.success(status === "done" ? "Done" : "Removed", { action: { label: "Undo", onClick: async () => { await api.patch(`/brain/properties/${item.property_id}/items/${item.id}`, { status: "open" }); refresh(); } } });
+    } catch (e) { toast.error(errText(e)); }
+    refresh();
+  };
+  const readNow = () => {
+    setReading("Reading new mail…");
+    api.post<{ job_id: string }>("/brain/run").then(({ job_id }) => {
+      subscribeJob(job_id, (e) => {
+        if (e.kind === "status" && e.data?.text) setReading(e.data.text);
+        if (e.kind === "result") toast.success(e.data?.read ? `Read ${e.data.read} new record${e.data.read === 1 ? "" : "s"}${e.data.drafts ? `, wrote ${e.data.drafts} draft${e.data.drafts === 1 ? "" : "s"}` : ""}` : "Nothing new to read");
+        if (e.kind === "error") toast.error(e.data?.error || "Could not read new mail");
+      }, () => { setReading(null); refresh(); });
+    }).catch((e) => { toast.error(e.message); setReading(null); });
+  };
+
+  const summary = [
+    drafts.length ? `${drafts.length} repl${drafts.length === 1 ? "y is" : "ies are"} written and waiting` : "no replies waiting",
+    mine.length ? `${mine.length} item${mine.length === 1 ? "" : "s"} need${mine.length === 1 ? "s" : ""} you${overdue ? ` (${overdue} overdue)` : ""}` : "nothing is waiting on you",
+  ].join(" · ");
+  const byProperty = mine.reduce<Record<string, OpenItem[]>>((acc, t) => { (acc[t.property] ||= []).push(t); return acc; }, {});
 
   return (
-    <div className="p-6 max-w-[1440px] mx-auto space-y-5">
-      {/* header */}
+    <div className="px-6 lg:px-10 py-8 max-w-6xl mx-auto">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-[26px] font-semibold tracking-tight">{greeting}, {me.name}.</h1>
-          <p className="text-sm text-muted mt-1">{total ? <><b className="text-fg tnum">{total}</b> things need a person.</> : "Nothing needs you right now."}{critical.length ? <> <b className="text-critical tnum">{critical.length}</b> propert{critical.length > 1 ? "ies" : "y"} need{critical.length > 1 ? "" : "s"} attention.</> : " All properties steady."} Everything else is handled.</p>
+          <h1 className="text-[26px] font-semibold tracking-tight">{greeting()}, {(user?.name || "").replace(/ Sir$/, "")}</h1>
+          <p className="text-[14px] text-muted mt-1 first-letter:uppercase">{summary}.</p>
         </div>
-        <form onSubmit={(e) => { e.preventDefault(); if (ask.trim()) router.push(`/ask?q=${encodeURIComponent(ask.trim())}`); }} className="flex items-center gap-2 w-full md:w-[480px]">
-          <div className="relative flex-1"><MessageSquare size={14} className="absolute left-3 top-3 text-faint" /><input value={ask} onChange={(e) => setAsk(e.target.value)} placeholder="Ask across every property… (⌘K anywhere)" className="h-10 w-full rounded-xl border border-line bg-elev pl-9 pr-3 text-sm focus:outline-none focus:ring-2 focus:ring-accent/30 shadow-[var(--shadow-sm)]" /></div>
-          <Button type="submit" variant="primary">Ask <ArrowRight size={14} /></Button>
-        </form>
-      </div>
-
-      {/* briefing */}
-      <BriefingHero userName={me.name} />
-
-      {/* next steps: four sheets, generate / download / send */}
-      <NextStepsPanel />
-
-      {/* follow-ups: who owes whom a reply */}
-      <Card>
-        <CardHeader title="Follow-ups awaiting a reply" sub="Every ask since 16 September, open until the person answers. Overdue is amber, escalated is red."
-          right={<Link href="/followups"><Button size="sm" variant="ghost">All follow-ups <ArrowRight size={13} /></Button></Link>} />
-        <div className="px-5 pb-5"><FollowupList compact limit={6} /></div>
-      </Card>
-
-      {/* KPI strip */}
-      {/* Money from the ledger only (documented movements, quote-verified). The
-          earlier "out / back / net" summed every dollar mentioned in any event and
-          was wrong by an order of magnitude. A figure covers only the properties
-          whose ledger is established; the count says how many. */}
-      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
-        <Kpi label="Needs a person" value={total} tone={total ? "text-high" : "text-good"} sub={total ? "items below" : "clear"} />
-        <Kpi label="Properties at risk" value={critical.length} tone={critical.length ? "text-critical" : "text-good"} sub={critical.map((p) => propertyLabel(p.property_id)).slice(0, 2).join(", ") || "none"} />
-        <Kpi label="Invested" value={ledger?.invested != null ? money(ledger.invested, true) : <span className="text-muted text-base font-medium">not established</span>} tone="text-money-in" sub={ledger ? `${ledger.established} of ${ledger.properties} properties documented` : "ledger not built"} />
-        <Kpi label="Owed to RKB" value={ledger?.owed != null ? money(ledger.owed, true) : <span className="text-muted text-base font-medium">not established</span>} tone="text-fg" sub={ledger ? `latest balance statements · ${ledger.owed_properties} properties` : ""} />
-        <Kpi label="Money risks" value={ledger ? ledger.risks.filter((r) => r.severity === "critical").length : "—"} tone={ledger && ledger.risks.some((r) => r.severity === "critical") ? "text-critical" : "text-good"} sub={ledger ? `${ledger.risks.length} flagged in the ledgers` : ""} />
-        <Kpi label="My open tasks" value={na.my_open_tasks} tone="text-fg" sub={`${d.tasks.by_status?.suggested || 0} suggested by AI`} />
-      </div>
-
-      {/* attention + handled + what's new */}
-      <div className="grid gap-4 xl:grid-cols-3">
-        <Card className="xl:col-span-1">
-          <CardHeader title="Needs a person" sub="Most urgent first" right={<Badge tone={attention.length ? "high" : "good"}>{attention.length ? `${attention.length} kinds` : "clear"}</Badge>} />
-          <ul className="px-3 pb-3 space-y-1">
-            {attention.length === 0 && <li className="text-sm text-muted px-2 py-6 text-center">Nothing waiting.</li>}
-            {attention.map((a, i) => (
-              <motion.li key={a.label} initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.04 }}>
-                <Link href={a.href} className="flex items-center gap-3 rounded-xl px-3 py-2.5 hover:bg-sunken transition group">
-                  <div className={cn("h-9 w-9 rounded-xl grid place-items-center shrink-0", { critical: "bg-critical-soft text-critical", high: "bg-high-soft text-high", accent: "bg-accent-soft text-accent", neutral: "bg-sunken text-muted" }[a.tone])}><a.icon size={16} /></div>
-                  <div className="min-w-0 flex-1"><div className="text-[13.5px]"><span className="font-semibold tnum">{a.n}</span> {a.label}</div>{a.sub && <div className="text-xs text-muted truncate">{a.sub}</div>}</div>
-                  <ArrowRight size={14} className="text-faint group-hover:text-fg transition" />
-                </Link>
-              </motion.li>
-            ))}
-          </ul>
-          <div className="border-t border-line px-5 py-3">
-            <div className="text-[11px] uppercase tracking-wide text-faint mb-1.5 flex items-center gap-1.5"><Bot size={12} className="text-accent" /> Handled by the system · 36h</div>
-            <ul className="space-y-1">{d.handled.slice(0, 6).map((h) => <li key={h.kind} className="flex items-center justify-between text-xs"><span className="text-muted truncate">{h.label}</span><span className="font-semibold tnum ml-2">{h.count.toLocaleString()}</span></li>)}{d.handled.length === 0 && <li className="text-xs text-muted">Quiet.</li>}</ul>
-          </div>
-          <IntakeRow intake={d.intake} onDone={() => q.refetch()} />
-        </Card>
-        <div className="xl:col-span-2"><CardsFeed limit={6} /></div>
-      </div>
-
-      {/* portfolio */}
-      <Card>
-        <CardHeader title="Portfolio" sub={`${portfolio.length} properties · health derived from timeline events`} right={<div className="flex items-center gap-1"><a href="/api/export/portfolio.xlsx"><Button size="sm" variant="ghost"><FileDown size={13} /> Excel</Button></a><Building2 size={16} className="text-muted ml-1" /></div>} />
-        <div className="px-4 pb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-          {[...portfolio].sort((a, b) => ({ critical: 0, watch: 1, good: 2 }[a.health.level] - { critical: 0, watch: 1, good: 2 }[b.health.level])).map((p, i) => <PropertyCard key={p.property_id} p={p} i={i} />)}
+        <div className="flex items-center gap-2">
+          {d.pending_records > 0 && <Badge tone="high">{d.pending_records} new record{d.pending_records === 1 ? "" : "s"} not read yet</Badge>}
+          <Button size="sm" onClick={readNow} disabled={!!reading}><RefreshCw size={13} className={cn(reading && "animate-spin")} /> {reading ? reading.slice(0, 48) : "Check for new mail"}</Button>
         </div>
-      </Card>
-
-      {/* deadlines */}
-      <div id="deadlines"><DeadlinesBoard compact /></div>
-
-      {/* money — ledger only */}
-      <div className="grid gap-4 lg:grid-cols-[1.35fr_1fr]">
-        <Card>
-          <CardHeader title="Invested and owed, by property" sub="From each property's ledger of documented movements. Blank = the documents do not establish it." right={<a href="/api/export/portfolio.xlsx"><Button size="sm" variant="ghost"><FileDown size={13} /> Excel</Button></a>} />
-          <div className="px-2 pb-2"><PortfolioBars rows={portfolio.filter((p) => p.money.established).map((p) => ({ name: propertyLabel(p.property_id).replace(" St", "").replace(" Nw", ""), in: p.money.invested || 0, back: p.money.owed || 0 }))} /></div>
-          <div className="px-5 pb-3 text-[11px] text-faint">Bars: invested (documented) and latest owed balance. {portfolio.filter((p) => !p.money.established).length > 0 && <>Not established for {portfolio.filter((p) => !p.money.established).map((p) => propertyLabel(p.property_id)).join(", ")}.</>}</div>
-        </Card>
-        <Card>
-          <CardHeader title="Money risks" sub="Flagged in the ledgers, most severe first" right={<TrendingUp size={16} className="text-muted" />} />
-          <ul className="px-5 pb-4 space-y-2">
-            {(ledger?.risks || []).slice(0, 7).map((r, i) => (
-              <li key={i} className="text-xs flex items-start gap-2 cursor-pointer hover:text-accent" onClick={() => open({ sha: r.source_sha, highlight: r.quote.slice(0, 60) })}>
-                <span className={cn("mt-1 h-1.5 w-1.5 rounded-full shrink-0", r.severity === "critical" ? "bg-critical" : r.severity === "high" ? "bg-high" : "bg-line-strong")} />
-                <span className="min-w-0"><span className="font-medium">{propertyLabel(r.property_id)}</span> <span className="text-muted">— {r.title}</span></span>
-              </li>
-            ))}
-            {!ledger?.risks?.length && <li className="text-xs text-muted">None flagged.</li>}
-          </ul>
-        </Card>
       </div>
 
-      {/* my tasks */}
-      <Card>
-        <CardHeader title={`Tasks for ${owner}`} sub="Yours first. Tick to mark done — saved with your name." right={<div className="flex items-center gap-1"><a href={`/api/export/tasks.xlsx?owner=${owner}`}><Button size="sm" variant="ghost"><FileDown size={13} /> Excel</Button></a><Link href="/tasks"><Button size="sm" variant="ghost">All tasks <ArrowRight size={13} /></Button></Link></div>} />
-        <div className="px-5 pb-5"><TaskBoard ownerFilter={owner} statusFilter="open" groupBy="property" compact showAdd /></div>
+      {d.missing.length > 0 && ceo && (
+        <div className="mt-4 rounded-xl border border-high/25 bg-high-soft/60 px-4 py-2.5 text-[13px]">
+          {d.missing.length} file{d.missing.length === 1 ? " has" : "s have"} not been opened yet: {d.missing.map((m) => <Link key={m.property_id} href={`/property/${m.property_id}`} className="text-accent hover:underline mr-2">{m.name}</Link>)}
+        </div>
+      )}
+
+      <Card className="mt-7 overflow-hidden">
+        <div className="flex items-center justify-between px-5 pt-4 pb-3">
+          <div className="text-[14px] font-semibold tracking-tight">Emails to reply{drafts.length ? ` · ${drafts.length}` : ""}</div>
+          {drafts.length > 8 && <Link href="/replies" className="text-xs text-accent hover:underline flex items-center gap-1">See all {drafts.length} <ArrowRight size={12} /></Link>}
+        </div>
+        <ReplyList drafts={drafts} limit={8} />
       </Card>
-    </div>
-  );
-}
 
-/* Mail intake: when both mailboxes were last read, what came in today, and a
-   one-click "check now". Green dot = both mailboxes read within two polls. */
-function IntakeRow({ intake, onDone }: { intake?: Dashboard["intake"]; onDone: () => void }) {
-  const [busy, setBusy] = React.useState<string | null>(null);
-  if (!intake) return null;
-  const poll = intake.poll_minutes || 10;
-  const fresh = (iso?: string) => !!iso && Date.now() - new Date(iso).getTime() < poll * 2 * 60_000;
-  const gOk = fresh(intake.gmail_last_ok), oOk = fresh(intake.outlook_last_ok);
-  const lr = intake.last_run;
-  const err = intake.error || (lr?.source_errors && Object.keys(lr.source_errors).length ? Object.entries(lr.source_errors).map(([k, v]) => `${k}: ${v}`).join(" · ") : null);
-  const checkNow = async () => {
-    setBusy("Checking…");
-    try {
-      const { job_id } = await api.post<{ job_id: string }>("/intake/check-now", {});
-      await new Promise<void>((resolve) => subscribeJob(job_id, (ev) => { if (ev.kind === "status") setBusy(ev.data?.text || "Working…"); if (ev.kind === "error") setBusy(ev.data?.error || "Failed"); }, resolve));
-    } catch (e: any) { setBusy(e?.message || "Failed"); await new Promise((r) => setTimeout(r, 2500)); }
-    setBusy(null); onDone();
-  };
-  return (
-    <div className="border-t border-line px-5 py-3">
-      <div className="flex items-center justify-between gap-2">
-        <div className="text-[11px] uppercase tracking-wide text-faint flex items-center gap-1.5"><Inbox size={12} className="text-accent" /> Mail intake · every {poll} min</div>
-        <button onClick={checkNow} disabled={!!busy} className="text-[11px] font-medium text-accent hover:underline disabled:opacity-60">{busy ? "Working…" : "Check now"}</button>
-      </div>
-      <ul className="mt-1.5 space-y-1 text-xs">
-        <li className="flex items-center justify-between"><span className="text-muted flex items-center gap-1.5"><span className={cn("h-1.5 w-1.5 rounded-full", gOk ? "bg-good" : "bg-high")} />Gmail</span><span className="text-faint tnum">{intake.gmail_last_ok ? ago(intake.gmail_last_ok) : "never"}</span></li>
-        <li className="flex items-center justify-between"><span className="text-muted flex items-center gap-1.5"><span className={cn("h-1.5 w-1.5 rounded-full", oOk ? "bg-good" : "bg-high")} />Outlook</span><span className="text-faint tnum">{intake.outlook_last_ok ? ago(intake.outlook_last_ok) : "never"}</span></li>
-        <li className="flex items-center justify-between"><span className="text-muted">Today</span><span className="tnum"><b className="text-fg">{intake.today?.ingested ?? 0}</b> new of {intake.today?.seen ?? 0} seen{intake.today?.errors ? <span className="text-critical"> · {intake.today.errors} errors</span> : null}</span></li>
-        {intake.last_arrival && <li className="flex items-center justify-between"><span className="text-muted">Last processed</span><span className="text-faint tnum">{intake.last_arrival.emails} email{intake.last_arrival.emails === 1 ? "" : "s"} · {intake.last_arrival.elapsed_s}s{intake.last_arrival.errors?.length ? <span className="text-critical"> · {intake.last_arrival.errors.length} stage error</span> : null}</span></li>}
-        {busy && <li className="text-accent">{busy}</li>}
-        {err && <li className="text-critical break-words">{err}</li>}
-      </ul>
-    </div>
-  );
-}
+      <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
+        <div className="space-y-6 min-w-0">
+          <Card>
+            <div className="px-5 pt-4 pb-1"><div className="text-[14px] font-semibold tracking-tight">Needs you</div><div className="text-xs text-muted mt-0.5">Tick it and it is closed. Send the email and it closes itself.</div></div>
+            {mine.length === 0 ? <div className="px-5 pb-5 pt-2 text-[13px] text-muted">Nothing is waiting on you.</div> : (
+              <div className="px-5 pb-3">
+                {Object.entries(byProperty).map(([name, rows]) => (
+                  <div key={name} className="pt-3">
+                    <Link href={`/property/${rows[0].property_id}`} className="text-[11px] font-semibold uppercase tracking-[0.08em] text-faint hover:text-accent">{name}</Link>
+                    <ul className="divide-y divide-line">{rows.map((t) => <ItemRow key={t.id} item={t} onDone={() => close(t, "done")} onDrop={() => close(t, "dropped")} />)}</ul>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
+        </div>
 
-function Kpi({ label, value, sub, tone }: { label: string; value: React.ReactNode; sub?: string; tone?: string }) {
-  return (
-    <motion.div initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} className="rounded-2xl border border-line bg-elev px-4 py-3 shadow-[var(--shadow-sm)]">
-      <Stat label={label} value={value} sub={sub} tone={tone} />
-    </motion.div>
-  );
-}
-
-export function PropertyCard({ p, i = 0 }: { p: PropertySummary; i?: number }) {
-  const h = HEALTH[p.health.level] || HEALTH.good;
-  const stripe = { critical: "bg-critical", watch: "bg-high", good: "bg-good" }[p.health.level] || "bg-good";
-  const wesPct = p.wes.total ? Math.round((p.wes.done / p.wes.total) * 100) : null;
-  const reason = p.health.reasons[0]?.replace(/^(legal|default|extension|maturity passed):\s*/i, "");
-  return (
-    <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.02 }}>
-      <Link href={`/property/${p.property_id}`} className="block rounded-2xl border border-line bg-elev overflow-hidden hover:border-line-strong hover:shadow-[var(--shadow)] hover:-translate-y-0.5 transition">
-        <div className={cn("h-1.5", stripe)} />
-        <div className="p-4">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <div className="text-[15px] font-semibold leading-tight">{p.address}</div>
-              <div className="text-[11.5px] text-faint mt-0.5">{(p.deal_type || "loan").replace("_", " ")} · day {p.day_count ?? "—"} · last activity {ago(p.last_activity)}</div>
+        <div className="space-y-6 min-w-0">
+          <Card>
+            <div className="flex items-center justify-between px-5 pt-4 pb-3">
+              <div className="text-[14px] font-semibold tracking-tight">What changed</div>
+              <div className="flex rounded-lg border border-line overflow-hidden text-[11px]">
+                {[1, 3, 7].map((n) => <button key={n} type="button" onClick={() => setDays(n)} className={cn("px-2.5 h-6 transition", days === n ? "bg-fg text-bg font-semibold" : "text-muted hover:bg-sunken")}>{n === 1 ? "24h" : `${n}d`}</button>)}
+              </div>
             </div>
-            <span className={cn("shrink-0 text-[10px] font-bold uppercase tracking-wider px-2.5 h-6 rounded-full grid place-items-center ring-1", h.ring, h.cls)}>{h.label}</span>
-          </div>
-
-          <div className={cn("mt-3 text-[12.5px] leading-snug line-clamp-2 min-h-[2.4em]", reason ? h.cls : "text-muted")}>
-            {reason ? reason : p.upcoming[0] ? <>Next: <b>{fmtDate(p.upcoming[0].date, "MMM d")}</b> — {p.upcoming[0].title}</> : "Nothing flagged. Steady."}
-          </div>
-
-          <div className="mt-4 grid grid-cols-2 gap-3">
-            <div className="rounded-xl bg-sunken/70 px-3 py-2"><div className="text-[10px] uppercase tracking-wide text-faint">Invested</div><Figure value={p.money.invested} tone="text-money-in" /></div>
-            <div className="rounded-xl bg-sunken/70 px-3 py-2"><div className="text-[10px] uppercase tracking-wide text-faint">Owed{p.money.owed_as_of ? ` · ${fmtDate(p.money.owed_as_of, "MMM yy")}` : ""}</div><Figure value={p.money.owed} /></div>
-          </div>
-          {p.money.critical_risks?.length ? <div className="mt-2 text-[11px] text-critical flex items-start gap-1"><AlertTriangle size={11} className="mt-0.5 shrink-0" /><span className="truncate">{p.money.critical_risks[0]}</span></div> : null}
-
-          <div className="mt-3 flex items-center justify-between text-[12px] text-muted">
-            <span><b className="text-fg tnum">{p.documents.total}</b> documents</span>
-            <span><b className="text-fg tnum">{p.tasks.open}</b> open{p.tasks.suggested ? <span className="text-accent"> · {p.tasks.suggested} suggested</span> : ""}</span>
-            <span className="flex items-center gap-1.5">Wes {wesPct === null ? <span className="text-faint">—</span> : <><span className="inline-block h-1.5 w-12 rounded-full bg-line overflow-hidden"><span className="block h-full bg-good" style={{ width: `${wesPct}%` }} /></span><b className="text-fg tnum">{wesPct}%</b></>}</span>
-          </div>
+            <div className="px-5 pb-5 max-h-[640px] overflow-y-auto"><ActivityList rows={ceo ? d.activity : d.activity.slice(0, 30)} showProperty /></div>
+          </Card>
         </div>
-      </Link>
-    </motion.div>
+      </div>
+
+      {ceo && (
+        <section className="mt-9">
+          <div className="flex items-baseline justify-between mb-3">
+            <h2 className="text-[14px] font-semibold tracking-tight">Every property, in a line</h2>
+            {d.stats.drafts_sent > 0 && <span className="text-xs text-faint">{d.stats.sent_as_written} of {d.stats.drafts_sent} drafts were sent as written</span>}
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {d.properties.map((p) => (
+              <Link key={p.property_id} href={`/property/${p.property_id}`} className="group rounded-2xl border border-line bg-elev p-4 hover:border-accent/40 hover:shadow-[var(--shadow-sm)] transition">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="text-[13.5px] font-semibold tracking-tight group-hover:text-accent">{p.name}</div>
+                  <span className="text-[10.5px] text-faint whitespace-nowrap mt-0.5">{ago(p.updated_at)}</span>
+                </div>
+                <div className="text-[12.5px] text-muted mt-1.5 leading-relaxed line-clamp-3">{p.headline || "—"}</div>
+                <div className="mt-2.5 flex flex-wrap gap-1.5">
+                  {p.drafts > 0 && <Badge tone="accent">{p.drafts} repl{p.drafts === 1 ? "y" : "ies"} ready</Badge>}
+                  {(p.open_mine?.rakesh || 0) > 0 && <Badge tone="high">{p.open_mine.rakesh} need you</Badge>}
+                  {p.waiting > 0 && <Badge>{p.waiting} waiting on others</Badge>}
+                  {p.last_event_at && <span className="text-[11px] text-faint self-center">last activity {fmtDate(p.last_event_at, "MMM d")}</span>}
+                </div>
+              </Link>
+            ))}
+          </div>
+        </section>
+      )}
+
+    </div>
   );
 }
