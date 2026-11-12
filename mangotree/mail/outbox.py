@@ -197,6 +197,34 @@ class Outbox:
             time.sleep(3)
         return None
 
+    def _already_sent(self, doc: Dict[str, Any]):
+        """One look in Sent Items for this exact email since it was queued. A send that
+        ended in a time-out (HTTP 504) may have gone out all the same; before trying
+        again we look, so nobody receives the same notice twice.
+
+        Returns the sent message, ``None`` when Sent Items was read and the email is
+        not there, or ``False`` when Sent Items could not be read at all — in which
+        case the caller does not send on this try (2026-11-13: a draft whose save
+        "timed out" had in fact been saved)."""
+        from mangotree.ingest.graph_auth import SCOPES
+        g = self._graph()
+        since = (doc.get("queued_at") or datetime.now(timezone.utc)) - timedelta(minutes=1)
+        url = (f"{GRAPH_ROOT}/users/{quote(g.mailbox)}/mailFolders/sentitems/messages"
+               f"?$select=id,subject,internetMessageId,conversationId,sentDateTime,toRecipients"
+               f"&$filter=sentDateTime ge {since.strftime('%Y-%m-%dT%H:%M:%SZ')}&$orderby=sentDateTime desc&$top=25")
+        try:
+            r = g._session.get(url, headers={"Authorization": f"Bearer {g.auth.access_token(SCOPES)}", "Accept": "application/json"}, timeout=g.timeout)
+        except Exception:
+            return False
+        if r.status_code != 200:
+            return False
+        want = {t["address"].lower() for t in doc.get("to") or []}
+        for m in r.json().get("value") or []:
+            got = {str((x.get("emailAddress") or {}).get("address") or "").lower() for x in m.get("toRecipients") or []}
+            if (m.get("subject") or "") == doc["subject"] and (not want or want <= got):
+                return m
+        return None
+
     def send_one(self, doc: Dict[str, Any]) -> Dict[str, Any]:
         from mangotree.ingest.graph_auth import GraphReauthRequired, SEND_SCOPES
         g = self._graph()
@@ -208,6 +236,21 @@ class Outbox:
                                                                     "$inc": {"attempts": 1}})
             return {"status": "needs_consent"}
         full = self.coll.find_one({"outbox_id": doc["outbox_id"]})
+        if int(full.get("attempts") or 0) >= 1:
+            gone = self._already_sent(full)
+            if gone is False:
+                # Cannot tell whether the earlier try went out: do not risk a second copy. It stays
+                # queued and is tried again in a few minutes (the try count is left as it is).
+                err = "Sent Items could not be read to check the earlier attempt; not sent on this try"
+                self.coll.update_one({"outbox_id": doc["outbox_id"]}, {"$set": {"error": err, "last_attempt_at": now}})
+                logger.warning("outbox: %s not retried yet: %s", doc["outbox_id"], err)
+                return {"status": "queued", "error": err}
+            if gone:
+                self.coll.update_one({"outbox_id": doc["outbox_id"]}, {"$set": {
+                    "status": "sent", "sent_at": now, "error": None, "last_attempt_at": now, "internet_message_id": gone.get("internetMessageId"),
+                    "conversation_id": gone.get("conversationId"), "graph_message_id": gone.get("id"), "found_in_sent_items": True}})
+                logger.info("outbox: %s had already gone out on an earlier attempt (%s); not sent again", doc["subject"], doc["outbox_id"])
+                return {"status": "sent", "conversation_id": gone.get("conversationId")}
         url = f"{GRAPH_ROOT}/users/{quote(g.mailbox)}/sendMail"
         r = g._session.post(url, json=self._payload(full), headers={"Authorization": f"Bearer {token}"}, timeout=max(g.timeout, 120))
         if r.status_code in (202, 200):
@@ -220,7 +263,15 @@ class Outbox:
             return {"status": "sent", "conversation_id": sent.get("conversationId")}
         err = f"HTTP {r.status_code}: {r.text[:300]}"
         attempts = int(full.get("attempts") or 0) + 1
-        status = "failed" if attempts >= MAX_ATTEMPTS or r.status_code in (400, 403) else "queued"
+        # The mail service being down or slow (5xx, 429) is not a reason to give up on an email:
+        # it stays queued and is retried for a full day. Only a refusal of the email itself
+        # (400, 403), or a day of failures, ends it. (On 2026-11-12 Microsoft timed out every
+        # send for half an hour; the old rule would have dropped the email after six tries.)
+        queued_at = full.get("queued_at") or now
+        age = now - queued_at.replace(tzinfo=queued_at.tzinfo or timezone.utc)
+        outage = r.status_code >= 500 or r.status_code == 429
+        gave_up = (attempts >= MAX_ATTEMPTS and not outage) or age > timedelta(hours=24)
+        status = "failed" if gave_up or r.status_code in (400, 403) else "queued"
         self.coll.update_one({"outbox_id": doc["outbox_id"]}, {"$set": {"status": status, "error": err, "last_attempt_at": now}, "$inc": {"attempts": 1}})
         logger.warning("outbox: send failed for %s: %s", doc["outbox_id"], err)
         return {"status": status, "error": err}

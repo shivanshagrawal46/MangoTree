@@ -192,6 +192,7 @@ def install(app: FastAPI, mongo: Mongo, jobs) -> None:
         for r in g["rows"]:
             r["mail"] = mails.get(r["bill_id"], {})
         return data.clean({"view": "paid" if view == "paid" else "open", "steps": [{"key": k, "label": l} for k, l in STEPS], "rows": g["rows"], "pulled_at": g["pulled"],
+                           "mail_to": billmail.recipients(),
                            "held_back": g["held"]})
 
     @app.get("/brain/bills/{bill_id}/mail-preview")

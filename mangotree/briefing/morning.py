@@ -265,6 +265,7 @@ class Scheduler:
         self.users = users
         self.runs = mongo.db["scheduled_runs"]
         self._stop = threading.Event()
+        self._outbox_lock = threading.Lock()
         self.intake_enabled = intake
         self._watcher = None
         self._chain = None
@@ -299,6 +300,27 @@ class Scheduler:
             return {}
         return self._outbox.flush()
 
+    def outbox_pass(self) -> Dict[str, Any]:
+        """Send whatever on the outbox is due. Runs on its own thread every 20 seconds, so a
+        held email leaves at its minute whatever else the scheduler is busy with. A database
+        query and, when something is due, the send — no model. One pass at a time."""
+        if not self.intake_enabled or not self._outbox_lock.acquire(blocking=False):
+            return {}
+        try:
+            if not self._due_outbox():
+                return {}
+            flushed: Dict[str, Any] = {}
+            try:
+                flushed = self.flush_outbox() or {}
+                if flushed.get("sent"):
+                    self._record("outbox", True, flushed)
+            except Exception:
+                logger.exception("outbox flush failed")
+            self._last_outbox = datetime.now(timezone.utc)
+            return flushed
+        finally:
+            self._outbox_lock.release()
+
     def _due_outbox(self) -> bool:
         last = getattr(self, "_last_outbox", None)
         if last is None or (datetime.now(timezone.utc) - last) >= timedelta(minutes=self.OUTBOX_MINUTES):
@@ -309,10 +331,22 @@ class Scheduler:
         if self._outbox is None:
             self._outbox = Outbox(self.mongo)
         now = datetime.now(timezone.utc)
-        return bool(self._outbox.coll.count_documents({"status": "queued", "$or": [
+        if self._outbox.coll.count_documents({"status": "queued", "$or": [
             {"send_after": {"$gt": last, "$lte": now}},            # its hour arrived since the last flush
             {"send_after": {"$lte": now}, "queued_at": {"$gt": last}},   # queued since the last flush, already due
-        ]}, limit=1))
+        ]}, limit=1):
+            return True
+        # A send that failed (the mail service timed out) is tried again after 1, 2, 4, 8 minutes,
+        # not left for the ten-minute round.
+        for d in self._outbox.coll.find({"status": "queued", "attempts": {"$gte": 1}}, {"attempts": 1, "last_attempt_at": 1, "send_after": 1}).limit(20):
+            after = d.get("send_after")
+            if after is not None and after.replace(tzinfo=after.tzinfo or timezone.utc) > now:
+                continue
+            tried = d.get("last_attempt_at")
+            wait = timedelta(minutes=min(2 ** (int(d.get("attempts") or 1) - 1), 8))
+            if tried is None or now - tried.replace(tzinfo=tried.tzinfo or timezone.utc) >= wait:
+                return True
+        return False
 
     def run_recurring(self) -> Dict[str, Any]:
         """Queue today's copy of every active recurring email once its send time
@@ -634,15 +668,9 @@ class Scheduler:
                     self._record("recurring", True, rec)
             except Exception as exc:
                 logger.exception("recurring sends failed")
-        # Held emails leave at their hour; no model involved.
-        if self.intake_enabled and self._due_outbox():
-            try:
-                flushed = self.flush_outbox()
-                if flushed and flushed.get("sent"):
-                    self._record("outbox", True, flushed)
-            except Exception as exc:
-                logger.exception("outbox flush failed")
-            self._last_outbox = datetime.now(timezone.utc)
+        # Held emails are NOT sent from here any more (2026-11-12): this round can spend many
+        # minutes on mail intake and on reading new records with the model, and a bill notice
+        # that was due at 18:20 was still waiting behind it. See outbox_pass / start().
         if self.intake_enabled:
             try:
                 flushed = self.chain.flush_debounced()
@@ -714,6 +742,16 @@ class Scheduler:
                     logger.exception("scheduler tick failed")
                 self._stop.wait(60)
         threading.Thread(target=loop, name="scheduler", daemon=True).start()
+
+        def mail_loop():
+            time.sleep(25)
+            while not self._stop.is_set():
+                try:
+                    self.outbox_pass()
+                except Exception:
+                    logger.exception("outbox pass failed")
+                self._stop.wait(20)
+        threading.Thread(target=mail_loop, name="outbox", daemon=True).start()
 
     def stop(self) -> None:
         self._stop.set()

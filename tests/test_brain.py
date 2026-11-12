@@ -640,21 +640,146 @@ def test_paid_emails_wes_and_kelly_with_every_time_in_eastern_and_how_long_it_to
     assert "UTC" not in m["text"] and "RKB invested" not in m["text"]            # Eastern only; the property's money is not sent to the contractor
 
 
-def test_a_tick_queues_one_email_held_two_minutes_and_an_untick_in_time_stops_it(monkeypatch):
+def test_a_confirmed_tick_sends_at_once_and_an_outage_only_delays_the_email(monkeypatch):
     mail, row = _bill_mail(monkeypatch)
     user = {"user_id": "rakesh", "name": "Rakesh Sir"}
+    ob = mail.outbox()
+    tried = []
+
+    def accepted(doc):
+        tried.append(doc["outbox_id"])
+        ob.coll.update_one({"outbox_id": doc["outbox_id"]}, {"$set": {"status": "sent", "sent_at": datetime.now(timezone.utc)}})
+        return {"status": "sent"}
+
+    def timing_out(doc):
+        tried.append(doc["outbox_id"])
+        ob.coll.update_one({"outbox_id": doc["outbox_id"]}, {"$set": {"error": "HTTP 504"}, "$inc": {"attempts": 1}})
+        return {"status": "queued", "error": "HTTP 504"}
+
     assert mail.on_step(row, "manju_approved", True, user) is None                # only two steps send anything
+    monkeypatch.setattr(ob, "send_one", timing_out)                               # the mail service is down
+    st = mail.on_step(row, "ready_to_pay", True, user)
+    assert st["now"] == "not_accepted" and st["status"] == "queued" and st["to"] == ["JP Sir"] and len(tried) == 1   # tried at once
+    assert ob.coll.find_one({"ref": "77:ready_to_pay"})["status"] == "queued"     # not lost: kept for the retry
+    monkeypatch.setattr(ob, "send_one", accepted)                                 # the service is back
+    assert mail.on_step(row, "ready_to_pay", True, user)["now"] == "sent"         # the same email goes; not a second one
+    assert ob.coll.count_documents({"ref": "77:ready_to_pay"}) == 1 and len(tried) == 2
+    assert mail.on_step(row, "ready_to_pay", True, user)["now"] == "already_sent" and len(tried) == 2   # once gone, never again
     st = mail.on_step(row, "paid", True, user)
-    assert st["status"] == "queued" and st["to"] == ["Wes Stone", "Kelly Stone"]
-    held = mail.outbox().coll.find_one({"ref": "77:paid"})
-    assert 100 <= (held["send_after"] - held["queued_at"].replace(tzinfo=None) if held["send_after"].tzinfo is None else held["send_after"] - held["queued_at"]).total_seconds() <= 130
-    mail.on_step(row, "paid", True, user)                                         # a second tick does not queue a second email
-    assert mail.outbox().coll.count_documents({"ref": "77:paid"}) == 1
-    assert mail.on_step(row, "paid", False, user) == {"status": "cancelled"}      # unticked before it went
-    assert mail.outbox().coll.find_one({"ref": "77:paid"})["status"] == "cancelled"
-    mail.on_step(row, "paid", True, user)                                         # ticked again: the email is queued afresh
-    mail.outbox().coll.update_one({"ref": "77:paid", "status": "queued"}, {"$set": {"status": "sent"}})
-    mail.on_step(row, "paid", False, user); mail.on_step(row, "paid", True, user)  # once it has gone, it is never sent again
-    assert mail.outbox().coll.count_documents({"ref": "77:paid", "status": {"$in": ["queued", "sent"]}}) == 1
+    assert st["now"] == "sent" and st["to"] == ["Wes Stone", "Kelly Stone"] and st["cc"] == ["Manjunath Sir", "Shivansh"]
+    monkeypatch.setattr(ob, "send_one", timing_out)
+    other = dict(row, bill_id=79)
+    mail.on_step(other, "paid", True, user)
+    assert mail.on_step(other, "paid", False, user) == {"status": "cancelled"}    # unticked while it had not managed to go: stopped
     hold = dict(row, bill_id=78, title="General Remodel / Repair-5 (Hold-back)")
-    assert mail.on_step(hold, "paid", True, user)["status"] == "not_sent" and mail.outbox().coll.count_documents({"ref": "78:paid"}) == 0
+    assert mail.on_step(hold, "paid", True, user)["status"] == "not_sent" and ob.coll.count_documents({"ref": "78:paid"}) == 0
+    assert mail.recipients() == {"ready_to_pay": {"to": ["JP Sir"], "cc": []}, "paid": {"to": ["Wes Stone", "Kelly Stone"], "cc": ["Manjunath Sir", "Shivansh"]}}
+
+
+def test_a_mail_service_outage_never_drops_an_email_but_a_refused_email_ends(monkeypatch):
+    import mongomock
+    from types import SimpleNamespace
+    from mangotree.mail.outbox import Outbox
+
+    class _M:
+        db = mongomock.MongoClient().db
+
+    ob = Outbox(_M())
+    answer = {"code": 504}
+
+    class Sess:
+        def get(self, url, **k):
+            return _Resp(200, {"value": []})
+
+        def post(self, url, **k):
+            return _Resp(answer["code"])
+
+    ob._client = SimpleNamespace(mailbox="rakesh@mtreh.com", timeout=30, _session=Sess(), auth=SimpleNamespace(access_token=lambda scopes=None: "t"))
+    q = ob.queue(kind="bill_step", ref="77:paid", to=[("Wes Stone", "wes@roiblocks.com")], subject="Paid — X", html="<p>x</p>", text="x")
+    doc = ob.coll.find_one({"outbox_id": q["outbox_id"]})
+    for _ in range(9):                                                            # far more failures than the old limit of six
+        assert ob.send_one(doc)["status"] == "queued"
+    assert ob.coll.find_one({"outbox_id": q["outbox_id"]})["attempts"] == 9
+    answer["code"] = 400                                                          # the email itself is refused: that does end it
+    assert ob.send_one(doc)["status"] == "failed"
+
+
+# ------------------------------------------------- queued mail goes on time, whatever else the scheduler is doing
+def test_the_outbox_is_sent_by_its_own_pass_and_only_one_pass_runs_at_a_time():
+    import threading
+    from mangotree.briefing.morning import Scheduler
+    s = Scheduler.__new__(Scheduler)                      # no database, no model: only the sending logic
+    s._outbox_lock = threading.Lock()
+    s.intake_enabled = True
+    sent, recorded = [], []
+    s._due_outbox = lambda: True
+    s.flush_outbox = lambda: (sent.append(1) or {"sent": 1})
+    s._record = lambda job, ok, detail: recorded.append((job, ok))
+    assert s.outbox_pass() == {"sent": 1} and sent == [1] and recorded == [("outbox", True)] and s._last_outbox is not None
+    s._outbox_lock.acquire()                              # a pass is already running
+    assert s.outbox_pass() == {} and sent == [1]          # a second one does nothing, so an email cannot be sent twice
+    s._outbox_lock.release()
+    s._due_outbox = lambda: False                         # nothing due
+    assert s.outbox_pass() == {} and sent == [1]
+    s.intake_enabled = False; s._due_outbox = lambda: True
+    assert s.outbox_pass() == {} and sent == [1]          # a machine that is not the mail server never sends
+
+
+def test_a_send_that_timed_out_is_not_sent_twice_if_it_did_go(monkeypatch):
+    import mongomock
+    from types import SimpleNamespace
+    from mangotree.mail.outbox import Outbox
+
+    class _M:
+        db = mongomock.MongoClient().db
+
+    ob = Outbox(_M())
+    posts = []
+    sent_items = {"value": []}
+
+    class Sess:
+        def get(self, url, **k):
+            return _Resp(200, sent_items)
+
+        def post(self, url, **k):
+            posts.append(url)
+            return _Resp(504)
+
+    ob._client = SimpleNamespace(mailbox="rakesh@mtreh.com", timeout=30, _session=Sess(), auth=SimpleNamespace(access_token=lambda scopes=None: "t"))
+    monkeypatch.setattr(ob, "_find_sent", lambda doc, since: None)
+    q = ob.queue(kind="bill_step", ref="77:ready_to_pay", to=[("JP Sir", "jp@mtreh.com")], subject="Ready to pay — X", html="<p>x</p>", text="x")
+    doc = ob.coll.find_one({"outbox_id": q["outbox_id"]})
+    assert ob.send_one(doc)["status"] == "queued" and len(posts) == 1            # the mail service timed out: kept for another try
+    # Sent Items cannot be read either: we cannot tell whether it went, so this try does not send.
+    readable = Sess.get
+    Sess.get = lambda self, url, **k: _Resp(504)
+    assert ob.send_one(doc)["status"] == "queued" and len(posts) == 1
+    assert ob.coll.find_one({"outbox_id": q["outbox_id"]})["attempts"] == 1
+    Sess.get = readable
+    # ...but the email did in fact go out. The next try finds it in Sent Items and does not send again.
+    sent_items["value"] = [{"id": "m1", "subject": "Ready to pay — X", "internetMessageId": "<a@b>", "conversationId": "c1",
+                            "toRecipients": [{"emailAddress": {"address": "JP@mtreh.com"}}]}]
+    assert ob.send_one(doc)["status"] == "sent" and len(posts) == 1
+    assert ob.coll.find_one({"outbox_id": q["outbox_id"]})["found_in_sent_items"] is True
+
+
+def test_a_failed_send_is_retried_within_minutes(monkeypatch):
+    import mongomock
+    import threading
+    from mangotree.briefing.morning import Scheduler
+    from mangotree.mail.outbox import Outbox
+
+    class _M:
+        db = mongomock.MongoClient().db
+
+    s = Scheduler.__new__(Scheduler)
+    s.mongo, s._outbox, s._outbox_lock = _M(), Outbox(_M()), threading.Lock()
+    now = datetime.now(timezone.utc)
+    s._last_outbox = now - timedelta(minutes=3)                                   # the ten-minute round is not due
+    s._outbox.coll.insert_one({"outbox_id": "ob-1", "status": "queued", "attempts": 1, "queued_at": now - timedelta(minutes=9),
+                               "send_after": now - timedelta(minutes=7), "last_attempt_at": now - timedelta(seconds=20)})
+    assert s._due_outbox() is False                                               # tried 20 seconds ago: wait the minute
+    s._outbox.coll.update_one({"outbox_id": "ob-1"}, {"$set": {"last_attempt_at": now - timedelta(seconds=75)}})
+    assert s._due_outbox() is True                                                # a minute has passed: try again
+    s._outbox.coll.update_one({"outbox_id": "ob-1"}, {"$set": {"attempts": 3}})
+    assert s._due_outbox() is False                                               # third failure waits four minutes

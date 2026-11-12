@@ -9,16 +9,18 @@ Nobody writes or approves these. They are filled in from the records — no mode
 is asked for a word — so every figure in them is the figure on the Bills page.
 Every date and time is US Eastern (see ``core/eastern.py``).
 
-Three rules keep an automatic email from doing harm:
+How it goes (changed 2026-11-13, at the user's instruction): the Bills page asks
+"send the email?" when one of the two boxes is ticked; on yes the box is ticked
+and the email is SENT AT ONCE, in that same request — it does not wait for the
+scheduler. If the mail service does not accept it there and then (Microsoft
+timing out), the email stays on the outbox and is retried every few minutes
+until it goes; the page says so.
 
-* It waits a short while before it goes (``hold_seconds``, two minutes). A box
-  ticked by mistake and unticked inside that time sends nothing.
 * One email per bill per step. Ticking, unticking and ticking again after the
   email has gone does not send a second one.
 * Hold-back bills never send anything: they are not bills being paid now.
 
-The email is put on the system's outbox (``mail/outbox.py``), which the server
-sends from. Who receives each email is a setting (``bill_mail``), not code.
+Who receives each email is a setting (``bill_mail``), not code.
 """
 from __future__ import annotations
 
@@ -39,7 +41,6 @@ KIND = "bill_step"
 SETTING = "bill_mail"
 DEFAULTS: Dict[str, Any] = {
     "enabled": True,
-    "hold_seconds": 120,
     "ready_to": [["JP Sir", "jp@mtreh.com"]],
     "paid_to": [["Wes Stone", "wes@roiblocks.com"], ["Kelly Stone", "kelly@roiblocks.com"]],
     "paid_cc": [["Manjunath Sir", "manjunath@mtreh.com"], ["Shivansh", "shivansh@mtreh.com"]],
@@ -221,8 +222,15 @@ class BillMail:
         return {"to": to, "cc": cc, "subject": subject, "html": _wrap(parts), "text": "\n".join(text)}
 
     # ---------------------------------------------------------------- the tick
-    def on_step(self, r: Dict[str, Any], step: str, done: bool, user: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Called after a box is ticked or unticked. Queues the email, or cancels it if it has not gone yet."""
+    def recipients(self) -> Dict[str, Dict[str, List[str]]]:
+        """Who each email goes to, for the question the page asks before sending."""
+        s = self.settings()
+        return {"ready_to_pay": {"to": [n for n, _ in _pairs(s["ready_to"])], "cc": []},
+                "paid": {"to": [n for n, _ in _pairs(s["paid_to"])], "cc": [n for n, _ in _pairs(s["paid_cc"])]}}
+
+    def on_step(self, r: Dict[str, Any], step: str, done: bool, user: Dict[str, Any], *, wait: float = 20.0) -> Optional[Dict[str, Any]]:
+        """Called after a box is ticked or unticked. A tick sends the email at once; an untick
+        cancels an email that has not managed to go yet."""
         if step not in SENDS_ON:
             return None
         s = self.settings()
@@ -239,13 +247,45 @@ class BillMail:
             mail = self.compose(r, step, user.get("name") or user.get("user_id") or "someone")
             if not mail["to"]:
                 return {"status": "not_sent", "why": "no recipient is set"}
-            send_after = now() + timedelta(seconds=max(0, int(s.get("hold_seconds", 120))))
-            self.outbox().queue(kind=KIND, ref=ref, to=mail["to"], cc=mail["cc"], subject=mail["subject"], html=mail["html"], text=mail["text"],
-                                send_after=send_after, meta={"bill_id": r["bill_id"], "step": step, "property_id": r.get("property_id"), "by": user.get("user_id")})
+            # On the outbox first (that is what makes it one email per bill per step, and what keeps
+            # it for a retry). It is marked not-before five minutes from now only so the background
+            # sender leaves it alone while we send it ourselves, right here.
+            q = self.outbox().queue(kind=KIND, ref=ref, to=mail["to"], cc=mail["cc"], subject=mail["subject"], html=mail["html"], text=mail["text"],
+                                    send_after=now() + timedelta(minutes=5),
+                                    meta={"bill_id": r["bill_id"], "step": step, "property_id": r.get("property_id"), "by": user.get("user_id")})
         except Exception as exc:
             logger.exception("bill email for %s could not be queued", ref)
             return {"status": "failed", "why": str(exc)[:200]}
-        return self.state(r["bill_id"]).get(step)
+        if q.get("status") in ("sent", "replied"):
+            return {**(self.state(r["bill_id"]).get(step) or {}), "now": "already_sent"}
+        return {**self.send_now(q["outbox_id"], wait=wait), **{k: v for k, v in (self.state(r["bill_id"]).get(step) or {}).items() if k != "status"}}
+
+    def send_now(self, outbox_id: str, *, wait: float = 20.0) -> Dict[str, Any]:
+        """Send one queued email immediately. Waits up to ``wait`` seconds for the mail service;
+        if it has not answered by then the send carries on behind the scenes."""
+        import threading
+        ob = self.outbox()
+        doc = ob.coll.find_one({"outbox_id": outbox_id}, {"_id": 0, "outbox_id": 1, "subject": 1, "to": 1, "status": 1})
+        if not doc:
+            return {"status": "failed", "now": "failed", "why": "the email is not on the outbox"}
+        result: Dict[str, Any] = {}
+
+        def work() -> None:
+            try:
+                result.update(ob.send_one(doc) or {})
+            except Exception as exc:                     # the connection itself failed: it stays queued for the retry
+                logger.warning("bill email %s: send failed, left for retry: %s", outbox_id, exc)
+                result.update(status="queued", error=str(exc)[:200])
+                ob.coll.update_one({"outbox_id": outbox_id}, {"$set": {"error": str(exc)[:300], "last_attempt_at": now()}, "$inc": {"attempts": 1}})
+
+        t = threading.Thread(target=work, daemon=True, name=f"bill-mail-{outbox_id}")
+        t.start()
+        t.join(wait)
+        if t.is_alive():
+            return {"status": "queued", "now": "still_sending"}
+        if result.get("status") == "sent":
+            return {"status": "sent", "now": "sent"}
+        return {"status": result.get("status") or "queued", "now": "not_accepted", "why": str(result.get("error") or "")[:200]}
 
     def states(self, bill_ids: Sequence[int]) -> Dict[int, Dict[str, Dict[str, Any]]]:
         """For the Bills page: what happened to each bill's emails (waiting to go, sent, cancelled)."""
