@@ -16,9 +16,14 @@ import { ago, cn, fmtDate } from "@/lib/utils";
 import { errText, type Bill } from "@/lib/brain";
 
 type Mark = { at: string; by?: string; by_name?: string } | null | undefined;
+type MailState = { status?: string; send_after?: string | null; sent_at?: string | null; to?: string[]; cc?: string[]; error?: string | null };
+
+/* Every time on this page is US Eastern, the same as in the emails the page sends. */
+const et = (iso?: string | null) => (iso ? new Date(iso).toLocaleString("en-US", { timeZone: "America/New_York", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }) + " ET" : "");
+const etTime = (iso?: string | null) => (iso ? new Date(iso).toLocaleString("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "2-digit" }) + " ET" : "");
 type Row = {
   bill_id: number; property_id?: string; property: string; number?: string; title?: string; pay_to?: string; amount?: number | null;
-  bill_date?: string | null; bill_day?: string | null; due_day?: string | null; past_due?: boolean; buildertrend_status?: string; in_buildertrend?: boolean;
+  bill_date?: string | null; bill_moment?: string | null; mail?: Record<string, MailState>; bill_day?: string | null; due_day?: string | null; past_due?: boolean; buildertrend_status?: string; in_buildertrend?: boolean;
   approvers?: string[]; line_items?: Bill["line_items"]; created_by?: string; documents?: number; steps: Record<string, Mark>;
 };
 type Resp = { view: "open" | "paid"; steps: { key: string; label: string }[]; rows: Row[]; pulled_at?: string | null;
@@ -51,15 +56,16 @@ export default function BillsPage() {
     qc.setQueryData<Resp>(key, (cur) => cur ? { ...cur, rows: cur.rows.map((x) => x.bill_id === r.bill_id ? { ...x, steps: { ...x.steps, [step]: done ? { at: nowIso(), by_name: "you" } : null } } : x) } : cur);
     try {
       await api.post(`/brain/bills/${r.bill_id}/steps`, { step, done });
-      if (step === "paid" && done) toast.success(`Marked paid — ${took(r.bill_date, nowIso()) || "same day"} from the bill date`);
+      if (step === "paid" && done) toast.success(`Marked paid — ${took(r.bill_moment || r.bill_date, nowIso()) || "same day"} from the bill date. Wes and Kelly are emailed in 2 minutes.`);
+      if (step === "ready_to_pay" && done) toast.success("Ready to pay — JP Sir is emailed in 2 minutes. Untick to stop it.");
     } catch (e) { toast.error(errText(e)); }
     qc.invalidateQueries({ queryKey: ["brain", "bills"] });
     qc.invalidateQueries({ queryKey: ["brain", "counts"] });
   };
 
   const total = rows.reduce((a, r) => a + (r.amount || 0), 0);
-  const oldest = rows.reduce((m, r) => Math.max(m, daysOpen(r.bill_date)), 0);
-  const paidTimes = rows.map((r) => (r.steps.paid && r.bill_date ? new Date(r.steps.paid.at).getTime() - new Date(r.bill_date).getTime() : null)).filter((x): x is number => x != null && x >= 0);
+  const oldest = rows.reduce((m, r) => Math.max(m, daysOpen(r.bill_moment || r.bill_date)), 0);
+  const paidTimes = rows.map((r) => (r.steps.paid && (r.bill_moment || r.bill_date) ? new Date(r.steps.paid.at).getTime() - new Date((r.bill_moment || r.bill_date)!).getTime() : null)).filter((x): x is number => x != null && x >= 0);
   const avgDays = paidTimes.length ? paidTimes.reduce((a, b) => a + b, 0) / paidTimes.length / 86_400_000 : null;
 
   return (
@@ -92,7 +98,7 @@ export default function BillsPage() {
             : rows.length === 0 ? <div className="px-4 py-8 text-[13px] text-muted text-center">{view === "open" ? "No bill is in review in Buildertrend, and none is part-way through." : "Tick “Paid” on a bill and it moves here with its times."}</div>
               : rows.map((r) => {
                 const paid = r.steps.paid;
-                const days = daysOpen(r.bill_date);
+                const days = daysOpen(r.bill_moment || r.bill_date);
                 return (
                   <div key={r.bill_id} className="border-b border-line/70 last:border-0">
                     <div className={cn("grid gap-3 px-4 py-2.5 items-start", COLS)}>
@@ -117,15 +123,18 @@ export default function BillsPage() {
                             <Checkbox checked={!!m} onCheckedChange={(v) => tick(r, s.key, v)} size={18} label={`${s.label} — ${r.title || r.number}`} className="rounded-md" />
                             {m && (
                               <div className="mt-1 text-[10.5px] leading-tight text-muted">
-                                <div className="tnum">{fmtDate(m.at, "d MMM, HH:mm")}</div>
-                                <div className="text-faint">{took(r.bill_date, m.at) ? `+${took(r.bill_date, m.at)}` : ""}{m.by_name ? ` · ${m.by_name.replace(/ Sir$/, "")}` : ""}</div>
+                                <div className="tnum">{et(m.at)}</div>
+                                <div className="text-faint">{took(r.bill_moment || r.bill_date, m.at) ? `+${took(r.bill_moment || r.bill_date, m.at)}` : ""}{m.by_name ? ` · ${m.by_name.replace(/ Sir$/, "")}` : ""}</div>
+                                {r.mail?.[s.key]?.status === "queued" && <div className="text-high">email to {(r.mail[s.key].to || []).join(", ")} goes at {etTime(r.mail[s.key].send_after)} — untick to stop it</div>}
+                                {(r.mail?.[s.key]?.status === "sent" || r.mail?.[s.key]?.status === "replied") && <div className="text-good">emailed {(r.mail[s.key].to || []).join(", ")} {etTime(r.mail[s.key].sent_at)}</div>}
+                                {r.mail?.[s.key]?.status === "needs_consent" && <div className="text-critical">email not sent: the mailbox needs to allow sending</div>}
                               </div>
                             )}
                           </div>
                         );
                       })}
                       <div className="text-right text-[12.5px] tnum">
-                        {paid ? <><div className="font-semibold text-good">{took(r.bill_date, paid.at) || "—"}</div><div className="text-[10.5px] text-faint">bill date to paid</div></>
+                        {paid ? <><div className="font-semibold text-good">{took(r.bill_moment || r.bill_date, paid.at) || "—"}</div><div className="text-[10.5px] text-faint">bill date to paid</div></>
                           : <><div className={cn("font-semibold", days > 14 ? "text-critical" : days > 7 ? "text-high" : "text-fg")}>{days} day{days === 1 ? "" : "s"}</div><div className="text-[10.5px] text-faint">open so far</div></>}
                       </div>
                     </div>
@@ -143,6 +152,7 @@ export default function BillsPage() {
         </p>
       )}
       <p className="mt-2.5 text-[11px] text-faint leading-relaxed">
+        Ticking “Ready to pay” emails JP Sir, and ticking “Paid” emails Wes and Kelly (copy Manjunath Sir and Shivansh), from rakesh@mtreh.com, two minutes after the tick. All times are US Eastern.
         A bill appears here when Buildertrend shows it in review, and stays until it is ticked paid. Each tick records the time and who made it; “+2d 3h” is the time since the bill date. Unticking a box removes its time.
       </p>
     </div>

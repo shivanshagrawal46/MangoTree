@@ -578,3 +578,83 @@ def test_only_properties_with_new_logs_are_read_again_after_a_pull(monkeypatch):
     out = sitework.after_pull(None)
     assert read == ["durham_st"] and out["properties_with_new_logs"] == ["durham_st"] and out["cost_usd"] == 0.5
     assert sitework.after_pull(None)["properties_with_new_logs"] == []           # the pull is marked: not read twice
+
+
+# ------------------------------------------------- bill emails: Eastern time, sent by the tick, never twice
+def test_eastern_time_and_the_time_a_bill_took():
+    from mangotree.core import eastern
+    tick = datetime(2026, 11, 12, 21, 10, tzinfo=timezone.utc)                 # a tick, stored in UTC
+    assert eastern.label(eastern.to_et(tick)) == "12 Nov 2026, 4:10 PM EST"
+    assert eastern.label(eastern.to_et(datetime(2026, 7, 1, 16, 0, tzinfo=timezone.utc))) == "1 Jul 2026, 12:00 PM EDT"   # summer is EDT, not EST
+    bill = datetime(2026, 11, 11, 18, 3, 0, tzinfo=timezone.utc)                # Buildertrend's wall clock, stored as it came
+    at = eastern.wall_clock_et(bill)
+    assert eastern.label(at) == "11 Nov 2026, 6:03 PM EST"                      # read as Eastern, not shifted five hours
+    assert eastern.took(at, eastern.to_et(tick)) == "22 hours 7 minutes"
+    assert eastern.took(at, at + timedelta(days=2, hours=5, minutes=30)) == "2 days 5 hours"
+    assert eastern.took(at, at + timedelta(minutes=12)) == "12 minutes" and eastern.label(None) == "not recorded"
+
+
+def _bill_mail(monkeypatch):
+    import mongomock
+    from mangotree.brain import billmail as bm
+    from mangotree.mail.outbox import Outbox
+
+    class _M:
+        db = mongomock.MongoClient().db
+
+    class _Store:
+        def setting(self, key, default=None):
+            return default
+
+    mail = bm.BillMail(_M(), _Store(), outbox=Outbox(_M()))
+    monkeypatch.setattr(bm.BillMail, "property_rows", lambda self, pid: [("Address", "1631 N Durham St"), ("RKB invested", "$25,000.00")])
+    monkeypatch.setattr(bm.BillMail, "property_bill_rows", lambda self, pid, this: ([("Billed in Buildertrend", "$67,050.23 across 16 bills")], []))
+    row = {"bill_id": 77, "property_id": "durham_st", "number": "BILL-0018-PO-0002", "title": "General Remodel / Repair-5 (Contractor)", "pay_to": "Tutt Painting and Remodeling LLC",
+           "amount": 7531.88, "bill_date": datetime(2026, 11, 11, 18, 3, tzinfo=timezone.utc), "line_items": [{"title": "Framing", "amount": 7531.88, "cost_code": "07 - Framing"}],
+           "steps": {"manju_approved": {"at": datetime(2026, 11, 12, 14, 15, tzinfo=timezone.utc), "by_name": "Manjunath Sir"}, "team_reviewed": None,
+                     "ready_to_pay": {"at": datetime(2026, 11, 12, 20, 0, tzinfo=timezone.utc), "by_name": "Rakesh Sir"},
+                     "paid": {"at": datetime(2026, 11, 12, 21, 10, tzinfo=timezone.utc), "by_name": "Rakesh Sir"}}}
+    return mail, row
+
+
+def test_ready_to_pay_emails_jp_sir_with_the_bill_and_the_property(monkeypatch):
+    mail, row = _bill_mail(monkeypatch)
+    m = mail.compose(row, "ready_to_pay", "Rakesh Sir")
+    assert m["to"] == [("JP Sir", "jp@mtreh.com")] and m["cc"] == []
+    assert m["subject"].startswith("Ready to pay — General Remodel / Repair-5 (Contractor) — ") and "$7,531.88" in m["subject"]
+    for piece in ("$7,531.88", "11 Nov 2026, 6:03 PM EST", "Tutt Painting and Remodeling LLC", "Framing", "THE PROPERTY", "RKB invested", "$25,000.00",
+                  "12 Nov 2026, 9:15 AM EST — Manjunath Sir", "ticked by Rakesh Sir"):
+        assert piece in m["text"], piece
+    import re
+    assert re.search(r"Team reviewed\s+not recorded", m["text"])               # a step nobody ticked is said to be missing, not left out
+
+
+def test_paid_emails_wes_and_kelly_with_every_time_in_eastern_and_how_long_it_took(monkeypatch):
+    mail, row = _bill_mail(monkeypatch)
+    m = mail.compose(row, "paid", "Rakesh Sir")
+    assert [a for _, a in m["to"]] == ["wes@roiblocks.com", "kelly@roiblocks.com"] and [a for _, a in m["cc"]] == ["manjunath@mtreh.com", "shivansh@mtreh.com"]
+    assert m["text"].startswith("Wes, Kelly, this bill has been paid.")
+    for piece in ("BILL-0018-PO-0002", "$7,531.88", "Bill date     11 Nov 2026, 6:03 PM EST", "Paid          12 Nov 2026, 4:10 PM EST", "Paid within   22 hours 7 minutes of the bill date",
+                  "Ready to pay         12 Nov 2026, 3:00 PM EST — Rakesh Sir"):
+        assert piece in m["text"], piece
+    assert "UTC" not in m["text"] and "RKB invested" not in m["text"]            # Eastern only; the property's money is not sent to the contractor
+
+
+def test_a_tick_queues_one_email_held_two_minutes_and_an_untick_in_time_stops_it(monkeypatch):
+    mail, row = _bill_mail(monkeypatch)
+    user = {"user_id": "rakesh", "name": "Rakesh Sir"}
+    assert mail.on_step(row, "manju_approved", True, user) is None                # only two steps send anything
+    st = mail.on_step(row, "paid", True, user)
+    assert st["status"] == "queued" and st["to"] == ["Wes Stone", "Kelly Stone"]
+    held = mail.outbox().coll.find_one({"ref": "77:paid"})
+    assert 100 <= (held["send_after"] - held["queued_at"].replace(tzinfo=None) if held["send_after"].tzinfo is None else held["send_after"] - held["queued_at"]).total_seconds() <= 130
+    mail.on_step(row, "paid", True, user)                                         # a second tick does not queue a second email
+    assert mail.outbox().coll.count_documents({"ref": "77:paid"}) == 1
+    assert mail.on_step(row, "paid", False, user) == {"status": "cancelled"}      # unticked before it went
+    assert mail.outbox().coll.find_one({"ref": "77:paid"})["status"] == "cancelled"
+    mail.on_step(row, "paid", True, user)                                         # ticked again: the email is queued afresh
+    mail.outbox().coll.update_one({"ref": "77:paid", "status": "queued"}, {"$set": {"status": "sent"}})
+    mail.on_step(row, "paid", False, user); mail.on_step(row, "paid", True, user)  # once it has gone, it is never sent again
+    assert mail.outbox().coll.count_documents({"ref": "77:paid", "status": {"$in": ["queued", "sent"]}}) == 1
+    hold = dict(row, bill_id=78, title="General Remodel / Repair-5 (Hold-back)")
+    assert mail.on_step(hold, "paid", True, user)["status"] == "not_sent" and mail.outbox().coll.count_documents({"ref": "78:paid"}) == 0

@@ -36,6 +36,7 @@ from . import snapshot
 from .buildertrend import Buildertrend
 from .sitework import SiteWork
 from .billtrack import STEPS, BillTracker
+from .billmail import BillMail
 from .store import BrainStore, active_property_ids, all_file_ids, name_of, now
 from .updater import Updater
 
@@ -180,19 +181,40 @@ def install(app: FastAPI, mongo: Mongo, jobs) -> None:
     bt = Buildertrend(mongo)
     sitework = SiteWork(mongo, store)
     billtrack = BillTracker(mongo)
+    billmail = BillMail(mongo, store)
 
     @app.get("/brain/bills")
     @swr.cached("bills", fresh=15, keep=120, per_user=False)
     def brain_bills(view: str = "open", user=CurrentUser):
         """The contractor's bills RKB is handling, with RKB's own four steps and when each was done."""
         g = swr.gather(rows=lambda: billtrack.rows("paid" if view == "paid" else "open"), pulled=bt.last_pull, held=billtrack.held_back)
+        mails = billmail.states([r["bill_id"] for r in g["rows"]])
+        for r in g["rows"]:
+            r["mail"] = mails.get(r["bill_id"], {})
         return data.clean({"view": "paid" if view == "paid" else "open", "steps": [{"key": k, "label": l} for k, l in STEPS], "rows": g["rows"], "pulled_at": g["pulled"],
                            "held_back": g["held"]})
+
+    @app.get("/brain/bills/{bill_id}/mail-preview")
+    def brain_bill_mail_preview(bill_id: int, step: str = "paid", user=CurrentUser):
+        """What the automatic email for this bill and step would say. Nothing is sent or queued."""
+        row = next((r for v in ("open", "paid") for r in billtrack.rows(v) if r["bill_id"] == bill_id), None)
+        if not row:
+            raise HTTPException(404, "That bill is not on the Bills page.")
+        try:
+            m = billmail.compose(row, step, user.get("name") or "you")
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        return data.clean({"to": m["to"], "cc": m["cc"], "subject": m["subject"], "text": m["text"], "html": m["html"]})
 
     @app.post("/brain/bills/{bill_id}/steps")
     def brain_bill_step(bill_id: int, body: StepBody, user=CurrentUser):
         try:
-            return data.clean(billtrack.set_step(bill_id, body.step, body.done, user))
+            row = billtrack.set_step(bill_id, body.step, body.done, user)
+            # "Ready to pay" and "Paid" send their email by themselves (see brain/billmail.py); unticking
+            # before it has gone cancels it. A mail problem never undoes the tick.
+            row["mail_result"] = billmail.on_step(row, body.step, body.done, user)
+            row["mail"] = billmail.state(row["bill_id"])
+            return data.clean(row)
         except ValueError as exc:
             raise HTTPException(400, str(exc))
         except KeyError:

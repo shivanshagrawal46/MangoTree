@@ -27,6 +27,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+from mangotree.core import eastern
 from mangotree.storage.mongo import Mongo
 
 from .buildertrend import is_holdback
@@ -51,8 +52,9 @@ class BillTracker:
         return {
             "bill_id": b["bill_id"], "property_id": b.get("property_id"), "property": name_of(b["property_id"]) if b.get("property_id") else "—",
             "number": b.get("number"), "title": b.get("title"), "pay_to": b.get("pay_to"), "amount": b.get("amount"),
-            # The bill date as Buildertrend holds it (the moment the bill was entered), and as a calendar day.
-            "bill_date": b.get("invoice_date"), "bill_day": self._midday(b.get("invoice_date")), "due_day": self._midday(b.get("due_date")), "past_due": bool(b.get("past_due")),
+            # The bill date as Buildertrend holds it (its own wall-clock time, which is US Eastern), the true
+            # moment that is (so "time since the bill date" is right from any time zone), and the calendar day.
+            "bill_date": b.get("invoice_date"), "bill_moment": eastern.wall_clock_et(b.get("invoice_date")), "bill_day": self._midday(b.get("invoice_date")), "due_day": self._midday(b.get("due_date")), "past_due": bool(b.get("past_due")),
             "buildertrend_status": b.get("status"), "in_buildertrend": not b.get("_gone"), "approvers": b.get("approvers") or [],
             "line_items": b.get("line_items") or [], "created_by": b.get("created_by"), "documents": b.get("documents") or 0, "file_names": b.get("file_names") or [],
             "steps": {k: steps.get(k) for k in STEP_KEYS},
