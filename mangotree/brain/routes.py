@@ -66,6 +66,23 @@ class DraftPatch(BaseModel):
     cc: Optional[List[Dict[str, str]]] = None
 
 
+class SheetLineBody(BaseModel):
+    key: str
+    work_done: Optional[str] = None
+    note: Optional[str] = None
+
+
+class SheetFigureBody(BaseModel):
+    key: str
+    value: Optional[str] = None
+
+
+class FollowMarkBody(BaseModel):
+    key: str
+    state: str = "done"          # done | later | open
+    note: str = ""
+
+
 class StepBody(BaseModel):
     step: str
     done: bool = True
@@ -173,8 +190,20 @@ def install(app: FastAPI, mongo: Mongo, jobs) -> None:
     @swr.cached("counts", fresh=30, keep=300)
     def brain_counts(user=CurrentUser):
         """For the sidebar: how many replies are waiting, and which files exist."""
-        rows = list(store.files.find({}, {"_id": 0, "property_id": 1, "open_items.status": 1, "open_items.owner": 1}))
+        rows = list(store.files.find({}, {"_id": 0, "property_id": 1, "open_items.status": 1, "open_items.owner": 1,
+                                          "stage.stage": 1, "stage.recovery": 1, "stage.listed_date": 1}))
+        staged = [r for r in rows if r.get("stage")]
+        mine = ROLE_OWNER.get(user.get("role") or "")
+        try:
+            known = _follow_items(wait=False)
+            follow = followups.counts([i for i in known if not i.get("mark")]) if known is not None else {}
+        except Exception:
+            logger.exception("follow-up counts failed")
+            follow = {}
         return {"drafts": store.drafts.count_documents({"status": "ready"}), "bills": billtrack.open_count(),
+                "followups": (follow.get(mine) or {}).get("open") if mine else None, "followups_high": (follow.get(mine) or {}).get("high") if mine else None,
+                "groups": {r["property_id"]: snapshot.group_of(r["stage"]) for r in staged},
+                "market_days": {r["property_id"]: snapshot.days_on_market(r["stage"]) for r in staged if snapshot.group_of(r["stage"]) == "market"},
                 "open": {r["property_id"]: sum(1 for i in r.get("open_items") or [] if i.get("status") == "open" and i.get("owner") == "rakesh") for r in rows}}
 
     # ---------------------------------------------------------- properties
@@ -266,6 +295,96 @@ def install(app: FastAPI, mongo: Mongo, jobs) -> None:
     @swr.cached("site-bills", fresh=60, keep=900)
     def brain_site_bills(pid: str, user=CurrentUser):
         return data.clean(bt.bills_page(_file_id(pid)))
+
+    # ---------------------------------------------------------- the money sheet
+    from .moneysheet import MoneySheet
+    sheet = MoneySheet(mongo, store)
+
+    @app.get("/brain/properties/{pid}/sheet")
+    def brain_sheet(pid: str, user=CurrentUser):
+        """The proposal line by line with what is billed, paid and held back, and the deal's figures."""
+        return data.clean({**sheet.build(_file_id(pid)), "can": {"figures": user.get("role") in ("ceo", "accountant"),
+                                                              "lines": user.get("role") in ("ceo", "accountant", "operations")}})
+
+    @app.get("/brain/properties/{pid}/sheet.xlsx")
+    def brain_sheet_xlsx(pid: str, user=CurrentUser):
+        pid = _file_id(pid)
+        return Response(sheet.xlsx(pid), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        headers={"Content-Disposition": f'attachment; filename="money-sheet-{pid}.xlsx"'})
+
+    @app.post("/brain/properties/{pid}/sheet/line")
+    def brain_sheet_line(pid: str, body: SheetLineBody, user=CurrentUser):
+        try:
+            return data.clean(sheet.set_line(_file_id(pid), body.key, user, work_done=body.work_done, note=body.note))
+        except PermissionError as exc:
+            raise HTTPException(403, str(exc))
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+
+    @app.post("/brain/properties/{pid}/sheet/figure")
+    def brain_sheet_figure(pid: str, body: SheetFigureBody, user=CurrentUser):
+        try:
+            return data.clean(sheet.set_figure(_file_id(pid), body.key, body.value, user))
+        except PermissionError as exc:
+            raise HTTPException(403, str(exc))
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+
+    # ---------------------------------------------------------- follow-ups and the alert on Today
+    from .followlist import OWNERS, ROLE_OWNER, FollowUps
+    followups = FollowUps(mongo, store)
+
+    # The list is worked out from the records (a few reads per property). It is kept for a minute and
+    # shared by the page, the alert on Today and the count in the side panel. The side panel never
+    # waits for it: it shows the last count and has the list worked out again behind the scenes.
+    import threading
+    import time as _time
+    _follow: Dict[str, Any] = {"at": 0.0, "items": None, "busy": False}
+    _follow_lock = threading.Lock()
+
+    def _follow_build() -> List[Dict[str, Any]]:
+        try:
+            items = followups.build(include_put_aside=True)
+            _follow.update(at=_time.time(), items=items)
+            return items
+        finally:
+            _follow["busy"] = False
+
+    def _follow_items(wait: bool = True) -> Optional[List[Dict[str, Any]]]:
+        if _follow["items"] is not None and _time.time() - _follow["at"] < 60:
+            return _follow["items"]
+        with _follow_lock:
+            start = not _follow["busy"]
+            if start:
+                _follow["busy"] = True
+        if wait:
+            return _follow_build() if start else (_follow["items"] if _follow["items"] is not None else followups.build(include_put_aside=True))
+        if start:
+            threading.Thread(target=_follow_build, name="followups", daemon=True).start()
+        return _follow["items"]
+
+    @app.get("/brain/followups")
+    def brain_followups(user=CurrentUser):
+        """Who has to do what on the construction properties — worked out from the records each time."""
+        items = _follow_items()
+        open_items = [i for i in items if not i.get("mark")]
+        return data.clean({"items": items, "counts": followups.counts(open_items), "owners": OWNERS, "me": ROLE_OWNER.get(user.get("role") or ""),
+                           "message_for_wes": followups.message_for_wes(open_items), "properties": len(followups.construction())})
+
+    @app.post("/brain/followups/mark")
+    def brain_followup_mark(body: FollowMarkBody, user=CurrentUser):
+        try:
+            out = followups.mark(body.key, body.state, user, body.note)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        _follow["at"] = 0.0                      # the next look works the list out again
+        return data.clean(out)
+
+    @app.get("/brain/alerts")
+    @swr.cached("alerts", fresh=60, keep=600)
+    def brain_alerts(user=CurrentUser):
+        """New on the construction jobs since Buildertrend was last read, and what waits for this person."""
+        return data.clean(followups.alerts(user, items=[i for i in _follow_items() or [] if not i.get("mark")]))
 
     @app.get("/brain/properties/{pid}/arv")
     @swr.cached("property-arv", fresh=60, keep=900)

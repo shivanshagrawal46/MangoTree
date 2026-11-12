@@ -227,5 +227,5 @@ export function DraftRow({ draft, onOpen }: { draft: Draft; onOpen: () => void }
 
 export function DraftsLink({ count }: { count: number }) {
   if (!count) return null;
-  return <Link href="/drafts" className="text-xs text-accent hover:underline">All {count} drafts</Link>;
+  return <Link href="/replies" className="text-xs text-accent hover:underline">All {count} drafts</Link>;
 }

@@ -1,6 +1,6 @@
 """Live mail intake — the backfill's rule and pipeline, applied to what is new.
 
-Every ``MT_POLL_MINUTES`` (default 10) both mailboxes are asked for messages
+Every ``MT_POLL_MINUTES`` (default 5) both mailboxes are asked for messages
 newer than the last look, minus an overlap window so nothing falls between two
 polls. Each candidate goes through exactly the code the backfill used —
 ``EmailPipeline.process_raw_email`` — which applies the participant rule
@@ -34,7 +34,7 @@ from mangotree.core.logging import logger
 from mangotree.ingest.pipeline import EmailPipeline
 from mangotree.storage.mongo import Mongo
 
-POLL_MINUTES = int(os.environ.get("MT_POLL_MINUTES", "10"))
+POLL_MINUTES = int(os.environ.get("MT_POLL_MINUTES", "5"))
 #: Each poll looks back this far past the last successful poll, so clock skew and
 #: late-arriving mail cannot slip between two polls. Dedup makes overlap free.
 OVERLAP_MINUTES = 90

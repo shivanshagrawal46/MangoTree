@@ -783,3 +783,232 @@ def test_a_failed_send_is_retried_within_minutes(monkeypatch):
     assert s._due_outbox() is True                                                # a minute has passed: try again
     s._outbox.coll.update_one({"outbox_id": "ob-1"}, {"$set": {"attempts": 3}})
     assert s._due_outbox() is False                                               # third failure waits four minutes
+
+
+# ------------------------------------------------- the side panel's three lists, and days on the market
+def test_properties_sort_into_construction_market_and_non_performing():
+    from mangotree.brain.snapshot import days_on_market, group_of, stage_view
+    assert group_of({"stage": "construction", "recovery": False}) == "construction"
+    assert group_of({"stage": "closing"}) == "construction" and group_of(None) == "construction"
+    assert group_of({"stage": "listed"}) == "market" and group_of({"stage": "under_contract"}) == "market"
+    assert group_of({"stage": "listed", "recovery": True}) == "nonperforming"      # a foreclosure is non-performing even if listed
+    assert group_of({"stage": "sold_repaid"}) == "sold"
+    listed = datetime(2026, 10, 1)
+    today = datetime(2026, 11, 13, 3, 0, tzinfo=timezone.utc)                       # still 12 November in US Eastern
+    assert days_on_market({"stage": "listed", "listed_date": listed}, today) == 42
+    assert days_on_market({"stage": "listed", "listed_date": None}, today) is None  # no record of the date: no number
+    assert days_on_market({"stage": "construction", "listed_date": listed}, today) is None
+    v = stage_view({"stage": {"stage": "listed", "recovery": False, "listed_date": listed}})
+    assert v["group"] == "market" and v["on_market"] is True and v["days_on_market"] >= 42 and v["listed_date"].hour == 12
+
+
+# ------------------------------------------------- every model call starts from the firm's deal rules
+def test_the_deal_model_is_part_of_the_shared_core():
+    from mangotree.brain import prompts
+    from mangotree.brain.dealmodel import DEAL_MODEL
+    assert DEAL_MODEL in prompts.CORE
+    for rule in ("Months 1 to 6: the homeowner is charged no interest", "From month 7: interest accrues against the homeowner on the FULL note amount",
+                 "A construction draw pays 90% against completed work", "65% of ARV", "never to ROI Blocks", "WHAT STAYS INSIDE RKB", "NOT YET SETTLED"):
+        assert rule in prompts.CORE, rule
+
+
+def test_the_core_states_how_the_markup_is_shared_and_no_longer_says_no_profit_share():
+    from mangotree.brain import prompts
+    assert "off the top of the markup, RKB takes its two points and its interest for the" in prompts.CORE
+    assert "RKB gets 50% of the remainder; ROI Blocks gets 25% of it at the start and 25% after the" in prompts.CORE
+    assert "no profit share" not in prompts.CORE
+
+
+# ------------------------------------------------- the proposal, line by line, from Buildertrend's Estimate
+def test_an_estimate_is_stored_line_by_line_with_cost_markup_and_price(monkeypatch):
+    import mongomock
+    from mangotree.brain.buildertrend import Buildertrend
+
+    class _M:
+        db = mongomock.MongoClient().db
+
+    bt = Buildertrend(_M())
+    monkeypatch.setattr(type(bt.estimates), "bulk_write", lambda self, ops, ordered=False: [self.update_one(o._filter, o._doc, upsert=True) for o in ops], raising=False)
+    bt.jobs.insert_one({"job_id": 45, "property_id": "durham_st"})
+
+    def line(t, code, cost, price, order):
+        return {"id": order, "itemTitle": t, "costCodeTitle": code, "builderCost": cost, "ownerPrice": price, "markupAmount": price - cost, "markupPercent": 55.5,
+                "quantity": 1, "unit": "EA", "unitCost": cost, "worksheetDisplayOrder": order, "hasRelatedPurchaseOrder": True}
+
+    ws = {"worksheetId": 9, "worksheetLocked": True, "lockedByName": "Kelly Stone", "defaultMarkup": 55.5, "formatData": [
+        {"title": "02 - Demolition", "displayOrder": 2, "lineItems": [line("Disposal", "02 - Demolition", 1500, 2332.5, 2), line("Demolition Labor", "02 - Demolition", 3000, 4665, 1)],
+         "subGroups": [{"title": "2.1 Interior", "displayOrder": 1, "lineItems": [line("Haul", "02 - Demolition", 100, 155.5, 3)]}]},
+        {"title": "01 - Permits", "displayOrder": 1, "lineItems": [line("Permits", "03 - Permits", 500, 777.5, 1)]}]}
+    r = bt.import_estimates({"estimates": {"45": ws, "99": ws}})
+    assert r["estimates"] == 1 and r["lines"] == 4 and r["unmatched"] == [99]
+    e = bt.estimate_of("durham_st")
+    assert [g["title"] for g in e["groups"]] == ["01 - Permits", "02 - Demolition", "2.1 Interior"] and e["groups"][2]["parent"] == "02 - Demolition"
+    assert [x["title"] for x in e["groups"][1]["lines"]] == ["Demolition Labor", "Disposal"]          # in the order the proposal lists them
+    assert e["totals"] == {"builder_cost": 5100.0, "price": 7930.5, "markup": 2830.5, "lines": 4} and e["locked"] is True and e["locked_by"] == "Kelly Stone"
+
+
+# ------------------------------------------------- the money sheet: proposal lines against the bills
+def _money_sheet(monkeypatch):
+    import mongomock
+    from mangotree.brain import moneysheet
+    from mangotree.brain.store import BrainStore
+
+    class _M:
+        db = mongomock.MongoClient().db
+
+    m = _M()
+    ms = moneysheet.MoneySheet(m, BrainStore(m))
+    monkeypatch.setattr(moneysheet.snapshot, "numbers", lambda store, pid, file: {
+        "main": [{"key": "invested", "value": "$25,000.00", "note": "to Sep 30, 2026"}, {"key": "note_amount", "value": None}, {"key": "maturity", "value": None}],
+        "extra": {"closing": {"value": "2026-09-01"}}, "in_workbooks": True})
+    est = lambda i, title, code, cost: {"line_id": i, "title": title, "cost_code": code, "builder_cost": cost, "price": round(cost * 1.5, 2)}
+    m.db["bt_estimates"].insert_one({"property_id": "durham_st", "job_id": 45, "locked": True, "totals": {"builder_cost": 17700.0, "price": 26550.0, "markup": 8850.0, "lines": 3},
+                                     "groups": [{"title": "03 - Structural", "lines": [est(1, "Framing/Masonry", "44- Carpentry", 12000.0), est(2, "Framing/Masonry", "44- Carpentry", 2700.0)]},
+                                                {"title": "02 - Demolition", "lines": [est(3, "Demolition Labor", "02 - Demolition", 3000.0)]}]})
+    li = lambda title, code, unit, amount, variance=None: {"title": title, "cost_code": code, "unit_cost": unit, "amount": amount, "variance": variance}
+    lines = lambda f: [li("Framing/Masonry", "44- Carpentry", 12000.0, 6000.0 * f), li("Framing/Masonry", "44- Carpentry", 2700.0, 0.0), li("Demolition Labor", "02 - Demolition", 3000.0, 3000.0 * f),
+                       li("Roof Framing", "51 - Roofing", 3600.0, 3600.0 * f, "72 - Customer change order")]
+    m.db["bt_bills"].insert_many([
+        {"bill_id": 1, "property_id": "durham_st", "title": "Repair-1 (Contractor)", "amount": 11340.0, "status": "Paid", "holdback": False, "invoice_date": datetime(2026, 10, 1), "line_items": lines(0.9)},
+        {"bill_id": 2, "property_id": "durham_st", "title": "Repair-1 (Hold-back)", "amount": 1260.0, "status": "Ready for payment", "holdback": True, "invoice_date": datetime(2026, 10, 1), "line_items": lines(0.1)},
+        {"bill_id": 3, "property_id": "durham_st", "title": "Windows (materials)", "amount": 954.0, "status": "In review", "holdback": False, "invoice_date": datetime(2026, 10, 28),
+         "line_items": [li("", "06 - Subcontractor Services", 954.0, 954.0)]},
+        {"bill_id": 4, "property_id": "durham_st", "title": "Old bill", "amount": 100.0, "status": "Paid", "holdback": False, "invoice_date": datetime(2026, 9, 5)},
+    ])
+    return ms, m
+
+
+def test_the_sheet_puts_every_bill_line_on_its_proposal_row_and_adds_up(monkeypatch):
+    ms, m = _money_sheet(monkeypatch)
+    s = ms.build("durham_st", today=datetime(2027, 3, 11, tzinfo=timezone.utc))
+    rows = {(r["title"], r["proposal"]): r for r in s["rows"]}
+    big = rows[("Framing/Masonry", 12000.0)]                                        # two lines share a name: told apart by their price
+    assert (big["billed"], big["paid"], big["held_back"], big["left"], big["billed_percent"]) == (6000.0, 5400.0, 600.0, 6000.0, 50)
+    assert rows[("Framing/Masonry", 2700.0)]["billed"] == 0 and rows[("Demolition Labor", 3000.0)]["left"] == 0
+    co = next(r for r in s["rows"] if r["kind"] == "change_order")
+    assert (co["title"], co["change_orders"], co["revised"], co["billed"], co["left"]) == ("Roof Framing", 3600.0, 3600.0, 3600.0, 0.0)
+    other = next(r for r in s["rows"] if r["kind"] == "other")
+    assert other["in_review"] == 954.0 and other["left"] == 0.0                     # billed outside the proposal: shown, never netted off it
+    t = s["totals"]
+    assert t["proposal"] == 17700.0 and t["change_orders"] == 3600.0 and t["revised"] == 21300.0
+    assert t["billed"] == 13554.0 == round(sum(b["amount"] for b in s["bills"]) - 100.0, 2)   # every bill that has lines is in the columns...
+    assert "1 bill(s) have not had their lines read" in s["notes"][0]                # ...and the one without lines is named, not hidden
+    assert t["paid"] + t["held_back"] + t["in_review"] + t["to_pay"] == t["billed"]
+    mk = s["deal"]["markup"]                                                         # the firm's rule: points and six months' interest on the builder cost, then halves
+    assert (mk["points"], mk["six_months_interest"], mk["remainder"], mk["rkb_half"], mk["roi_at_start"]) == (354.0, 1239.0, 7257.0, 3628.5, 1814.25)
+    it = s["deal"]["interest"]
+    assert it["starts"].strftime("%Y-%m-%d") == "2027-03-01" and it["why_not"] == "the amount on the note is not on record" and it["accrued"] is None
+
+
+def test_only_jp_and_rakesh_change_a_figure_and_the_change_is_recorded(monkeypatch):
+    import pytest
+    ms, m = _money_sheet(monkeypatch)
+    jp, manju = {"user_id": "jp", "name": "JP Sir", "role": "accountant"}, {"user_id": "manjunath", "name": "Manjunath Sir", "role": "operations"}
+    with pytest.raises(PermissionError):
+        ms.set_figure("durham_st", "note_amount", "156744", manju)
+    with pytest.raises(ValueError):
+        ms.set_figure("durham_st", "rate", "140", jp)
+    ms.set_figure("durham_st", "note_amount", "$156,744.00", jp)
+    ms.set_figure("durham_st", "rate", "18", jp)
+    s = ms.build("durham_st", today=datetime(2027, 3, 11, tzinfo=timezone.utc))
+    f = s["figures"]["note_amount"]
+    assert f["value"] == 156744.0 and f["system"] is None and f["set_by"] == "JP Sir"
+    it = s["deal"]["interest"]                                                       # six months free, then daily on the FULL note at the note's rate
+    assert it["daily"] == round(156744.0 * 0.18 / 365, 2) and it["days"] == 10 and it["accrued"] == round(it["daily"] * 10, 2)
+    assert s["figures"]["funded"]["value"] == 25000.0 and "workbook" in s["figures"]["funded"]["source"]
+    key = next(r["key"] for r in s["rows"] if r["title"] == "Demolition Labor")
+    ms.set_line("durham_st", key, manju, work_done="100", note="checked on site 9 Mar")
+    with pytest.raises(PermissionError):
+        ms.set_line("durham_st", key, {"user_id": "wes", "role": "contractor"}, note="x")
+    s = ms.build("durham_st")
+    row = next(r for r in s["rows"] if r["key"] == key)
+    assert (row["work_done"], row["note"], row["input_by"]) == (100, "checked on site 9 Mar", "Manjunath Sir")
+    assert [h["what"] for h in s["history"]] == ["line", "figure", "figure"]          # newest first
+    ms.set_figure("durham_st", "note_amount", "", jp)                                # cleared: back to the system's own reading
+    assert ms.build("durham_st")["figures"]["note_amount"]["value"] is None
+    assert len(ms.xlsx("durham_st")) > 4000
+
+
+# ------------------------------------------------- follow-ups: worked out from the records, never kept by hand
+def _follow(monkeypatch):
+    import mongomock
+    from mangotree.brain import followlist, moneysheet
+    from mangotree.brain.store import BrainStore
+
+    class _M:
+        db = mongomock.MongoClient().db
+
+    m = _M()
+    monkeypatch.setattr(followlist, "name_of", lambda pid: {"durham_st": "1631 North Durham St", "marmon": "3704 Marmon Ave"}.get(pid, pid))
+    monkeypatch.setattr(moneysheet.snapshot, "numbers", lambda store, pid, file: {
+        "main": [{"key": "invested", "value": "$25,000.00"}, {"key": "note_amount", "value": None}, {"key": "maturity", "value": "2027-01-10"}],
+        "extra": {"closing": {"value": "2026-09-01"}}, "in_workbooks": True})
+    fu = followlist.FollowUps(m, BrainStore(m))
+    m.db["property_files"].insert_many([{"property_id": "durham_st", "stage": {"stage": "construction", "recovery": False}},
+                                        {"property_id": "marmon", "stage": {"stage": "construction", "recovery": False}},
+                                        {"property_id": "tahona", "stage": {"stage": "listed", "recovery": False}}])
+    m.db["bt_jobs"].insert_one({"job_id": 45, "property_id": "durham_st"})
+    m.db["bt_estimates"].insert_one({"property_id": "durham_st", "job_id": 45, "locked": False, "totals": {"builder_cost": 3000.0, "price": 4500.0},
+                                     "groups": [{"title": "02 - Demolition", "lines": [{"line_id": 3, "title": "Demolition Labor", "cost_code": "02 - Demolition", "builder_cost": 3000.0, "price": 4500.0}]}]})
+    li = lambda amount, variance=None, title="Demolition Labor", unit=3000.0: {"title": title, "cost_code": "02 - Demolition", "unit_cost": unit, "amount": amount, "variance": variance}
+    day = lambda d: datetime(2026, 11, d)
+    m.db["bt_bills"].insert_many([
+        {"bill_id": 1, "property_id": "durham_st", "title": "Repair-1 (Contractor)", "amount": 2700.0, "status": "Ready for payment", "holdback": False, "invoice_date": day(1), "line_items": [li(2700.0)]},
+        {"bill_id": 2, "property_id": "durham_st", "title": "Repair-1 (Hold-back)", "amount": 300.0, "status": "Ready for payment", "holdback": True, "invoice_date": day(1), "line_items": [li(300.0)]},
+        {"bill_id": 3, "property_id": "durham_st", "title": "Repair-2 (Contractor)", "amount": 900.0, "status": "In review", "in_review": True, "holdback": False, "invoice_date": day(9), "created": day(11),
+         "line_items": [li(900.0)]},
+        {"bill_id": 4, "property_id": "durham_st", "title": "Roof framing", "amount": 500.0, "status": "Paid", "holdback": False, "invoice_date": day(2),
+         "line_items": [li(500.0, "72 - Customer change order", "Roof Framing", 500.0)]},
+    ])
+    m.db["bt_daily_logs"].insert_one({"log_id": 1, "property_id": "durham_st", "date": day(1)})
+    return fu, m
+
+
+def test_follow_ups_come_from_the_records_and_each_has_one_owner(monkeypatch):
+    fu, m = _follow(monkeypatch)
+    today = datetime(2026, 11, 13, 12, tzinfo=timezone.utc)
+    items = fu.build(today=today)
+    by = {i["kind"]: i for i in items}
+    assert {i["property_id"] for i in items} == {"durham_st", "marmon"}                 # only the properties under construction
+    assert by["approve_bill"]["owner"] == "manju" and by["approve_bill"]["days"] == 4 and by["approve_bill"]["level"] == "high"
+    assert by["pay_bills"]["owner"] == "jp" and by["pay_bills"]["amount"] == 2700.0     # the hold-back is not a bill to pay now
+    assert by["overbilled"]["owner"] == "manju" and by["overbilled"]["amount"] == 900.0  # 3,900 billed on a 3,000 line
+    assert by["change_order"]["owner"] == "jp" and by["figures"]["owner"] == "jp" and "amount on the note" in by["figures"]["title"]
+    assert by["proposal_open"]["owner"] == "wes" and by["no_log"]["owner"] == "wes" and by["no_log"]["days"] == 12
+    assert by["maturity"]["owner"] == "rakesh" and "in 58 days" in by["maturity"]["title"]
+    assert by["no_job"]["property_id"] == "marmon"
+    msg = fu.message_for_wes(items)
+    assert "1631 North Durham St:" in msg and "No daily log for 12 days" in msg and "3704 Marmon Ave:" in msg and "Approve or query" not in msg
+
+
+def test_a_follow_up_goes_by_itself_and_one_put_aside_returns_when_things_change(monkeypatch):
+    fu, m = _follow(monkeypatch)
+    today = datetime(2026, 11, 13, 12, tzinfo=timezone.utc)
+    jp = {"user_id": "jp", "name": "JP Sir", "role": "accountant"}
+    key = next(i["key"] for i in fu.build(today=today) if i["kind"] == "pay_bills")
+    fu.mark(key, "done", jp, "wire sent 12 Nov")
+    assert "pay_bills" not in {i["kind"] for i in fu.build(today=today)}                # put aside: not on the list
+    aside = next(i for i in fu.build(today=today, include_put_aside=True) if i["key"] == key)
+    assert aside["mark"]["state"] == "done" and aside["mark"]["by_name"] == "JP Sir"
+    m.db["bill_tracking"].insert_one({"bill_id": 3, "steps": {"manju_approved": {"at": datetime(2026, 11, 13), "by_name": "Manjunath Sir"}}})
+    items = fu.build(today=today)
+    assert "approve_bill" not in {i["kind"] for i in items}                             # approved: that item went by itself
+    again = next(i for i in items if i["kind"] == "pay_bills")
+    assert again["key"] != key and again["amount"] == 3600.0                            # a new bill is waiting: JP's item is back
+    m.db["bt_bills"].update_many({"bill_id": {"$in": [1, 3]}}, {"$set": {"status": "Paid"}})
+    assert "pay_bills" not in {i["kind"] for i in fu.build(today=today)}                # paid in Buildertrend: nothing to chase
+    a = fu.alerts({"role": "operations"}, today=today)
+    assert a["mine"]["owner"] == "manju" and a["mine"]["open"] == 1 and a["counts"]["wes"]["open"] == 3
+    s = fu.sheet.build("durham_st", today=today)
+    assert s["payments"]["paid"] == 4100.0 and s["payments"]["paid_count"] == 3 and s["payments"]["held_back"] == 300.0 and s["payments"]["to_pay"] == 0.0
+
+
+def test_two_proposal_lines_with_the_same_name_and_price_share_the_bills(monkeypatch):
+    ms, m = _money_sheet(monkeypatch)
+    m.db["bt_estimates"].update_one({"property_id": "durham_st"}, {"$push": {"groups": {"title": "10 - Bath", "lines": [
+        {"line_id": 7, "title": "Toilet", "cost_code": "14.1 Bath", "builder_cost": 610.0, "unit_cost": 305.0, "price": 900.0},
+        {"line_id": 8, "title": "Toilet", "cost_code": "14.1 Bath", "builder_cost": 305.0, "unit_cost": 305.0, "price": 450.0}]}}})
+    m.db["bt_bills"].insert_one({"bill_id": 9, "property_id": "durham_st", "title": "Bath", "amount": 915.0, "status": "Paid", "holdback": False, "invoice_date": datetime(2026, 10, 9),
+                                 "line_items": [{"title": "Toilet", "cost_code": "14.1 Bath", "unit_cost": 305.0, "amount": 305.0}] * 3})
+    rows = [r for r in ms.build("durham_st")["rows"] if r["title"] == "Toilet"]
+    assert sorted((r["proposal"], r["billed"]) for r in rows) == [(305.0, 305.0), (610.0, 610.0)]

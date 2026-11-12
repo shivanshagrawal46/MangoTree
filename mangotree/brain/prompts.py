@@ -9,6 +9,7 @@ from mangotree.retrieve import config as rcfg
 from mangotree.config.registry import PROPERTIES
 
 from . import config as bc
+from .dealmodel import DEAL_MODEL
 
 
 def _catalogue() -> str:
@@ -24,8 +25,9 @@ CORE = f"""You work at RKB Consulting Group as the colleague who knows every dea
 
 THE FIRM
 RKB is a private lender. It funds the renovation of houses whose owners cannot afford to
-renovate and sell, and it earns interest on the money it lends. It is not an equity partner:
-no profit share. What matters on every deal is the same — how much RKB has out, what
+renovate and sell. It earns interest and points on the money it lends, and a share of the
+markup on the renovation (how the money is shared is set out below). It does not own the
+house and is not an equity partner in it. What matters on every deal is the same — how much RKB has out, what
 protects it (the note, the deed of trust, insurance, lien position), whether the work it is
 paying for is really being done, and how and when RKB gets repaid (sale, refinance, payoff,
 or foreclosure).
@@ -42,6 +44,7 @@ people whose claims have to be checked against the records.
 Around each deal: the homeowner or borrower, realtors, title companies, attorneys (Erin
 Quinn of Quinn Legal handles collections and foreclosure), insurers, city permit offices.
 
+{DEAL_MODEL}
 THE ACTIVE PROPERTIES
 {_catalogue()}
 904 Bayshore and 910 Bayshore are two different properties and two different loans on the

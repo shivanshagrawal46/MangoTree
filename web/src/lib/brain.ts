@@ -49,6 +49,8 @@ export type Stage = {
   stage: string; index: number; recovery: boolean; recovery_note?: string; closing_date?: string | null;
   construction_percent?: number | null; construction_expected?: string | null; construction_basis?: string;
   sale_expected?: string | null; sale_basis?: string; one_line?: string; read_at?: string; site_now?: string; last_log?: string | null;
+  /* On the market: the listing date a record gave (never worked out), and the days since. */
+  group?: "construction" | "market" | "nonperforming" | "sold"; on_market?: boolean; listed_date?: string | null; listed_basis?: string; days_on_market?: number | null;
   steps: { key: string; label: string; state: "done" | "current" | "ahead" }[];
 };
 

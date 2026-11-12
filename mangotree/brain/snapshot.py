@@ -263,6 +263,12 @@ From the property file and RKB's workbook rows below, say where this deal stands
   gives one (a schedule, a completion date somebody committed to). Say whose date it is
   and when they gave it in construction_basis. If no record gives a date, null — and say
   in construction_basis that no completion date is on record. Do not estimate.
+* listed_date — the date the house went on the market, ONLY if a record gives it (a
+  listing agreement, an MLS sheet, an email saying "listed today" or "went live on ..").
+  If it was taken off the market and listed again, give the date of the listing that is
+  live now. Null if the house is not on the market or no record gives the date. Say in
+  listed_basis, in one sentence, which record gives the date (or that none does) and the
+  asking price if a record states it. Do not work the date out from other dates.
 * sale_expected — the same rule for the sale or payoff: a closing date, a contract
   settlement date, a court date. Otherwise null, with sale_basis saying so.
 * one_line — where it stands in one plain sentence, including what is holding it up.
@@ -283,12 +289,13 @@ records is worse than no date. Dates as YYYY-MM-DD.
 SCHEMA = {
     "type": "object", "additionalProperties": False,
     "required": ["stage", "recovery", "recovery_note", "closing_date", "construction_percent", "construction_expected", "construction_basis",
-                 "sale_expected", "sale_basis", "one_line", "site_now"],
+                 "sale_expected", "sale_basis", "listed_date", "listed_basis", "one_line", "site_now"],
     "properties": {
         "stage": {"type": "string", "enum": list(STAGES)}, "recovery": {"type": "boolean"}, "recovery_note": {"type": "string"},
         "closing_date": {"type": ["string", "null"]}, "construction_percent": {"type": ["integer", "null"]},
         "construction_expected": {"type": ["string", "null"]}, "construction_basis": {"type": "string"},
-        "sale_expected": {"type": ["string", "null"]}, "sale_basis": {"type": "string"}, "one_line": {"type": "string"}, "site_now": {"type": "string"},
+        "sale_expected": {"type": ["string", "null"]}, "sale_basis": {"type": "string"},
+        "listed_date": {"type": ["string", "null"]}, "listed_basis": {"type": "string"}, "one_line": {"type": "string"}, "site_now": {"type": "string"},
     },
 }
 
@@ -336,10 +343,39 @@ def refresh_stage(mongo: Mongo, store: BrainStore, pid: str) -> Optional[Dict[st
              "construction_percent": d.get("construction_percent") if isinstance(d.get("construction_percent"), int) and 0 <= d["construction_percent"] <= 100 else None,
              "construction_expected": _date(d.get("construction_expected")), "construction_basis": str(d.get("construction_basis") or "")[:900],
              "sale_expected": _date(d.get("sale_expected")), "sale_basis": str(d.get("sale_basis") or "")[:900],
+             "listed_date": _date(d.get("listed_date")), "listed_basis": str(d.get("listed_basis") or "")[:500],
              "one_line": str(d.get("one_line") or "")[:300], "site_now": str(d.get("site_now") or "")[:400], "last_log": last_log,
              "read_at": now(), "cost_usd": cost_of(r["usage"])}
     store.files.update_one({"property_id": pid}, {"$set": {"stage": stage}})
     return stage
+
+
+#: The three lists the side panel sorts the properties into.
+GROUPS = (("construction", "Construction"), ("market", "On market"), ("nonperforming", "Non-performing"), ("sold", "Sold"))
+
+
+def group_of(stage: Optional[Dict[str, Any]]) -> str:
+    """Which list a property belongs in. A deal RKB is collecting through lawyers or the
+    courts is non-performing whatever its stage; otherwise a listed or under-contract house
+    is on the market, and everything before that is construction."""
+    s = stage or {}
+    if s.get("recovery"):
+        return "nonperforming"
+    if s.get("stage") in ("listed", "under_contract"):
+        return "market"
+    return "sold" if s.get("stage") == "sold_repaid" else "construction"
+
+
+def days_on_market(stage: Optional[Dict[str, Any]], today: Optional[datetime] = None) -> Optional[int]:
+    """Days since the house was listed — only while it is on the market, and only when a
+    record gave the listing date. Counted in US Eastern calendar days."""
+    s = stage or {}
+    listed = s.get("listed_date")
+    if s.get("stage") not in ("listed", "under_contract") or not isinstance(listed, datetime):
+        return None
+    from mangotree.core import eastern
+    day = eastern.to_et(today or now()).date()
+    return max(0, (day - listed.date()).days)
 
 
 def stage_view(file: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -349,6 +385,6 @@ def stage_view(file: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         return None
     at = STAGES.index(s["stage"]) if s.get("stage") in STAGES else 1
     # A calendar date, not a moment: sent at midday so it reads as the same day in India and in the US.
-    s = {**s, **{k: s[k].replace(hour=12) for k in ("closing_date", "construction_expected", "sale_expected", "last_log") if isinstance(s.get(k), datetime)}}
-    return {**s, "index": at, "steps": [{"key": k, "label": STAGE_LABEL[k], "state": "done" if i < at else "current" if i == at else "ahead"}
+    s = {**s, **{k: s[k].replace(hour=12) for k in ("closing_date", "construction_expected", "sale_expected", "listed_date", "last_log") if isinstance(s.get(k), datetime)}}
+    return {**s, "index": at, "group": group_of(s), "on_market": s.get("stage") in ("listed", "under_contract"), "days_on_market": days_on_market(file.get("stage")), "steps": [{"key": k, "label": STAGE_LABEL[k], "state": "done" if i < at else "current" if i == at else "ahead"}
                                         for i, k in enumerate(STAGES)]}

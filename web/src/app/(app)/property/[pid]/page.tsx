@@ -14,6 +14,7 @@ import { PropertyHeader, TABS, type TabKey } from "@/components/brain/header";
 import { PropertyDetails } from "@/components/brain/side";
 import { ArvTab, BillsTab, DocumentsTab, EmailsTab, FilesTab, MoneyTab, PeopleTab, TabBody } from "@/components/brain/tabs";
 import { SiteWorkTab } from "@/components/brain/sitework";
+import { MoneySheetTab } from "@/components/brain/moneysheet";
 import { Timeline } from "@/components/timeline";
 import { PropertyPermits } from "@/components/permits";
 import { cn } from "@/lib/utils";
@@ -79,6 +80,7 @@ export default function PropertyPage() {
         {tab === "timeline" && <TabBody><Timeline propertyId={pid} /></TabBody>}
         {tab === "site" && <SiteWorkTab pid={pid} />}
         {tab === "bills" && <BillsTab pid={pid} />}
+        {tab === "sheet" && <MoneySheetTab pid={pid} />}
         {tab === "arv" && <ArvTab pid={pid} />}
         {tab === "permits" && <TabBody><PropertyPermits pid={pid} /></TabBody>}
         {tab === "money" && <MoneyTab f={f} />}

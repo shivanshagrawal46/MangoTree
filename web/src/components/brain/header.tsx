@@ -5,14 +5,14 @@
    three parties. */
 
 import * as React from "react";
-import { Check, Gavel } from "lucide-react";
+import { Check, Gavel, Tag } from "lucide-react";
 import { cn, fmtDate } from "@/lib/utils";
 import type { PersonOnDeal, PropertyFile, Stage } from "@/lib/brain";
 
-export type TabKey = "overview" | "emails" | "documents" | "files" | "timeline" | "site" | "bills" | "arv" | "permits" | "money" | "people";
+export type TabKey = "overview" | "emails" | "documents" | "files" | "timeline" | "site" | "bills" | "sheet" | "arv" | "permits" | "money" | "people";
 export const TABS: { key: TabKey; label: string }[] = [
   { key: "overview", label: "Overview" }, { key: "emails", label: "Emails" }, { key: "documents", label: "Documents" }, { key: "files", label: "Files" },
-  { key: "timeline", label: "Timeline" }, { key: "site", label: "Site work" }, { key: "bills", label: "Bills" }, { key: "arv", label: "ARV" },
+  { key: "timeline", label: "Timeline" }, { key: "site", label: "Site work" }, { key: "bills", label: "Bills" }, { key: "sheet", label: "Money sheet" }, { key: "arv", label: "ARV" },
   { key: "permits", label: "Permits" }, { key: "money", label: "Money" }, { key: "people", label: "People" },
 ];
 
@@ -106,6 +106,14 @@ export function PropertyHeader({ f, tab, onTab, counts }: { f: PropertyFile; tab
           <span className="text-[12px] text-muted truncate hidden md:inline">{rest.join(", ") || (f.is_general ? "Everything not about one active property" : "")}</span>
         </div>
         {s?.recovery && <span className="h-[22px] px-2 rounded-md bg-critical-soft text-critical border border-critical/30 text-[11px] font-semibold inline-flex items-center gap-1 shrink-0"><Gavel size={11} /> {recoveryLabel(s)}</span>}
+        {s?.on_market && (
+          <span title={s.listed_basis || undefined} className="h-[22px] px-2 rounded-md bg-accent-soft text-accent border border-accent/25 text-[11px] font-semibold inline-flex items-center gap-1 shrink-0 whitespace-nowrap">
+            <Tag size={11} />
+            {s.days_on_market != null
+              ? <>{s.days_on_market} {s.days_on_market === 1 ? "day" : "days"} on market<span className="font-normal text-accent/80 hidden xl:inline"> · listed {fmtDate(s.listed_date, "d MMM yyyy")}</span></>
+              : <>On market<span className="font-normal text-accent/80"> · listing date not on record</span></>}
+          </span>
+        )}
         {s && <div className="ml-auto hidden lg:block min-w-0 overflow-hidden"><Stepper s={s} /></div>}
       </div>
       <div className="h-[34px] px-3 flex items-center justify-between gap-4 border-t border-line/70">

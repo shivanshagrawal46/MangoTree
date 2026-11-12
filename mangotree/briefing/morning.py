@@ -226,7 +226,7 @@ class Briefing:
 class Scheduler:
     """The standing jobs, in one thread, with every run recorded.
 
-    * mail intake every ``MT_POLL_MINUTES`` (default 10), then the arrival
+    * mail intake every ``MT_POLL_MINUTES`` (default 5), then the arrival
       chain for anything new; tasks and cards flushed once a property has been
       quiet for the debounce window
     * nightly at NIGHTLY_HOUR (20:00 Eastern): a 72-hour intake sweep, then the

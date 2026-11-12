@@ -57,6 +57,13 @@ def handle(bt: Buildertrend, mongo: Mongo, name: str, kind: str, data: str) -> s
         r = bt.import_logs(json.loads(data))
         new = ", ".join(f"{p} +{n}" for p, n in sorted(r["new_logs"].items())) or "none"
         return f"daily logs: {r['logs']} loaded; new logs: {new}"
+    if name == "estimates.json":
+        r = bt.import_estimates(json.loads(data))
+        return (f"estimates: {r['estimates']} proposals loaded, {r['lines']} lines; with no lines: {', '.join(r['empty']) or 'none'}; "
+                f"jobs not matched to a property: {r['unmatched'] or 'none'}")
+    if name == "bill_details.json":
+        r = bt.import_bill_details(json.loads(data))
+        return f"bill lines: {r['details']} bills read, {r['matched']} matched to a bill on file"
     if name == "bills.json":
         r = bt.import_bills(json.loads(data))
         return f"bills: {r['bills']} loaded, {r['in_review']} in review"

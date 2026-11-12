@@ -6,7 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Command } from "cmdk";
 import { motion } from "framer-motion";
-import { LayoutGrid, Building2, CheckSquare, Inbox, Users, MessageSquare, Search, LogOut, Moon, Sun, AlertTriangle, ChevronRight, HardHat, ClipboardList, BellRing, FileBadge, Calculator, TrendingUp, Archive, Mail, ChevronDown, Reply, Receipt } from "lucide-react";
+import { Gavel, Tag, LayoutGrid, Building2, CheckSquare, Inbox, Users, MessageSquare, Search, LogOut, Moon, Sun, AlertTriangle, ChevronRight, HardHat, ClipboardList, BellRing, FileBadge, Calculator, Archive, ChevronDown, Reply, Receipt } from "lucide-react";
 import { api } from "@/lib/api";
 import { useUser } from "@/components/providers";
 import { Kbd } from "@/components/ui";
@@ -21,16 +21,15 @@ const NAV = [
   { href: "/", label: "Today", icon: LayoutGrid },
   { href: "/replies", label: "To reply", icon: Reply },
   { href: "/bills", label: "Bills", icon: Receipt },
+  { href: "/chase", label: "Follow-ups", icon: BellRing },
   { href: "/ask", label: "Ask", icon: MessageSquare },
-  { href: "/drafts", label: "Drafts", icon: Mail },
   { href: "/arv", label: "ARV & underwriting", icon: Calculator },
   { href: "/sold", label: "Sold deals", icon: Archive },
-  { href: "/notes", label: "Notes analysis", icon: TrendingUp },
 ];
 const OLDER_NAV = [
   { href: "/classic", label: "Old dashboard", icon: LayoutGrid },
   { href: "/next-steps", label: "Next steps", icon: ClipboardList },
-  { href: "/followups", label: "Follow-ups", icon: BellRing },
+  { href: "/followups", label: "Old follow-ups", icon: BellRing },
   { href: "/tasks", label: "Tasks", icon: CheckSquare },
   { href: "/permits", label: "Permits", icon: FileBadge },
   { href: "/review", label: "Review", icon: Inbox },
@@ -41,11 +40,11 @@ const TEAM_NAV = [
   { href: "/", label: "Today", icon: LayoutGrid },
   { href: "/replies", label: "To reply", icon: Reply },
   { href: "/bills", label: "Bills", icon: Receipt },
+  { href: "/chase", label: "Follow-ups", icon: BellRing },
   { href: "/ask", label: "Ask", icon: MessageSquare },
-  { href: "/drafts", label: "Drafts", icon: Mail },
 ];
 const TEAM_OLDER_NAV = [
-  { href: "/followups", label: "My follow-ups", icon: BellRing },
+  { href: "/followups", label: "Old follow-ups", icon: BellRing },
   { href: "/tasks", label: "My tasks", icon: CheckSquare },
 ];
 
@@ -61,6 +60,23 @@ function contractorMayOpen(user: { side?: string; tools?: string[] } | null | un
 /** The frame a contractor sees inside an RKB system it has been granted (today:
  *  ARV). Same header as the portal — no sidebar, no property list, no jump
  *  palette — with a tab back to the sheet. Nothing from NAV is rendered. */
+
+/* The side panel's lists. Until the stage of each deal has loaded the properties are
+   shown as one plain list, so nothing jumps between headings. */
+function propertyGroups(props: { property_id: string; address: string }[], groups?: Record<string, string>) {
+  const rows = props.map((p) => ({ id: p.property_id, label: p.address }));
+  const general = { key: "general", label: "Portfolio", icon: Building2, rows: [{ id: "_general", label: "General & portfolio" }] };
+  if (!groups) return [{ key: "all", label: "Properties", icon: Building2, rows }, general];
+  const of = (k: string) => rows.filter((r) => (groups[r.id] || "construction") === k);
+  return [
+    { key: "construction", label: "Construction", icon: HardHat, rows: of("construction") },
+    { key: "market", label: "On market", icon: Tag, rows: of("market") },
+    { key: "nonperforming", label: "Non-performing", icon: Gavel, rows: of("nonperforming") },
+    { key: "sold", label: "Sold", icon: Archive, rows: of("sold") },
+    general,
+  ].filter((g) => g.rows.length > 0);
+}
+
 function ContractorFrame({ children, path }: { children: React.ReactNode; path: string }) {
   const { user } = useUser();
   const qc = useQueryClient();
@@ -102,7 +118,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     // Poll while any answer is running so the sidebar spinner clears on its own.
     refetchInterval: (query) => ((query.state.data?.answering?.length ?? 0) > 0 ? 15_000 : false) });
   const answering = new Set((dash.data?.answering || []).map((a) => a.property_id || "__global__"));
-  const counts = useQuery({ queryKey: ["brain", "counts"], queryFn: () => api.get<{ drafts: number; bills?: number; open: Record<string, number> }>("/brain/counts"), enabled: rkb, staleTime: 60_000, refetchInterval: 120_000 });
+  const counts = useQuery({ queryKey: ["brain", "counts"], queryFn: () => api.get<{ drafts: number; bills?: number; open: Record<string, number>; groups?: Record<string, string>; market_days?: Record<string, number | null>; followups?: number | null; followups_high?: number | null }>("/brain/counts"), enabled: rkb, staleTime: 60_000, refetchInterval: 120_000 });
   const [older, setOlder] = React.useState(false);
 
   React.useEffect(() => { if (!loading && !user) router.replace("/login"); }, [loading, user, router]);
@@ -147,24 +163,37 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <Link key={href} href={href} className={cn("flex items-center gap-2.5 h-8 px-2.5 rounded-lg text-[12.5px] transition", active ? "bg-accent-soft text-accent font-medium" : "text-muted hover:bg-sunken hover:text-fg")}>
                 <Icon size={14} /> <span className="flex-1">{label}</span>
                 {href === "/replies" && (counts.data?.drafts || 0) > 0 && <span className="text-[10px] font-semibold bg-accent text-white rounded-full px-1.5 h-4 min-w-4 grid place-items-center">{counts.data!.drafts}</span>}
+                {href === "/chase" && (counts.data?.followups || 0) > 0 && <span title="Follow-ups waiting for you" className={cn("text-[10px] font-semibold rounded-full px-1.5 h-4 min-w-4 grid place-items-center", (counts.data?.followups_high || 0) > 0 ? "bg-critical text-white" : "bg-sunken text-muted")}>{counts.data!.followups}</span>}
                 {href === "/bills" && (counts.data?.bills || 0) > 0 && <span className="text-[10px] font-semibold bg-sunken text-muted rounded-full px-1.5 h-4 min-w-4 grid place-items-center">{counts.data!.bills}</span>}
               </Link>
             );
           })}
         </nav>
-        {ceo && <div className="px-4 pt-4 pb-1 text-[10px] uppercase tracking-wider text-faint flex items-center gap-1.5"><Building2 size={11} /> Properties</div>}
-        <div className="px-2 space-y-0.5">
-          {ceo && [...(props.data || []).map((p) => ({ id: p.property_id, label: p.address })), { id: "_general", label: "General & portfolio" }].map((p) => {
-            const active = path === `/property/${p.id}` || path.startsWith(`/property/${p.id}/`);
-            const n = counts.data?.open?.[p.id] || 0;
-            return (
-              <Link key={p.id} href={`/property/${p.id}`} className={cn("flex items-center gap-2 h-7 px-2.5 rounded-md text-[12px] transition", active ? "bg-sunken text-fg font-medium" : "text-muted hover:bg-sunken hover:text-fg")}>
-                <span className="truncate flex-1">{p.label}</span>
-                {n > 0 && <span title={`${n} item${n === 1 ? "" : "s"} need you`} className="text-[10px] font-semibold text-high bg-high-soft rounded-full px-1.5 h-4 min-w-4 grid place-items-center">{n}</span>}
-              </Link>
-            );
-          })}
-        </div>
+        {/* The properties, sorted by where each deal stands (2026-11-13): under construction,
+            on the market (with the days since it was listed), and non-performing — the ones
+            RKB is collecting through lawyers or the courts. The sorting comes from the same
+            reading that draws the progress bar on the property's page. */}
+        {rkb && propertyGroups(props.data || [], counts.data?.groups).map((g) => (
+          <React.Fragment key={g.key}>
+            <div className={cn("px-4 pt-4 pb-1 text-[10px] uppercase tracking-wider flex items-center gap-1.5", g.key === "nonperforming" ? "text-critical/80" : "text-faint")}>
+              <g.icon size={11} /> <span className="flex-1">{g.label}</span> <span className="tnum normal-case tracking-normal">{g.rows.length}</span>
+            </div>
+            <div className="px-2 space-y-0.5">
+              {g.rows.map((p) => {
+                const active = path === `/property/${p.id}` || path.startsWith(`/property/${p.id}/`);
+                const n = counts.data?.open?.[p.id] || 0;
+                const days = g.key === "market" ? counts.data?.market_days?.[p.id] : undefined;
+                return (
+                  <Link key={p.id} href={`/property/${p.id}`} className={cn("flex items-center gap-2 h-7 px-2.5 rounded-md text-[12px] transition", active ? "bg-sunken text-fg font-medium" : "text-muted hover:bg-sunken hover:text-fg")}>
+                    <span className="truncate flex-1">{p.label}</span>
+                    {days != null && <span title={`${days} day${days === 1 ? "" : "s"} on the market`} className="text-[10px] text-faint tnum shrink-0">{days}d</span>}
+                    {n > 0 && <span title={`${n} item${n === 1 ? "" : "s"} need you`} className="text-[10px] font-semibold text-high bg-high-soft rounded-full px-1.5 h-4 min-w-4 grid place-items-center">{n}</span>}
+                  </Link>
+                );
+              })}
+            </div>
+          </React.Fragment>
+        ))}
         <button type="button" onClick={() => setOlder((v) => !v)} className="mt-3 w-full px-4 pt-2 pb-1 text-[10px] uppercase tracking-wider text-faint flex items-center gap-1.5 hover:text-muted">
           <ChevronDown size={11} className={cn("transition", !(older || olderActive) && "-rotate-90")} /> Older screens
         </button>

@@ -122,6 +122,7 @@ class Buildertrend:
         self.mongo = mongo
         db = mongo.db
         self.jobs, self.logs, self.bills, self.photos, self.pulls = db["bt_jobs"], db["bt_daily_logs"], db["bt_bills"], db["bt_photos"], db["bt_pulls"]
+        self.estimates = db["bt_estimates"]
 
     def ensure_indexes(self) -> None:
         self.logs.create_index([("property_id", 1), ("date", -1)])
@@ -131,6 +132,8 @@ class Buildertrend:
         self.photos.create_index("file_id")
         self.photos.create_index("job_id")
         self.jobs.create_index("property_id")
+        self.estimates.create_index("property_id")
+        self.estimates.create_index("job_id")
 
     # ------------------------------------------------------------------ loading
     def _job_pid(self) -> Dict[int, str]:
@@ -209,6 +212,101 @@ class Buildertrend:
             self.bills.delete_many({"job_id": int(job), "bill_id": {"$nin": seen}})
         self.__dict__.pop("_views", None)
         return out
+
+    @staticmethod
+    def _detail_fields(detail: Dict[str, Any]) -> Dict[str, Any]:
+        """What a bill's own page adds to its row in the list: who entered it, and its lines.
+        Every bill carries the WHOLE proposal — one line per proposal item and per change
+        order — with the line's price (unit cost) and the share of it this bill claims
+        (quantity, a fraction) and the money that share comes to (amount)."""
+        return {
+            "created_by": detail.get("createdByName"),
+            "description": ((detail.get("description") or {}).get("value") or "").strip(),
+            "line_items": [{
+                "title": (li.get("title") or "").strip(), "description": (li.get("description") or "").strip(), "cost_code": (li.get("costCodeTitle") or "").strip(),
+                "quantity": li.get("quantity"), "unit_cost": _money(li.get("unitCost")), "amount": _money(li.get("builderCost") if li.get("builderCost") is not None else li.get("calculatedAmount")),
+                "variance": None if (li.get("varianceCodeTitle") or "").startswith("--") else li.get("varianceCodeTitle"),
+            } for li in ((detail.get("lineItems") or {}).get("value") or [])],
+            "file_names": [f.get("title") for f in ((detail.get("attachedFiles") or {}).get("files") or []) if f.get("title")][:40],
+        }
+
+    def import_bill_details(self, d: Dict[str, Any]) -> Dict[str, Any]:
+        """The line items of bills already on file (a pull of bill pages on their own, used
+        to fill in the lines of bills that were first read from the list only)."""
+        from pymongo import UpdateOne
+        at = _dt(d.get("pulled_at")) or now()
+        ops = []
+        for bid, detail in (d.get("details") or {}).items():
+            if isinstance(detail, dict) and (detail.get("lineItems") or {}).get("value") is not None:
+                ops.append(UpdateOne({"bill_id": int(bid)}, {"$set": {**self._detail_fields(detail), "lines_pulled_at": at}}))
+        matched = self.bills.bulk_write(ops, ordered=False).matched_count if ops else 0
+        self.__dict__.pop("_views", None)
+        return {"details": len(ops), "matched": matched}
+
+    # ------------------------------------------------------------------ the proposal (Buildertrend's Estimate)
+    @staticmethod
+    def _estimate_line(li: Dict[str, Any]) -> Dict[str, Any]:
+        """One line of the proposal. ``builder_cost`` is what the work costs; ``price`` is what
+        the homeowner is charged for it; the difference is the markup on that line."""
+        cost, price = _money(li.get("builderCost")), _money(li.get("ownerPrice"))
+        return {
+            "line_id": li.get("id"), "title": (li.get("itemTitle") or "").strip(), "cost_code": (li.get("costCodeTitle") or "").strip(),
+            "description": (li.get("description") or "").strip(), "notes": (li.get("internalNotes") or "").strip(),
+            "quantity": li.get("quantity"), "unit": (li.get("unit") or "").strip(), "unit_cost": _money(li.get("unitCost")),
+            "builder_cost": cost, "markup": _money(li.get("markupAmount")), "markup_percent": li.get("markupPercent"), "price": price,
+            "invoiced": _money(li.get("amountInvoiced")), "has_purchase_order": bool(li.get("hasRelatedPurchaseOrder")),
+            "po_line_id": li.get("relatedPurchaseOrderLineItemId"), "line_type": li.get("lineItemType"), "added": _dt(li.get("dateAdded")),
+            "order": li.get("worksheetDisplayOrder"),
+        }
+
+    def _estimate_groups(self, groups: List[Dict[str, Any]], parent: str = "") -> List[Dict[str, Any]]:
+        out = []
+        for g in sorted(groups or [], key=lambda x: x.get("displayOrder") or 0):
+            title = (g.get("title") or "").strip()
+            lines = sorted((self._estimate_line(li) for li in g.get("lineItems") or []), key=lambda x: x.get("order") or 0)
+            out.append({"title": title, "parent": parent or None, "description": (g.get("description") or "").strip(), "lines": lines})
+            out.extend(self._estimate_groups(g.get("subGroups") or [], title))
+        return out
+
+    def import_estimates(self, d: Dict[str, Any]) -> Dict[str, Any]:
+        """The proposal of each job, as Buildertrend's Estimate page holds it: every line with
+        its cost code, builder cost, markup and price to the homeowner. One record per job,
+        replaced whole on each pull (the estimate is edited in place until it is locked)."""
+        from pymongo import UpdateOne
+        job_pid = self._job_pid()
+        at = _dt(d.get("pulled_at")) or now()
+        ops, out = [], {"estimates": 0, "lines": 0, "empty": [], "unmatched": []}
+        for job, w in (d.get("estimates") or {}).items():
+            pid = job_pid.get(int(job))
+            if not pid:
+                out["unmatched"].append(int(job))
+                continue
+            groups = self._estimate_groups(w.get("formatData") or [])
+            lines = [li for g in groups for li in g["lines"]]
+            if not lines:
+                out["empty"].append(pid)
+            cost = round(sum(li["builder_cost"] or 0 for li in lines), 2)
+            price = round(sum(li["price"] or 0 for li in lines), 2)
+            doc = {
+                "job_id": int(job), "property_id": pid, "worksheet_id": w.get("worksheetId"), "pulled_at": at,
+                "locked": bool(w.get("worksheetLocked")), "locked_by": w.get("lockedByName"), "locked_at": _dt(w.get("lockedByDate")),
+                "sent_to_budget": bool(w.get("isSentToBudget")), "status_code": w.get("proposalStatus"), "created_by": w.get("createdBy"),
+                "created": _dt(w.get("createdByDate")), "default_markup_percent": w.get("defaultMarkup"),
+                "contract_price": _money(w.get("contractPrice")), "remaining_contract_price": _money(w.get("remainingContractPrice")),
+                "already_invoiced": _money(w.get("alreadyInvoicedAmount")),
+                "totals": {"builder_cost": cost, "price": price, "markup": round(price - cost, 2), "lines": len(lines)},
+                "groups": groups,
+            }
+            ops.append(UpdateOne({"job_id": int(job)}, {"$set": doc}, upsert=True))
+            out["estimates"] += 1
+            out["lines"] += len(lines)
+        if ops:
+            self.estimates.bulk_write(ops, ordered=False)
+        self.__dict__.pop("_views", None)
+        return out
+
+    def estimate_of(self, pid: str) -> Optional[Dict[str, Any]]:
+        return self.estimates.find_one({"property_id": pid}, {"_id": 0})
 
     def add_photo(self, file_id: int, job_id: int, blob: bytes) -> bool:
         """Put one photo on the server's storage, straight from memory. Returns False if it was there already."""
@@ -356,14 +454,7 @@ class Buildertrend:
             "purchase_orders": [p.get("title") for p in r.get("relatedPurchaseOrders") or [] if p.get("title")], "documents": (r.get("attachedFiles") or {}).get("docCount") or 0,
         }
         if detail:
-            doc["created_by"] = detail.get("createdByName")
-            doc["description"] = ((detail.get("description") or {}).get("value") or "").strip()
-            doc["line_items"] = [{
-                "title": (li.get("title") or "").strip(), "description": (li.get("description") or "").strip(), "cost_code": (li.get("costCodeTitle") or "").strip(),
-                "quantity": li.get("quantity"), "unit_cost": _money(li.get("unitCost")), "amount": _money(li.get("builderCost") if li.get("builderCost") is not None else li.get("calculatedAmount")),
-                "variance": None if (li.get("varianceCodeTitle") or "").startswith("--") else li.get("varianceCodeTitle"),
-            } for li in ((detail.get("lineItems") or {}).get("value") or [])]
-            doc["file_names"] = [f.get("title") for f in ((detail.get("attachedFiles") or {}).get("files") or []) if f.get("title")][:40]
+            doc.update(Buildertrend._detail_fields(detail))
         return doc
 
     # ------------------------------------------------------------------ reading

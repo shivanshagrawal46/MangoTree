@@ -13,6 +13,7 @@ import { api, subscribeJob } from "@/lib/api";
 import { Badge, Button, Card, Skeleton } from "@/components/ui";
 import { useUser } from "@/components/providers";
 import { ReplyList } from "@/components/brain/replies";
+import { AlertsCard } from "@/components/brain/followups";
 import { ActivityList, ItemRow } from "@/components/brain/file";
 import { ago, cn, fmtDate } from "@/lib/utils";
 import { errText, type Home, type OpenItem } from "@/lib/brain";
@@ -75,6 +76,8 @@ export default function TodayPage() {
           <Button size="sm" onClick={readNow} disabled={!!reading}><RefreshCw size={13} className={cn(reading && "animate-spin")} /> {reading ? reading.slice(0, 48) : "Check for new mail"}</Button>
         </div>
       </div>
+
+      <AlertsCard />
 
       {d.missing.length > 0 && ceo && (
         <div className="mt-4 rounded-xl border border-high/25 bg-high-soft/60 px-4 py-2.5 text-[13px]">
