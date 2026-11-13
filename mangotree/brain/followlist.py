@@ -93,13 +93,25 @@ class FollowUps:
         s = self.sheet.build(pid, today=today)
         ticks = {b["bill_id"]: b["steps"] for b in s["bills"]}
         bills = [b for b in s["bills"] if not b["holdback"]]
+        checked = {c["bill_id"]: c["summary"] for c in self.mongo.db["bill_checks"].find({"property_id": pid, "summary": {"$exists": True}}, {"_id": 0, "bill_id": 1, "summary": 1})}
 
-        # 1. Bills waiting for Manjunath Sir — one item each, because each is its own decision.
+        # 1. Bills waiting for Manjunath Sir — one item each, because each is its own decision. The line-by-line
+        #    check has already been made (billcheck.py): the item says what it found and opens that page.
         for b in bills:
             if b["status"] == IN_REVIEW and not (ticks[b["bill_id"]] or {}).get("manju_approved"):
+                c = checked.get(b["bill_id"])
+                if not c:
+                    found = "Not yet checked against the logs and photos."
+                elif c["check"]["count"]:
+                    found = (f"Checked against the logs and photos: {c['check']['count']} of {c['lines']} line{'s' if c['lines'] != 1 else ''} to look at "
+                             f"({_usd(c['check']['amount'])})" + ("." if c["check"]["count"] >= c["lines"] else "; the rest is supported."))
+                else:
+                    found = f"Checked against the logs and photos: all {c['lines']} line{'s' if c['lines'] != 1 else ''} supported."
                 add("approve_bill", "manju", f"Approve or query: {b['title']} — {_usd(b['amount'])}",
-                    f"In review in Buildertrend since the bill date. Pay to {b.get('pay_to') or 'the contractor'}.", ident=b["bill_id"], since=b.get("date"),
+                    f"{found} Pay to {b.get('pay_to') or 'the contractor'}.", ident=b["bill_id"], since=b.get("date"),
                     late_after=APPROVAL_DAYS, tab="sheet", amount=b["amount"])
+                out[-1]["href"] = f"/bills/{b['bill_id']}"
+                out[-1]["to_check"] = c["check"]["count"] if c else None
 
         # 2. Approved, not paid — one item for the property, so JP Sir sees one line with the total.
         waiting = [b for b in bills if not (ticks[b["bill_id"]] or {}).get("paid") and b["status"] != PAID
@@ -247,14 +259,17 @@ class FollowUps:
         review = list(self.bt.bills.find({"property_id": {"$in": pids}, "in_review": True, "holdback": {"$ne": True}},
                                          {"_id": 0, "bill_id": 1, "property_id": 1, "title": 1, "amount": 1, "invoice_date": 1, "created": 1}).sort("invoice_date", -1))
         fresh = [b for b in review if (_days(b.get("created") or b.get("invoice_date"), today) or 99) <= 3]
+        checked = {c["bill_id"]: c["summary"] for c in self.mongo.db["bill_checks"].find({"bill_id": {"$in": [b["bill_id"] for b in review]}, "summary": {"$exists": True}},
+                                                                                         {"_id": 0, "bill_id": 1, "summary": 1})}
         return {
             "read_at": pull.get("loaded_at") or pull.get("at"),
             "new_logs": [{"property_id": p, "property": name_of(p), "count": n, "site_now": (stages.get(p) or {}).get("site_now") or ""} for p, n in sorted(new_logs.items())],
             "analysed": bool(pull.get("analysed")),
             "in_review": {"count": len(review), "amount": round(sum(b.get("amount") or 0 for b in review), 2), "new": len(fresh),
                           "bills": [{"bill_id": b["bill_id"], "property_id": b["property_id"], "property": name_of(b["property_id"]), "title": b.get("title"),
-                                     "amount": b.get("amount"), "date": b.get("invoice_date"), "new": b in fresh} for b in review[:12]]},
+                                     "amount": b.get("amount"), "date": b.get("invoice_date"), "new": b in fresh,
+                                     "checked": b["bill_id"] in checked, "to_check": ((checked.get(b["bill_id"]) or {}).get("check") or {}).get("count")} for b in review[:12]]},
             "mine": None if not me else {"owner": me, "owner_name": OWNERS[me], **self.counts(items)[me],
-                                         "top": [{k: i[k] for k in ("key", "property_id", "property", "title", "days", "level", "tab")} for i in items if i["owner"] == me][:5]},
+                                         "top": [{**{k: i[k] for k in ("key", "property_id", "property", "title", "days", "level", "tab")}, "href": i.get("href")} for i in items if i["owner"] == me][:5]},
             "counts": self.counts(items),
         }

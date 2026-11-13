@@ -19,7 +19,7 @@ import { errText } from "@/lib/brain";
 
 export type FollowItem = {
   key: string; kind: string; property_id: string; property: string; owner: string; owner_name: string; title: string; detail: string;
-  since?: string | null; days: number | null; tab: string; amount?: number | null; level: "high" | "normal";
+  since?: string | null; days: number | null; tab: string; amount?: number | null; level: "high" | "normal"; href?: string | null; to_check?: number | null;
   mark?: { state: string; note?: string; by_name?: string; at?: string; until?: string | null } | null;
 };
 type Counts = Record<string, { open: number; high: number }>;
@@ -27,12 +27,13 @@ type FollowData = { items: FollowItem[]; counts: Counts; owners: Record<string, 
 export type Alerts = {
   read_at?: string | null; analysed: boolean;
   new_logs: { property_id: string; property: string; count: number; site_now: string }[];
-  in_review: { count: number; amount: number; new: number; bills: { bill_id: number; property_id: string; property: string; title: string; amount: number; date?: string; new: boolean }[] };
-  mine: { owner: string; owner_name: string; open: number; high: number; top: { key: string; property_id: string; property: string; title: string; days: number | null; level: string; tab: string }[] } | null;
+  in_review: { count: number; amount: number; new: number; bills: { bill_id: number; property_id: string; property: string; title: string; amount: number; date?: string; new: boolean; checked?: boolean; to_check?: number | null }[] };
+  mine: { owner: string; owner_name: string; open: number; high: number; top: { key: string; property_id: string; property: string; title: string; days: number | null; level: string; tab: string; href?: string | null }[] } | null;
   counts: Counts;
 };
 
-const href = (i: { property_id: string; tab: string }) => (i.tab === "overview" ? `/property/${i.property_id}` : `/property/${i.property_id}?tab=${i.tab}`);
+/* Where an item opens: its own page when it has one (a bill opens its line-by-line check), else the property's tab. */
+const href = (i: { property_id: string; tab: string; href?: string | null }) => i.href || (i.tab === "overview" ? `/property/${i.property_id}` : `/property/${i.property_id}?tab=${i.tab}`);
 const OWNER_TONE: Record<string, string> = { manju: "bg-accent-soft text-accent", jp: "bg-good-soft text-good", rakesh: "bg-high-soft text-high", wes: "bg-sunken text-muted" };
 
 /* Top of Today, for everyone at RKB: what is new on the construction jobs since
@@ -72,7 +73,8 @@ export function AlertsCard() {
           <ul className="mt-1 space-y-0.5">
             {a.in_review.bills.slice(0, 5).map((b) => (
               <li key={b.bill_id} className="text-[11.5px] text-muted flex gap-2">
-                <Link href={`/property/${b.property_id}?tab=sheet`} className="truncate flex-1 hover:text-accent">{b.property.split(" ").slice(1, 3).join(" ")} · {b.title}</Link>
+                <Link href={`/bills/${b.bill_id}`} className="truncate flex-1 hover:text-accent">{b.property.split(" ").slice(1, 3).join(" ")} · {b.title}</Link>
+                {b.checked && (b.to_check ? <span className="shrink-0 text-[10.5px] font-semibold text-high">{b.to_check} to check</span> : <span className="shrink-0 text-[10.5px] font-semibold text-good">supported</span>)}
                 <span className="tnum shrink-0">{usd(b.amount)}</span>
               </li>
             ))}
@@ -171,7 +173,7 @@ export function FollowUpsPage() {
                 <div className="shrink-0 flex items-center gap-2">
                   {i.days != null && i.days > 0 && <span className={cn("text-[11.5px] tnum", i.level === "high" ? "text-critical font-semibold" : "text-muted")}>{i.days}d</span>}
                   <span className={cn("h-5 px-1.5 rounded text-[10.5px] font-semibold inline-flex items-center", OWNER_TONE[i.owner])}>{i.owner_name.replace(" (contractor)", "")}</span>
-                  <Link href={href(i)} className="text-[12px] text-accent hover:underline">Open</Link>
+                  <Link href={href(i)} className="text-[12px] text-accent hover:underline">{i.href ? "Check lines" : "Open"}</Link>
                   {i.mark
                     ? <button type="button" onClick={() => mark(i, "open")} className="text-[12px] text-muted hover:text-fg">Bring back</button>
                     : <>

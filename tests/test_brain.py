@@ -1012,3 +1012,220 @@ def test_two_proposal_lines_with_the_same_name_and_price_share_the_bills(monkeyp
                                  "line_items": [{"title": "Toilet", "cost_code": "14.1 Bath", "unit_cost": 305.0, "amount": 305.0}] * 3})
     rows = [r for r in ms.build("durham_st")["rows"] if r["title"] == "Toilet"]
     assert sorted((r["proposal"], r["billed"]) for r in rows) == [(305.0, 305.0), (610.0, 610.0)]
+
+
+# ------------------------------------------------- the sheet as a funding ledger
+def test_every_dollar_of_the_builder_cost_is_in_one_place_and_people_can_write_approved_and_paid(monkeypatch):
+    import pytest
+    ms, m = _money_sheet(monkeypatch)
+    jp, manju = {"user_id": "jp", "name": "JP Sir", "role": "accountant"}, {"user_id": "manjunath", "name": "Manjunath Sir", "role": "operations"}
+    s = ms.build("durham_st")
+    f = s["funding"]
+    assert (f["budget"], f["paid"], f["held_back"], f["in_review"], f["to_pay"], f["not_billed"], f["left"]) == (21300.0, 11340.0, 1260.0, 0.0, 0.0, 8700.0, 9960.0)
+    assert round(f["paid"] + f["held_back"] + f["to_pay"] + f["in_review"] + f["not_billed"], 2) == f["budget"]     # nothing counted twice, nothing lost
+    assert [o["title"] for o in s["outside"]] == ["06 - Subcontractor Services"] or s["outside"][0]["amount"] == 954.0  # the bill that is not a proposal line
+    assert s["outside"][0]["category"] is None and f["outside"][-1]["label"] == "Not yet named"                      # a person has to say what it is
+    demo = next(r for r in s["rows"] if r["title"] == "Demolition Labor")
+    assert (demo["approved"], demo["paid"], demo["approved_by"], demo["to_fund"]) == (3000.0, 2700.0, None, 300.0)   # as Buildertrend shows it
+    ms.set_line("durham_st", demo["key"], manju, approved="2,500")                    # Manjunath Sir approves less than was billed
+    ms.set_line("durham_st", demo["key"], jp, paid="$2,000.00")                       # JP Sir has paid 2,000 of it so far
+    ms.set_line("durham_st", s["outside"][0]["key"], jp, category="contingency")      # ...and names the payment outside the proposal
+    with pytest.raises(ValueError):
+        ms.set_line("durham_st", demo["key"], jp, paid="lots")
+    s = ms.build("durham_st")
+    demo = next(r for r in s["rows"] if r["key"] == demo["key"])
+    assert (demo["approved"], demo["approved_by"], demo["paid"], demo["paid_by"], demo["sys_paid"], demo["to_fund"]) == (2500.0, "Manjunath Sir", 2000.0, "JP Sir", 2700.0, 1000.0)
+    assert demo["to_pay"] == 200.0 and s["funding"]["paid"] == 10640.0 and s["funding"]["left"] == 10660.0           # 2,500 approved - 2,000 paid - 300 held back
+    assert s["outside"][0]["category"] == "contingency" and next(c for c in s["funding"]["outside"] if c["key"] == "contingency")["count"] == 1
+    ms.set_line("durham_st", demo["key"], jp, paid="")                                # taken away: back to what Buildertrend shows
+    assert next(r for r in ms.build("durham_st")["rows"] if r["key"] == demo["key"])["paid"] == 2700.0
+
+
+def test_a_payment_to_the_homeowner_is_written_by_a_person_and_counted_apart_from_the_builder_cost(monkeypatch):
+    import pytest
+    ms, m = _money_sheet(monkeypatch)
+    jp = {"user_id": "jp", "name": "JP Sir", "role": "accountant"}
+    with pytest.raises(ValueError):
+        ms.save_entry("durham_st", jp, category="", title="x", amount="100")
+    with pytest.raises(PermissionError):
+        ms.save_entry("durham_st", {"role": "contractor"}, category="homeowner", amount="100")
+    e = ms.save_entry("durham_st", jp, category="homeowner", title="Paid to Tysha Redman at closing", amount="$5,000", date="2026-09-01", approved=True, paid=True)
+    ms.save_entry("durham_st", jp, category="contingency", title="Sewer line", amount="1800", approved=True)
+    s = ms.build("durham_st")
+    f = s["funding"]
+    assert (f["homeowner_paid"], f["homeowner_count"], f["outside_paid"], f["budget"], f["paid"], f["total_paid_out"]) == (5000.0, 1, 5000.0, 21300.0, 11340.0, 16340.0)
+    mine = next(o for o in s["outside"] if o["key"] == e["id"])
+    assert (mine["source"], mine["paid"], mine["by_name"], mine["date"].strftime("%Y-%m-%d")) == ("entry", 5000.0, "JP Sir", "2026-09-01")
+    ms.save_entry("durham_st", jp, entry_id=e["id"], category="homeowner", title="Paid to Tysha Redman at closing", amount="5000", paid=False)
+    assert ms.build("durham_st")["funding"]["homeowner_paid"] == 0.0                   # unticked: not counted as paid
+    ms.delete_entry("durham_st", e["id"], jp)
+    s = ms.build("durham_st")
+    assert e["id"] not in [o["key"] for o in s["outside"]] and s["history"][0]["what"] == "payment_removed"
+    assert len(ms.xlsx("durham_st")) > 5000
+
+
+def test_a_bill_under_another_name_is_put_on_its_line_by_a_person_never_by_itself(monkeypatch):
+    import pytest
+    ms, m = _money_sheet(monkeypatch)
+    manju = {"user_id": "manjunath", "name": "Manjunath Sir", "role": "operations"}
+    li = lambda title, code, amount: {"title": title, "cost_code": code, "unit_cost": amount, "amount": amount, "variance": None}
+    m.db["bt_bills"].insert_many([
+        {"bill_id": 20, "property_id": "durham_st", "title": "Demo crew", "amount": 400.0, "status": "Paid", "holdback": False, "invoice_date": datetime(2026, 10, 3),
+         "line_items": [li("Trash out", "02 - Demolition", 400.0)]},                          # same cost code as the one Demolition line, in proportion
+        {"bill_id": 21, "property_id": "durham_st", "title": "Taxes", "amount": 24000.0, "status": "Paid", "holdback": False, "invoice_date": datetime(2026, 10, 4),
+         "line_items": [li("Delinquent taxes", "02 - Demolition", 24000.0)]},                 # same code, but eight times the line: no suggestion
+        {"bill_id": 22, "property_id": "durham_st", "title": "Framing extra", "amount": 500.0, "status": "Paid", "holdback": False, "invoice_date": datetime(2026, 10, 5),
+         "line_items": [li("Extra studs", "44- Carpentry", 500.0)]},                          # two proposal lines share this code: no suggestion
+    ])
+    s = ms.build("durham_st")
+    out = {o["title"]: o for o in s["outside"]}
+    demo = next(r for r in s["rows"] if r["title"] == "Demolition Labor")
+    assert out["Trash out"]["suggest"] == {"key": demo["key"], "title": "Demolition Labor"}
+    assert out["Delinquent taxes"]["suggest"] is None and out["Extra studs"]["suggest"] is None and s["funding"]["suggested"] == 1
+    assert demo["billed"] == 3000.0 and s["outside"][0]["title"] == "Delinquent taxes"        # nothing has moved; the largest unnamed is first
+    with pytest.raises(ValueError):
+        ms.set_line("durham_st", demo["key"], manju, assign=demo["key"])                     # a proposal line cannot be put on a line
+    assert ms.accept_suggestions("durham_st", manju) == {"assigned": 1}
+    ms.set_line("durham_st", out["Delinquent taxes"]["key"], manju, category="homeowner")
+    s = ms.build("durham_st")
+    demo = next(r for r in s["rows"] if r["key"] == demo["key"])
+    assert (demo["billed"], demo["paid"], demo["to_fund"], demo["includes"]) == (3400.0, 3100.0, -100.0, [{"key": out["Trash out"]["key"], "title": "Trash out", "amount": 400.0}])
+    assert "Trash out" not in [o["title"] for o in s["outside"]] and s["funding"]["homeowner_paid"] == 24000.0
+    assert round(sum(r["billed"] for r in s["rows"]) , 2) == round(sum(b["amount"] for b in s["bills"]) - 100.0, 2)   # still every bill line, once
+    ms.set_line("durham_st", out["Trash out"]["key"], manju, assign="")                      # taken off the line again
+    s = ms.build("durham_st")
+    assert next(r for r in s["rows"] if r["key"] == demo["key"])["billed"] == 3000.0 and "Trash out" in [o["title"] for o in s["outside"]]
+
+
+def test_a_draft_is_closed_once_rkb_has_replied_to_that_email_even_if_not_to_every_point():
+    from mangotree.brain.answered import replied
+    to_him = {"link": "same_conversation", "reached_sender": True}
+    assert replied({"status": "answered", "by": [{"link": "to_same_person", "reached_sender": True}]})
+    assert replied({"status": "partly_answered", "by": [to_him]})                                              # Rakesh Sir replied in the conversation: no draft waits
+    assert replied({"status": "partly_answered", "by": [{"link": "direct_reply", "reached_sender": True}]})
+    assert not replied({"status": "partly_answered", "by": [{"link": "same_conversation", "reached_sender": False}]})   # an internal forward: the writer has heard nothing
+    assert not replied({"status": "partly_answered", "by": [{"link": "to_same_person", "reached_sender": True}]})       # another subject: may be another matter
+    assert not replied({"status": "not_answered", "by": []}) and not replied({"status": "unknown", "by": [to_him]})
+    from mangotree.brain.drafts import _left_open
+    assert _left_open({"status": "partly_answered", "still_owed": ["the wire date"]}) == " Not taken up in that reply: the wire date."
+    assert _left_open({"status": "answered", "still_owed": []}) == ""
+
+
+# ------------------------------------------------- one bill, checked line by line
+def _bill_check(monkeypatch):
+    from mangotree.brain.billcheck import BillCheck
+    ms, m = _money_sheet(monkeypatch)
+    return BillCheck(m, ms.store), m
+
+
+def test_a_bill_is_checked_as_one_request_with_its_hold_back_and_each_line_on_its_proposal_line(monkeypatch):
+    bc, m = _bill_check(monkeypatch)
+    d = bc.draw(2)                                                      # opened from the hold-back bill: it is the same request
+    assert (d["bill_id"], d["title"], d["gross"], d["pay_now"], d["held"]) == (1, "Repair-1", 12600.0, 11340.0, 1260.0)
+    lines = {l["title"]: l for l in d["lines"]}
+    assert (lines["Framing/Masonry"]["budget"], lines["Framing/Masonry"]["this"], lines["Framing/Masonry"]["percent_after"], lines["Framing/Masonry"]["left"]) == (12000.0, 6000.0, 50, 6000.0)
+    assert (lines["Demolition Labor"]["this"], lines["Demolition Labor"]["held"], lines["Demolition Labor"]["pay_now"]) == (3000.0, 300.0, 2700.0)
+    assert [f["kind"] for f in lines["Roof Framing"]["flags"]] == ["change_order"] and lines["Roof Framing"]["state"] is None
+    checks = {c["key"]: c["ok"] for c in d["checks"]}
+    assert checks == {"in_proposal": True, "within_budget": True, "holdback": True, "adds_up": True}
+    assert d["job"] == {"budget": 21300.0, "before": 0.0, "after": 12600.0, "paid": 11340.0, "has_proposal": True, "this": 12600.0, "left": 8700.0}
+    assert d["summary"]["unread"] == {"count": 3, "amount": 12600.0} and d["message_for_wes"] == ""
+
+
+def test_a_line_billed_past_its_budget_or_outside_the_proposal_is_flagged_without_any_reading(monkeypatch):
+    bc, m = _bill_check(monkeypatch)
+    li = {"title": "Demolition Labor", "cost_code": "02 - Demolition", "unit_cost": 3000.0, "variance": None}
+    m.db["bt_bills"].insert_many([
+        {"bill_id": 5, "property_id": "durham_st", "title": "Repair-2 (Contractor)", "number": "B5", "amount": 900.0, "status": "In review", "in_review": True, "holdback": False,
+         "invoice_date": datetime(2026, 11, 2), "line_items": [{**li, "amount": 900.0}]},
+        {"bill_id": 6, "property_id": "durham_st", "title": "Repair-2 (Hold-back)", "amount": 50.0, "status": "In review", "in_review": True, "holdback": True,
+         "invoice_date": datetime(2026, 11, 2), "line_items": [{**li, "amount": 50.0}]}])
+    d = bc.draw(5)
+    l = d["lines"][0]
+    assert (l["before"], l["this"], l["after"], l["percent_after"], l["state"]) == (3000.0, 950.0, 3950.0, 132, "check")      # the first draw already used the line up
+    assert "Over this line's budget by $950.00" in l["flags"][0]["text"]
+    checks = {c["key"]: c for c in d["checks"]}
+    assert checks["within_budget"]["ok"] is False and checks["holdback"]["ok"] is False and "5.3%" in checks["holdback"]["text"]
+    assert "Demolition Labor" in d["message_for_wes"] and "$950.00 of the $950.00 requested" in d["message_for_wes"]
+    w = bc.draw(3)                                                      # a bill for something that is not in the proposal
+    assert w["lines"][0]["kind"] == "other" and w["lines"][0]["state"] == "check" and {c["key"]: c["ok"] for c in w["checks"]}["in_proposal"] is False
+    assert {c["key"]: c["ok"] for c in w["checks"]}["holdback"] is None
+
+
+def test_the_reading_only_suggests_and_a_persons_mark_stands_over_it(monkeypatch):
+    import pytest
+    from mangotree.brain.billcheck import clean_reading
+    bc, m = _bill_check(monkeypatch)
+    keys = {l["title"]: l["key"] for l in bc.draw(1)["lines"]}
+    raw = {"lines": [
+        {"key": keys["Framing/Masonry"], "verdict": "shown", "basis": "Framing seen on 3 Oct.", "log_dates": ["2026-10-03"], "photo_ids": [11, 99], "ask": "ignored"},
+        {"key": keys["Demolition Labor"], "verdict": "shown", "basis": "Log says demolition done.", "log_dates": ["2026-10-03", "2026-01-01"], "photo_ids": [99], "ask": "A photo of the cleared rooms."},
+        {"key": keys["Roof Framing"], "verdict": "against", "basis": "Log of 3 Oct says the roof lumber has not arrived.", "log_dates": ["2026-10-03"], "photo_ids": [], "ask": "Delivery date."},
+        {"key": "e999", "verdict": "shown", "basis": "a line this bill does not have", "log_dates": [], "photo_ids": [11], "ask": ""}],
+        "other_points": ["A change order was promised on 30 Sep.", "", "x", "y", "z"]}
+    from mangotree.brain.billcheck import plain_dates
+    assert plain_dates("The 2026-11-05 log and the 2026-11-11 photos.") == "The 5 Nov log and the 11 Nov photos."
+    r = clean_reading(raw, set(keys.values()), {11, 12}, {"2026-10-03"})
+    assert set(r["lines"]) == set(keys.values()) and len(r["points"]) == 3
+    assert r["lines"][keys["Framing/Masonry"]] == {"verdict": "shown", "basis": "Framing seen on 3 Oct.", "log_dates": ["2026-10-03"], "photo_ids": [11], "ask": ""}   # a photo never shown is dropped
+    assert r["lines"][keys["Demolition Labor"]]["verdict"] == "said" and r["lines"][keys["Demolition Labor"]]["log_dates"] == ["2026-10-03"]                        # "shown" with no photo behind it is not shown
+    m.db["bill_checks"].insert_one({"bill_id": 1, "reading": {"at": datetime(2026, 10, 4), "lines": r["lines"], "points": r["points"], "last_log": datetime(2026, 10, 3)}})
+    d = bc.draw(1)
+    state = {l["title"]: l["state"] for l in d["lines"]}
+    assert state == {"Framing/Masonry": "ok", "Demolition Labor": "ok", "Roof Framing": "check"}
+    assert d["summary"]["ok"] == {"count": 2, "amount": 9000.0} and d["summary"]["check"] == {"count": 1, "amount": 3600.0} and d["summary"]["log_only"]["count"] == 1
+    assert "1. Roof Framing (Change orders), $3,600.00: Delivery date." in d["message_for_wes"]
+    manju = {"user_id": "manjunath", "name": "Manjunath Sir", "role": "operations"}
+    with pytest.raises(PermissionError):
+        bc.decide(1, keys["Roof Framing"], {"user_id": "wes", "role": "contractor"}, decision="ok")
+    with pytest.raises(ValueError):
+        bc.decide(1, "e999", manju, decision="ok")
+    d = bc.decide(1, keys["Roof Framing"], manju, decision="ok", note="Seen on site on 5 Oct.")
+    d = bc.decide(2, keys["Framing/Masonry"], manju, decision="hold", note="Only half the framing is up.")      # through the hold-back bill: same record
+    state = {l["title"]: (l["state"], l["suggest"]) for l in d["lines"]}
+    assert state["Roof Framing"] == ("ok", "check") and state["Framing/Masonry"] == ("hold", "ok")
+    assert "Framing/Masonry (03 - Structural), $6,000.00: Only half the framing is up." in d["message_for_wes"] and "Roof Framing" not in d["message_for_wes"]
+    d = bc.decide(1, keys["Framing/Masonry"], manju, decision="")                                                # the mark is taken off: the suggestion shows again
+    assert {l["title"]: l["state"] for l in d["lines"]}["Framing/Masonry"] == "ok" and len(m.db["bill_checks"].find_one({"bill_id": 1})["history"]) == 3
+
+
+def test_waiting_bills_are_checked_by_themselves_and_only_when_something_has_changed(monkeypatch):
+    import re
+    from datetime import timedelta
+    from mangotree.brain import billcheck
+    from mangotree.brain.billtrack import BillTracker
+    bc, m = _bill_check(monkeypatch)
+    today = datetime.now(timezone.utc)
+    li = {"title": "Framing/Masonry", "cost_code": "44- Carpentry", "unit_cost": 12000.0, "variance": None}      # half of this line is still unbilled
+    m.db["bt_bills"].update_one({"bill_id": 3}, {"$set": {"in_review": True}})
+    m.db["bt_bills"].insert_one({"bill_id": 7, "property_id": "durham_st", "title": "Repair-3", "number": "B7", "amount": 500.0, "status": "In review", "in_review": True, "holdback": False,
+                                 "invoice_date": datetime(2026, 11, 3), "line_items": [{**li, "amount": 500.0}]})
+    m.db["bt_daily_logs"].insert_one({"log_id": 1, "property_id": "durham_st", "date": today - timedelta(days=3), "title": "Demo", "notes": "Demolition finished.", "photos": []})
+    calls = []
+
+    def fake(**kw):                                                     # the model: every billed line "said in a log"
+        text = kw["user"][0]["text"]
+        calls.append(text)
+        day = re.search(r"LOG (\d{4}-\d{2}-\d{2})", kw["user"][1]["text"]).group(1)
+        return {"data": {"lines": [{"key": k, "verdict": "said", "basis": f"The {day} log says so.", "log_dates": [day], "photo_ids": [], "ask": "A photo."}
+                                   for k in re.findall(r"^  (\S+) \| ", text, re.M)], "other_points": []}, "usage": {}}
+    monkeypatch.setattr(billcheck, "structured", fake)
+    assert sorted(r["bill_id"] for r in bc.waiting()) == [3, 7] and bc.stale(7) == "not checked yet"
+    out = bc.read_waiting()
+    assert sorted(x["bill_id"] for x in out["read"]) == [3, 7] and len(calls) == 2 and not out["failed"]
+    s = bc.summaries([3, 7, 99])
+    assert (s[7]["lines"], s[7]["ok"]["count"], s[7]["check"]["count"]) == (1, 1, 0) and 99 not in s
+    assert (s[3]["check"]["count"], s[3]["check"]["amount"]) == (1, 954.0)                 # said in a log, but not a line of the proposal: still to look at
+    assert bc.stale(7) is None and bc.read_waiting()["read"] == [] and len(calls) == 2     # nothing changed: nothing is read, nothing is paid for
+    m.db["bt_daily_logs"].insert_one({"log_id": 2, "property_id": "durham_st", "date": today - timedelta(days=1), "title": "Update", "notes": "More.", "photos": []})
+    assert bc.stale(7) == "a newer log has come in"
+    assert len(bc.read_waiting()["read"]) == 2 and bc.stale(7) is None
+    m.db["bt_bills"].update_one({"bill_id": 7}, {"$set": {"amount": 600.0, "line_items": [{**li, "amount": 600.0}]}})
+    assert bc.stale(7) == "the bill has changed"
+    # A reading that looked at photos is not thrown away by a machine that does not hold them.
+    m.db["bill_checks"].update_one({"bill_id": 7}, {"$set": {"reading.photos_shown": 40, "reading.sig": billcheck.signature(bc.draw(7)["lines"])}})
+    before = len(calls)
+    assert bc.read(7)["kept"] is True and len(calls) == before
+    assert "kept" not in bc.read(7, force=True) and len(calls) == before + 1
+    BillTracker(m).set_step(7, "manju_approved", True, {"user_id": "manjunath", "name": "Manjunath Sir"})
+    assert [r["bill_id"] for r in bc.waiting()] == [3]                                     # approved: no longer read by itself

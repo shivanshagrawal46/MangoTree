@@ -25,6 +25,7 @@ type Row = {
   bill_id: number; property_id?: string; property: string; number?: string; title?: string; pay_to?: string; amount?: number | null;
   bill_date?: string | null; bill_moment?: string | null; mail?: Record<string, MailState>; bill_day?: string | null; due_day?: string | null; past_due?: boolean; buildertrend_status?: string; in_buildertrend?: boolean;
   approvers?: string[]; line_items?: Bill["line_items"]; created_by?: string; documents?: number; steps: Record<string, Mark>;
+  check?: { lines: number; ok: { count: number; amount: number }; check: { count: number; amount: number }; unread: { count: number; amount: number }; read_at?: string | null } | null;
 };
 type MailResult = { now?: "sent" | "already_sent" | "still_sending" | "not_accepted" | "failed"; status?: string; why?: string };
 /* The two ticks that send an email. The page asks first; on yes the box is ticked and the email goes at once. */
@@ -126,7 +127,17 @@ export default function BillsPage() {
                           <span className="block text-[10.5px] text-faint truncate">Buildertrend: {r.buildertrend_status}{r.approvers?.length ? ` · approver there: ${r.approvers.join(", ")}` : ""}</span>
                         </span>
                       </button>
-                      <div className="min-w-0 text-[12.5px] truncate">{r.property_id ? <Link href={`/property/${r.property_id}?tab=bills`} className="hover:text-accent hover:underline">{r.property}</Link> : r.property}</div>
+                      <div className="min-w-0 text-[12.5px]">
+                        <div className="truncate">{r.property_id ? <Link href={`/property/${r.property_id}?tab=bills`} className="hover:text-accent hover:underline">{r.property}</Link> : r.property}</div>
+                        {r.in_buildertrend !== false && (
+                          <Link href={`/bills/${r.bill_id}`} title="Open this bill line by line: the proposal line, what was billed before, and what the logs and photos show"
+                            className={cn("mt-1 inline-flex items-center gap-1 h-[20px] pl-1.5 pr-1 rounded text-[11px] font-semibold whitespace-nowrap hover:brightness-95",
+                              !r.check ? "bg-sunken text-muted" : r.check.check.count ? "bg-high-soft text-high" : "bg-good-soft text-good")}>
+                            {!r.check ? "Not checked yet" : r.check.check.count ? `${r.check.check.count} to check · ${usd(r.check.check.amount)}` : r.check.lines === 1 ? "Line supported" : `All ${r.check.lines} lines supported`}
+                            <ChevronRight size={11} />
+                          </Link>
+                        )}
+                      </div>
                       <div className="text-[12.5px] tnum">
                         {fmtDate(r.bill_day, "d MMM yy")}
                         {r.due_day && <div className={cn("text-[10.5px]", r.past_due && !paid ? "text-critical font-medium" : "text-faint")}>due {fmtDate(r.due_day, "d MMM")}</div>}

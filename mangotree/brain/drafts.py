@@ -26,7 +26,7 @@ from . import config as bc
 from . import prompts
 from . import verify
 from .agent import run_loop
-from .answered import Answered
+from .answered import Answered, replied
 from .context import EMAIL_FIELDS, Records, day, property_block
 from .lessons import Lessons, changed_enough
 from .llm import add_usage, cost_of, system_blocks
@@ -64,6 +64,12 @@ def similarity(a: str, b: str) -> float:
     if not a or not b:
         return 0.0
     return round(difflib.SequenceMatcher(None, a, b, autojunk=False).ratio(), 3)
+
+
+def _left_open(verdict: Dict[str, Any]) -> str:
+    """What RKB's reply did not take up, for the note on a draft closed because RKB replied."""
+    owed = [str(x) for x in (verdict.get("still_owed") or []) if x]
+    return (" Not taken up in that reply: " + "; ".join(owed) + ".") if verdict.get("status") == "partly_answered" and owed else ""
 
 
 def body_html(body: str) -> str:
@@ -124,9 +130,10 @@ class DraftWriter:
         # later email from anyone at RKB in this conversation or to this person,
         # under any subject. Answered means no draft, and an existing draft is closed.
         already = self.answered.check(art)
-        if already["status"] == "answered":
+        if replied(already):
             by = (already.get("by") or [{}])[-1]
-            note = (f"Already answered: {by.get('who') or 'RKB'} replied on {day(by.get('at'), '%d %b %Y %H:%M')} UTC. {already.get('what_rkb_said') or ''}").strip()
+            note = (f"Already answered: {by.get('who') or 'RKB'} replied on {day(by.get('at'), '%d %b %Y %H:%M')} UTC. {already.get('what_rkb_said') or ''}"
+                    + _left_open(already)).strip()
             if replaces:
                 existing = self.store.get_draft(replaces)
                 if existing and existing.get("status") == "ready":
@@ -303,7 +310,8 @@ class DraftWriter:
         fields: Dict[str, Any] = {
             "status": "sent", "auto_closed": True, "sent_sha": by.get("sha"), "sent_at": by.get("at"), "sent_by": by.get("who"), "stale": None,
             "closed_at": now(), "closed_note": (f"{by.get('who') or 'RKB'} replied on {day(by.get('at'), '%d %b %Y %H:%M')} UTC"
-                                               + (f" (“{by.get('subject')}”)" if by.get("subject") else "") + f". {verdict.get('what_rkb_said') or ''}").strip(),
+                                               + (f" (“{by.get('subject')}”)" if by.get("subject") else "") + f". {verdict.get('what_rkb_said') or ''}"
+                                               + _left_open(verdict)).strip(),
             "answer_check": {k: verdict.get(k) for k in ("status", "latest", "checked_at", "what_rkb_said", "still_owed", "candidates")},
             "answered_before_draft": not after_draft,
         }
@@ -314,7 +322,8 @@ class DraftWriter:
         for pid in draft.get("property_ids") or [bc.GENERAL_ID]:
             self.store.add_activity(pid, at=by.get("at") or now(), kind="reply_sent", who=by.get("who") or "RKB",
                                     title=f"Reply sent by {by.get('who') or 'RKB'} — draft closed",
-                                    summary=f"Answers “{(draft.get('in_reply_to') or {}).get('subject') or draft.get('subject')}”. {verdict.get('what_rkb_said') or ''}".strip(),
+                                    summary=(f"Answers “{(draft.get('in_reply_to') or {}).get('subject') or draft.get('subject')}”. {verdict.get('what_rkb_said') or ''}"
+                                             + _left_open(verdict)).strip(),
                                     sha=by.get("sha"), relevance="minor")
         if after_draft and not draft.get("learned") and changed_enough(draft.get("original_body") or draft.get("body") or "", sent.get("body_clean") or ""):
             self.store.update_draft(draft["draft_id"], {"learned": True})
@@ -326,7 +335,9 @@ class DraftWriter:
         """Check one waiting draft against the sent mail, and act on the result.
 
         answered         -> the draft is closed as sent and done
-        partly answered  -> it stays, marked out of date, saying what RKB already said and what is still owed
+        partly answered  -> closed too when RKB replied to this very email and the reply went to the
+                            person who wrote it (what was left open is kept on the closed draft);
+                            otherwise it stays, marked out of date, saying what RKB said and what is still owed
         not answered     -> it stays
         The other side writing again in the same conversation also marks it out of
         date: it answers a message that is no longer the latest."""
@@ -343,7 +354,7 @@ class DraftWriter:
         latest = cands[-1]["sha256"] if cands else None
         if cands and (force or prev.get("latest") != latest or prev.get("status") in (None, "unknown")):
             verdict = self.answered.check(art, candidates=cands)
-            if verdict["status"] == "answered":
+            if replied(verdict):
                 if fields:
                     self.store.update_draft(draft["draft_id"], fields)
                 return self.close_as_answered({**draft, **fields}, verdict)

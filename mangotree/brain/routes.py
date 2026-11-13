@@ -70,6 +70,21 @@ class SheetLineBody(BaseModel):
     key: str
     work_done: Optional[str] = None
     note: Optional[str] = None
+    approved: Optional[str] = None       # an amount; "" goes back to what Buildertrend shows
+    paid: Optional[str] = None
+    category: Optional[str] = None
+    assign: Optional[str] = None         # the key of the proposal line a bill belongs to; "" takes it off again
+
+
+class SheetEntryBody(BaseModel):
+    id: Optional[str] = None
+    category: str = ""
+    title: str = ""
+    amount: Optional[str] = None
+    date: Optional[str] = None
+    approved: bool = False
+    paid: bool = False
+    note: str = ""
 
 
 class SheetFigureBody(BaseModel):
@@ -86,6 +101,12 @@ class FollowMarkBody(BaseModel):
 class StepBody(BaseModel):
     step: str
     done: bool = True
+
+
+class BillLineBody(BaseModel):
+    key: str
+    decision: Optional[str] = None       # "ok" | "hold" | "" (clear the mark); None leaves it as it is
+    note: Optional[str] = None
 
 
 class RedoBody(BaseModel):
@@ -211,6 +232,8 @@ def install(app: FastAPI, mongo: Mongo, jobs) -> None:
     sitework = SiteWork(mongo, store)
     billtrack = BillTracker(mongo)
     billmail = BillMail(mongo, store)
+    from .billcheck import BillCheck
+    billcheck = BillCheck(mongo, store)
 
     @app.get("/brain/bills")
     @swr.cached("bills", fresh=15, keep=120, per_user=False)
@@ -218,8 +241,10 @@ def install(app: FastAPI, mongo: Mongo, jobs) -> None:
         """The contractor's bills RKB is handling, with RKB's own four steps and when each was done."""
         g = swr.gather(rows=lambda: billtrack.rows("paid" if view == "paid" else "open"), pulled=bt.last_pull, held=billtrack.held_back)
         mails = billmail.states([r["bill_id"] for r in g["rows"]])
+        checked = billcheck.summaries([r["bill_id"] for r in g["rows"]])
         for r in g["rows"]:
             r["mail"] = mails.get(r["bill_id"], {})
+            r["check"] = checked.get(r["bill_id"])
         return data.clean({"view": "paid" if view == "paid" else "open", "steps": [{"key": k, "label": l} for k, l in STEPS], "rows": g["rows"], "pulled_at": g["pulled"],
                            "mail_to": billmail.recipients(),
                            "held_back": g["held"]})
@@ -245,6 +270,37 @@ def install(app: FastAPI, mongo: Mongo, jobs) -> None:
             row["mail_result"] = billmail.on_step(row, body.step, body.done, user)
             row["mail"] = billmail.state(row["bill_id"])
             return data.clean(row)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        except KeyError:
+            raise HTTPException(404, "That bill is not on file.")
+
+    # ---------------------------------------------------------- one bill, checked line by line
+    @app.get("/brain/bills/{bill_id}/check")
+    @swr.cached("bill-check", fresh=10, keep=120)
+    def brain_bill_check(bill_id: int, user=CurrentUser):
+        """One bill against the proposal and the site record: which line, how much, and what supports it."""
+        try:
+            return data.clean({**billcheck.draw(bill_id), "can": {"lines": user.get("role") in ("ceo", "accountant", "operations")}})
+        except KeyError:
+            raise HTTPException(404, "That bill is not on file.")
+
+    @app.post("/brain/bills/{bill_id}/check/read")
+    def brain_bill_check_read(bill_id: int, user=CurrentUser):
+        """Read the contractor's logs and photos against this bill's lines (one Opus reading, in the background)."""
+        if user.get("role") not in ("ceo", "accountant", "operations"):
+            raise HTTPException(403, "Only RKB's team can start a reading.")
+        if not mongo.db["bt_bills"].count_documents({"bill_id": int(bill_id)}, limit=1):
+            raise HTTPException(404, "That bill is not on file.")
+        job = jobs.start("bill_check", {"bill_id": bill_id, "by": user["user_id"]}, lambda job: data.clean(billcheck.read(bill_id) or {"none": True}))
+        return {"job_id": job.job_id}
+
+    @app.post("/brain/bills/{bill_id}/check/line")
+    def brain_bill_check_line(bill_id: int, body: BillLineBody, user=CurrentUser):
+        try:
+            return data.clean({**billcheck.decide(bill_id, body.key, user, decision=body.decision, note=body.note), "can": {"lines": True}})
+        except PermissionError as exc:
+            raise HTTPException(403, str(exc))
         except ValueError as exc:
             raise HTTPException(400, str(exc))
         except KeyError:
@@ -315,7 +371,35 @@ def install(app: FastAPI, mongo: Mongo, jobs) -> None:
     @app.post("/brain/properties/{pid}/sheet/line")
     def brain_sheet_line(pid: str, body: SheetLineBody, user=CurrentUser):
         try:
-            return data.clean(sheet.set_line(_file_id(pid), body.key, user, work_done=body.work_done, note=body.note))
+            return data.clean(sheet.set_line(_file_id(pid), body.key, user, work_done=body.work_done, note=body.note,
+                                             approved=body.approved, paid=body.paid, category=body.category, assign=body.assign))
+        except PermissionError as exc:
+            raise HTTPException(403, str(exc))
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+
+    @app.post("/brain/properties/{pid}/sheet/accept-suggestions")
+    def brain_sheet_accept(pid: str, user=CurrentUser):
+        try:
+            return sheet.accept_suggestions(_file_id(pid), user)
+        except PermissionError as exc:
+            raise HTTPException(403, str(exc))
+
+    @app.post("/brain/properties/{pid}/sheet/entry")
+    def brain_sheet_entry(pid: str, body: SheetEntryBody, user=CurrentUser):
+        """Add or change a payment that is not a line of the proposal (contingency, paid to the homeowner, ...)."""
+        try:
+            return data.clean(sheet.save_entry(_file_id(pid), user, entry_id=body.id, category=body.category, title=body.title, amount=body.amount,
+                                               date=body.date, approved=body.approved, paid=body.paid, note=body.note))
+        except PermissionError as exc:
+            raise HTTPException(403, str(exc))
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+
+    @app.delete("/brain/properties/{pid}/sheet/entry/{entry_id}")
+    def brain_sheet_entry_delete(pid: str, entry_id: str, user=CurrentUser):
+        try:
+            return data.clean(sheet.delete_entry(_file_id(pid), entry_id, user))
         except PermissionError as exc:
             raise HTTPException(403, str(exc))
         except ValueError as exc:

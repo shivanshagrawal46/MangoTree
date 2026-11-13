@@ -42,6 +42,14 @@ FIGURES: Dict[str, Dict[str, str]] = {
     "closing": {"label": "Closing date", "kind": "date"},
     "maturity": {"label": "Maturity", "kind": "date"},
 }
+#: Money that goes out but is not a line of the proposal has to be called something.
+CATEGORIES: Dict[str, str] = {
+    "contingency": "Contingency",
+    "homeowner": "Paid to the homeowner",
+    "roi_fee": "ROI Blocks fee",
+    "supplier": "Supplier paid direct",
+    "other": "Other",
+}
 MONEY_ROLES = ("ceo", "accountant")                  # Rakesh Sir, JP Sir
 LINE_ROLES = ("ceo", "accountant", "operations")     # ...and Manjunath Sir
 POINTS = 0.02
@@ -73,6 +81,18 @@ def _day(v: Any) -> Optional[datetime]:
         return datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)), 12, tzinfo=timezone.utc) if m else None
     except ValueError:
         return None
+
+
+def _guess_category(title: Any) -> Optional[str]:
+    """What a bill outside the proposal most likely is, from its name. None = a person must say."""
+    t = _norm(title)
+    if "roi" in t and "fee" in t:
+        return "roi_fee"
+    if "contingen" in t:
+        return "contingency"
+    if "homeowner" in t or "home owner" in t:
+        return "homeowner"
+    return None
 
 
 def _add_months(d: datetime, months: int) -> datetime:
@@ -174,14 +194,51 @@ class MoneySheet:
         rows += sorted(extras.values(), key=lambda r: (r["kind"] != "change_order", r["cost_code"], r["title"]))
         for r in rows:
             r.pop("_unit", None)
-            r["revised"] = round(r["proposal"] + r["change_orders"], 2)
-            for k in ("proposal", "price", "change_orders", "billed", "in_review", "paid", "held_back"):
-                r[k] = round(r[k], 2)
-            # What is billed but neither paid, held back nor still in review: approved in Buildertrend and waiting to be paid.
-            r["to_pay"] = round(r["billed"] - r["paid"] - r["held_back"] - r["in_review"], 2) + 0.0     # + 0.0: never "-0.00"
-            r["left"] = round(r["revised"] - r["billed"], 2) if r["kind"] != "other" else 0.0
-            r["billed_percent"] = round(100 * r["billed"] / r["revised"]) if r["revised"] else None
+            self._derive(r)
         return rows, notes
+
+    @staticmethod
+    def _derive(r: Dict[str, Any]) -> None:
+        r["revised"] = round(r["proposal"] + r["change_orders"], 2)
+        for k in ("proposal", "price", "change_orders", "billed", "in_review", "paid", "held_back"):
+            r[k] = round(r[k], 2)
+        # What is billed but neither paid, held back nor still in review: approved in Buildertrend and waiting to be paid.
+        r["to_pay"] = round(r["billed"] - r["paid"] - r["held_back"] - r["in_review"], 2) + 0.0     # + 0.0: never "-0.00"
+        r["left"] = round(r["revised"] - r["billed"], 2) if r["kind"] != "other" else 0.0
+        r["billed_percent"] = round(100 * r["billed"] / r["revised"]) if r["revised"] else None
+
+    @staticmethod
+    def _place(rows: List[Dict[str, Any]], saved: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Bills that Buildertrend did not tie to a proposal line (older jobs were billed under
+        other names) and that a person has put on a line: their money is counted on that line,
+        and the line remembers what was added so it can be taken off again. For the rest, the
+        line is suggested when the cost code leaves no doubt — exactly one proposal line has
+        that cost code and the bill is not out of proportion to it. A suggestion is only that:
+        nothing moves until a person accepts it."""
+        placed = {k: v.get("assign") for k, v in (saved.get("lines") or {}).items() if v.get("assign")}
+        by_key = {r["key"]: r for r in rows}
+        by_code: Dict[str, List[Dict[str, Any]]] = {}
+        for r in rows:
+            if r["kind"] == "proposal":
+                by_code.setdefault(_norm(r["cost_code"]), []).append(r)
+        out = []
+        for r in rows:
+            target = by_key.get(placed.get(r["key"]) or "") if r["kind"] == "other" else None
+            if target is not None and target["kind"] != "other":
+                for k in ("billed", "in_review", "paid", "held_back"):
+                    target[k] += r[k]
+                target["bills"] += r["bills"]
+                target.setdefault("includes", []).append({"key": r["key"], "title": r["title"], "amount": r["billed"]})
+                continue
+            if r["kind"] == "other":
+                same = by_code.get(_norm(r["cost_code"])) or []
+                fits = len(same) == 1 and same[0]["proposal"] > 0 and 0 < r["billed"] <= 2 * same[0]["proposal"]
+                r["suggest"] = {"key": same[0]["key"], "title": same[0]["title"]} if fits else None
+            out.append(r)
+        for r in out:
+            if r.get("includes"):
+                MoneySheet._derive(r)
+        return out
 
     # ------------------------------------------------------------ the figures on top
     def _figures(self, pid: str, file: Dict[str, Any], estimate: Optional[Dict[str, Any]], saved: Dict[str, Any]) -> Dict[str, Any]:
@@ -252,9 +309,23 @@ class MoneySheet:
         paid_here = {bid for bid, t in tracking.items() if (t.get("steps") or {}).get("paid")}
         saved = self.inputs.find_one({"property_id": pid}, {"_id": 0}) or {}
         rows, notes = self._rows(estimate, bills, paid_here)
+        rows = self._place(rows, saved)
         for r in rows:
             mine = (saved.get("lines") or {}).get(r["key"]) or {}
             r["work_done"], r["note"], r["input_by"], r["input_at"] = mine.get("work_done"), mine.get("note") or "", mine.get("by_name"), mine.get("at")
+            # Approved and paid: what Buildertrend shows, unless a person has written the amount themselves.
+            r["sys_approved"], r["sys_paid"] = round(r["billed"] - r["in_review"], 2), r["paid"]
+            for col, sysv in (("approved", r["sys_approved"]), ("paid", r["sys_paid"])):
+                own = mine.get(col)
+                r[col] = sysv if own is None else own
+                r[f"{col}_by"] = (mine.get(f"{col}_by") or mine.get("by_name")) if own is not None else None
+            r["to_pay"] = max(0.0, round(r["approved"] - r["paid"] - r["held_back"], 2))
+            r["to_fund"] = round(r["revised"] - r["paid"], 2) if r["kind"] != "other" else 0.0
+            if r["kind"] == "other":
+                r["category"] = mine.get("category") or _guess_category(r["title"])
+                if r["category"]:
+                    r["suggest"] = None
+        funding, outside = self._funding(rows, saved)
         cols = ("proposal", "price", "change_orders", "revised", "billed", "in_review", "to_pay", "paid", "held_back", "left")
         totals = {c: round(sum(r[c] for r in rows), 2) for c in cols}
         totals["billed_percent"] = round(100 * totals["billed"] / totals["revised"]) if totals["revised"] else None
@@ -286,11 +357,55 @@ class MoneySheet:
         }
         return {
             "property_id": pid, "address": file.get("address"), "rows": rows, "totals": totals, "notes": notes, "figures": figs, "payments": payments,
+            "funding": funding, "outside": outside, "categories": CATEGORIES,
             "deal": self._deal(figs, estimate, today), "bills": bill_rows,
             "estimate": None if not estimate else {k: estimate.get(k) for k in ("locked", "locked_by", "locked_at", "pulled_at", "totals", "sent_to_budget")},
             "bills_pulled_at": max((b.get("pulled_at") for b in bills if b.get("pulled_at")), default=None),
             "history": (saved.get("history") or [])[-30:][::-1],
         }
+
+    @staticmethod
+    def _funding(rows: List[Dict[str, Any]], saved: Dict[str, Any]) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+        """The picture on top of the sheet. The builder cost (proposal plus change orders) is the
+        budget; every dollar of it is in exactly one place: paid, held back until the sale,
+        approved and waiting to be paid, in review, or not billed yet. Money that is not a line
+        of the proposal is listed apart, each payment under a category a person can set."""
+        lines = [r for r in rows if r["kind"] != "other"]
+        s = lambda k: round(sum(r[k] for r in lines), 2)
+        budget, paid, held, to_pay, review = s("revised"), s("paid"), s("held_back"), s("to_pay"), s("in_review")
+        placed = round(paid + held + to_pay + review, 2)
+        outside: List[Dict[str, Any]] = []
+        for r in rows:
+            if r["kind"] == "other":
+                outside.append({"key": r["key"], "source": "buildertrend", "title": r["title"], "detail": r["cost_code"], "category": r.get("category"), "suggest": r.get("suggest"),
+                                "amount": r["billed"], "approved": r["approved"], "paid": r["paid"], "in_review": r["in_review"], "date": None,
+                                "note": r.get("note") or "", "by_name": r.get("approved_by") or r.get("paid_by")})
+        for eid, e in (saved.get("entries") or {}).items():
+            amount = e.get("amount") or 0.0
+            outside.append({"key": eid, "source": "entry", "title": e.get("title") or CATEGORIES.get(e.get("category") or "", "Payment"), "detail": "",
+                            "category": e.get("category"), "amount": amount, "approved": amount if e.get("approved") else 0.0, "paid": amount if e.get("paid") else 0.0,
+                            "in_review": 0.0, "date": e.get("date"), "note": e.get("note") or "", "by_name": e.get("by_name"), "at": e.get("at"),
+                            "is_approved": bool(e.get("approved")), "is_paid": bool(e.get("paid"))})
+        by_cat: Dict[str, Dict[str, Any]] = {k: {"key": k, "label": v, "amount": 0.0, "paid": 0.0, "count": 0} for k, v in CATEGORIES.items()}
+        loose = {"key": None, "label": "Not yet named", "amount": 0.0, "paid": 0.0, "count": 0}
+        for o in outside:
+            c = by_cat.get(o["category"] or "") or loose
+            c["amount"], c["paid"], c["count"] = round(c["amount"] + o["amount"], 2), round(c["paid"] + o["paid"], 2), c["count"] + 1
+        outside_paid = round(sum(o["paid"] for o in outside), 2)
+        funding = {
+            "budget": budget, "proposal": s("proposal"), "change_orders": s("change_orders"),
+            "paid": paid, "held_back": held, "to_pay": to_pay, "in_review": review,
+            "not_billed": max(0.0, round(budget - placed, 2)), "over_budget": max(0.0, round(placed - budget, 2)),
+            "left": round(budget - paid, 2), "paid_percent": round(100 * paid / budget, 1) if budget else None,
+            "outside": [c for c in by_cat.values()] + ([loose] if loose["count"] else []),
+            "outside_amount": round(sum(o["amount"] for o in outside), 2), "outside_paid": outside_paid,
+            "homeowner_paid": by_cat["homeowner"]["paid"], "homeowner_count": by_cat["homeowner"]["count"],
+            "total_paid_out": round(paid + outside_paid, 2),
+        }
+        # What still has to be named comes first, the largest first; then what people entered; then the rest.
+        outside.sort(key=lambda o: (bool(o["category"]), o["source"] != "entry" if o["category"] else False, -abs(o["amount"]), o["title"]))
+        funding["suggested"] = sum(1 for o in outside if o.get("suggest"))
+        return funding, outside
 
     # ------------------------------------------------------------ what people add
     def set_figure(self, pid: str, key: str, value: Any, user: Dict[str, Any]) -> Dict[str, Any]:
@@ -316,7 +431,11 @@ class MoneySheet:
             self.inputs.update_one({"property_id": pid}, {"$set": {f"figures.{key}": {"value": new, **who}}, "$push": {"history": log}}, upsert=True)
         return {"key": key, "value": new, "cleared": cleared}
 
-    def set_line(self, pid: str, key: str, user: Dict[str, Any], *, work_done: Any = None, note: Optional[str] = None) -> Dict[str, Any]:
+    def set_line(self, pid: str, key: str, user: Dict[str, Any], *, work_done: Any = None, note: Optional[str] = None,
+                 approved: Any = None, paid: Any = None, category: Optional[str] = None, assign: Optional[str] = None) -> Dict[str, Any]:
+        """What a person writes on one line. ``approved`` and ``paid`` are amounts of money: an
+        empty string takes the person's figure away again and the line goes back to what
+        Buildertrend shows. ``category`` names a payment that is not a line of the proposal."""
         if user.get("role") not in LINE_ROLES:
             raise PermissionError("Only RKB's team can write on the sheet.")
         if not re.fullmatch(r"[ex][0-9a-f]+", key or ""):
@@ -333,8 +452,81 @@ class MoneySheet:
         if note is not None:
             fields[f"lines.{key}.note"] = note.strip()[:500]
             log["note"] = fields[f"lines.{key}.note"]
+        for col, raw in (("approved", approved), ("paid", paid)):
+            if raw is None:
+                continue
+            amount = None if str(raw).strip() == "" else _num(raw)
+            if str(raw).strip() != "" and amount is None:
+                raise ValueError("That is not an amount of money.")
+            if amount is not None and not -1e7 < amount < 1e8:
+                raise ValueError("That amount is out of range.")
+            fields[f"lines.{key}.{col}"] = None if amount is None else round(amount, 2)
+            fields[f"lines.{key}.{col}_by"] = None if amount is None else who["by_name"]
+            log[col] = fields[f"lines.{key}.{col}"]
+            log[f"{col}_cleared"] = amount is None
+        if category is not None:
+            if category and category not in CATEGORIES:
+                raise ValueError("unknown category")
+            fields[f"lines.{key}.category"] = category or None
+            log["category"] = CATEGORIES.get(category) if category else None
+            if category:
+                fields[f"lines.{key}.assign"] = None            # it is a contingency (etc.), so not a proposal line
+        if assign is not None:
+            if assign and not re.fullmatch(r"e[0-9]+", assign):
+                raise ValueError("A bill can only be put on a line of the proposal.")
+            if not key.startswith("x"):
+                raise ValueError("Only a bill outside the proposal can be put on a line.")
+            fields[f"lines.{key}.assign"] = assign or None
+            log["assigned"] = bool(assign)
+            if assign:
+                fields[f"lines.{key}.category"] = None
         self.inputs.update_one({"property_id": pid}, {"$set": fields, "$push": {"history": log}}, upsert=True)
         return {"key": key, **{k.rsplit(".", 1)[1]: v for k, v in fields.items()}}
+
+    def accept_suggestions(self, pid: str, user: Dict[str, Any]) -> Dict[str, Any]:
+        """Put every bill that has a suggested line on that line, in one go."""
+        if user.get("role") not in LINE_ROLES:
+            raise PermissionError("Only RKB's team can write on the sheet.")
+        todo = [(o["key"], o["suggest"]["key"]) for o in self.build(pid)["outside"] if o.get("suggest")]
+        for key, line in todo:
+            self.set_line(pid, key, user, assign=line)
+        return {"assigned": len(todo)}
+
+    def save_entry(self, pid: str, user: Dict[str, Any], *, entry_id: Optional[str] = None, category: str = "", title: str = "", amount: Any = None,
+                   date: Any = None, approved: bool = False, paid: bool = False, note: str = "") -> Dict[str, Any]:
+        """A payment that is not a line of the proposal and not a bill in Buildertrend — a
+        contingency, money paid to the homeowner up front, a supplier paid direct. Written by
+        RKB's people; never guessed by the system."""
+        if user.get("role") not in LINE_ROLES:
+            raise PermissionError("Only RKB's team can write on the sheet.")
+        if category not in CATEGORIES:
+            raise ValueError("Choose what the payment is: " + ", ".join(CATEGORIES.values()) + ".")
+        value = _num(amount)
+        if value is None or value == 0:
+            raise ValueError("Enter the amount.")
+        eid = entry_id or "p" + hashlib.sha1(f"{pid}|{now().isoformat()}|{title}|{value}".encode("utf-8")).hexdigest()[:10]
+        if not re.fullmatch(r"p[0-9a-f]{10}", eid):
+            raise ValueError("unknown payment")
+        who = {"by": user.get("user_id"), "by_name": user.get("name") or user.get("user_id"), "at": now()}
+        doc = {"category": category, "title": (title or "").strip()[:160] or CATEGORIES[category], "amount": round(value, 2), "date": _day(date),
+               "approved": bool(approved), "paid": bool(paid), "note": (note or "").strip()[:500], **who}
+        log = {"what": "payment", "key": eid, "label": doc["title"], "category": CATEGORIES[category], "value": doc["amount"], "approved": doc["approved"], "paid": doc["paid"],
+               "new": entry_id is None, **who}
+        self.inputs.update_one({"property_id": pid}, {"$set": {f"entries.{eid}": doc}, "$push": {"history": log}}, upsert=True)
+        return {"id": eid, **doc}
+
+    def delete_entry(self, pid: str, entry_id: str, user: Dict[str, Any]) -> Dict[str, Any]:
+        if user.get("role") not in LINE_ROLES:
+            raise PermissionError("Only RKB's team can write on the sheet.")
+        if not re.fullmatch(r"p[0-9a-f]{10}", entry_id or ""):
+            raise ValueError("unknown payment")
+        was = ((self.inputs.find_one({"property_id": pid}, {"entries": 1}) or {}).get("entries") or {}).get(entry_id)
+        if not was:
+            raise ValueError("That payment is not on the sheet.")
+        who = {"by": user.get("user_id"), "by_name": user.get("name") or user.get("user_id"), "at": now()}
+        self.inputs.update_one({"property_id": pid}, {"$unset": {f"entries.{entry_id}": ""},
+                                                      "$push": {"history": {"what": "payment_removed", "key": entry_id, "label": was.get("title"), "value": was.get("amount"), **who}}})
+        return {"id": entry_id, "removed": True}
 
     # ------------------------------------------------------------ Excel
     def xlsx(self, pid: str) -> bytes:
@@ -367,21 +559,28 @@ class MoneySheet:
                              ("ROI Blocks at the start", "roi_at_start"), ("ROI Blocks after the sale", "roi_after_sale")):
                 ws.append([label, mk[k], mk["basis"] if k == "points" else ""])
         ws.append([])
-        head = ["Group", "Line item", "Cost code", "Proposal (builder cost)", "Change orders", "Revised", "Billed", "In review", "To pay", "Paid",
-                "Held back", "Left to bill", "% billed", "Work done %", "Note", "Price to homeowner"]
+        fu = s["funding"]
+        for label, k in (("Builder cost (proposal + change orders)", "budget"), ("Paid from the builder cost", "paid"), ("Left to fund", "left"),
+                         ("Held back until the sale", "held_back"), ("Approved, to pay now", "to_pay"), ("In review", "in_review"), ("Not billed yet", "not_billed"),
+                         ("Paid outside the proposal", "outside_paid"), ("Paid to the homeowner", "homeowner_paid"), ("Paid out in total", "total_paid_out")):
+            ws.append([label, fu[k], ""])
+        ws.append([])
+        head = ["Group", "Line item", "Cost code", "Proposal (builder cost)", "Change orders", "Budget", "Billed", "In review", "To pay now", "Paid",
+                "Held back", "Left to fund", "Approved", "Work done %", "Note", "Price to homeowner"]
         ws.append(head)
         top = ws.max_row
         for c in ws[top]:
             c.font, c.fill, c.alignment = bold, grey, Alignment(wrap_text=True, vertical="top")
-        for r in s["rows"]:
+        lines = [r for r in s["rows"] if r["kind"] != "other"]
+        for r in lines:
             ws.append([r["group"], r["title"], r["cost_code"], r["proposal"], r["change_orders"], r["revised"], r["billed"], r["in_review"], r["to_pay"], r["paid"],
-                       r["held_back"], r["left"], r["billed_percent"], r["work_done"], r["note"], r["price"]])
-        t = s["totals"]
-        ws.append(["", "Total", "", t["proposal"], t["change_orders"], t["revised"], t["billed"], t["in_review"], t["to_pay"], t["paid"], t["held_back"], t["left"],
-                   t["billed_percent"], None, "", t["price"]])
+                       r["held_back"], r["to_fund"], r["approved"], r["work_done"], r["note"], r["price"]])
+        tot = lambda k: round(sum(r[k] for r in lines), 2)
+        ws.append(["", "Total", "", tot("proposal"), tot("change_orders"), tot("revised"), tot("billed"), tot("in_review"), tot("to_pay"), tot("paid"), tot("held_back"),
+                   tot("to_fund"), tot("approved"), None, "", tot("price")])
         for c in ws[ws.max_row]:
             c.font = bold
-        for row in ws.iter_rows(min_row=top + 1, min_col=4, max_col=12):
+        for row in ws.iter_rows(min_row=top + 1, min_col=4, max_col=13):
             for c in row:
                 c.number_format = "#,##0.00"
         for col in ("P",):
@@ -390,6 +589,15 @@ class MoneySheet:
         for i, w in enumerate([30, 34, 26, 16, 14, 14, 14, 12, 12, 14, 12, 14, 9, 11, 40, 16], 1):
             ws.column_dimensions[get_column_letter(i)].width = w
         ws.freeze_panes = ws.cell(row=top + 1, column=3)
+        o = wb.create_sheet("Outside the proposal")
+        o.append(["Date", "Payment", "What it is", "Amount", "Approved", "Paid", "From", "Note"])
+        for c in o[1]:
+            c.font, c.fill = bold, grey
+        for x in s["outside"]:
+            o.append([x["date"].strftime("%Y-%m-%d") if isinstance(x.get("date"), datetime) else "", x["title"], CATEGORIES.get(x.get("category") or "", "Not yet named"),
+                      x["amount"], x["approved"], x["paid"], "Buildertrend" if x["source"] == "buildertrend" else f"entered by {x.get('by_name') or ''}", x.get("note") or ""])
+        for i, w in enumerate([12, 40, 24, 14, 14, 14, 24, 40], 1):
+            o.column_dimensions[get_column_letter(i)].width = w
         b = wb.create_sheet("Bills")
         b.append(["Bill date", "Bill", "Pay to", "Amount", "Buildertrend status", "Hold-back", "Manju Sir approved", "Team reviewed", "Ready to pay", "Paid"])
         for c in b[1]:

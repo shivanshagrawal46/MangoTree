@@ -1286,6 +1286,40 @@ def cmd_brain(args) -> int:
                       f"{len(a['observations'])} observations ({a['dropped_unsupported']} dropped) | ${a['cost_usd']:.2f} | {a['one_line'][:110]}", flush=True)
         print(f"  cost ${total:.2f}")
         return 0
+    if args.action == "billcheck":
+        # Read the contractor's logs and photos against the lines of each bill: the bill ids given, or every bill in review
+        # of the properties given (all construction bills in review when neither is given).
+        from mangotree.brain.billcheck import BillCheck
+        check = BillCheck(mongo, store)
+        ids = [int(x) for x in args.files or []]
+        if not ids and args.property:
+            ids = [b["bill_id"] for b in mongo.db["bt_bills"].find({"in_review": True, "holdback": {"$ne": True}, "property_id": {"$in": list(args.property)}},
+                                                                    {"bill_id": 1}).sort("invoice_date", -1)]
+        if not ids:
+            # Nothing named: what runs by itself after a pull — every waiting bill whose check is missing or out of date.
+            r = check.read_waiting(workers=args.workers)
+            for x in r["read"]:
+                print(f"  {x['bill_id']}  {str(x['property']):<22} {x['title'][:34]:<34} read ({x['why']}): {x['to_check']} line(s) to check, ${x['to_check_amount'] or 0:,.2f}")
+            for x in r["kept"] + r["failed"]:
+                print(f"  {x['bill_id']}  {str(x['property']):<22} {x['title'][:34]:<34} {'earlier check kept' if x in r['kept'] else 'FAILED'} ({x['why']})")
+            print(f"  {len(r['read'])} read, {len(r['kept'])} kept, {len(r['failed'])} failed; cost ${r['cost_usd']:.2f}")
+            return 0
+        total = 0.0
+        for bid in ids:
+            r = check.read(bid, force=args.force)
+            d = check.draw(bid)
+            if r and r.get("kept"):
+                print(f"  {bid}  {d['property']:<22} {d['title'][:34]:<34} {r['why']}", flush=True)
+                continue
+            if not r:
+                print(f"  {bid}  {d['property']:<22} {d['title'][:34]:<34} could not be read (no lines, or the reading failed)", flush=True)
+                continue
+            total += r["cost_usd"]
+            sm = d["summary"]
+            print(f"  {bid}  {d['property']:<22} {d['title'][:34]:<34} ${d['gross']:>10,.2f} | supported {sm['ok']['count']} lines ${sm['ok']['amount']:,.2f} | "
+                  f"to check {sm['check']['count']} lines ${sm['check']['amount']:,.2f} | {r['photos_shown']}/{r['photos_posted']} photos | ${r['cost_usd']:.2f}", flush=True)
+        print(f"  cost ${total:.2f}")
+        return 0
     if args.action in ("buildertrend", "buildertrend-receive", "after-pull", "photos-status", "photos-to-server", "photos-delete-local"):
         from pathlib import Path
         from mangotree.brain.buildertrend import Buildertrend, ServerStorageMissing
@@ -1543,8 +1577,8 @@ def main(argv=None) -> int:
 
     p_brain = sub.add_parser("brain", help="the property files: bootstrap | run | status | money")
     p_brain.add_argument("action", choices=["bootstrap", "run", "status", "money", "stage", "buildertrend", "buildertrend-receive", "after-pull",
-                                           "photos-status", "photos-to-server", "photos-delete-local", "sitework"])
-    p_brain.add_argument("files", nargs="*", help="workbook paths, for 'money'")
+                                           "photos-status", "photos-to-server", "photos-delete-local", "sitework", "billcheck"])
+    p_brain.add_argument("files", nargs="*", help="workbook paths, for 'money'; bill ids, for 'billcheck'")
     p_brain.add_argument("--property", nargs="*", help="property ids, for 'bootstrap'")
     p_brain.add_argument("--all", action="store_true", help="every active property plus the general file")
     p_brain.add_argument("--force", action="store_true", help="rebuild files that already exist")

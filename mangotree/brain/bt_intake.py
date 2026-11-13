@@ -70,8 +70,10 @@ def handle(bt: Buildertrend, mongo: Mongo, name: str, kind: str, data: str) -> s
     if name == "done":
         from .sitework import after_pull
         r = after_pull(mongo)
+        b = r.get("bills") or {}
         return (f"done: {len(r['read_again'])} properties read again ({', '.join(x['property_id'] for x in r['read_again']) or 'none had new logs'}); "
-                f"failed: {', '.join(r['failed']) or 'none'}; cost ${r['cost_usd']}")
+                f"failed: {', '.join(r['failed']) or 'none'}; bills checked: {len(b.get('read') or [])}"
+                f"{' (' + str(len(b['failed'])) + ' failed)' if b.get('failed') else ''}; cost ${r['cost_usd']}")
     return f"unknown piece {name!r}: nothing done"
 
 

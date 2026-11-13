@@ -117,7 +117,7 @@ export function PropertyHeader({ f, tab, onTab, counts }: { f: PropertyFile; tab
         {s && <div className="ml-auto hidden lg:block min-w-0 overflow-hidden"><Stepper s={s} /></div>}
       </div>
       <div className="h-[34px] px-3 flex items-center justify-between gap-4 border-t border-line/70">
-        <nav className="flex h-full gap-0.5 overflow-x-auto">
+        <nav className="flex h-full gap-0.5 overflow-x-auto" style={{ scrollbarWidth: "none" }}>
           {tabs.map((t) => {
             const n = counts?.[t.key] || 0;
             return (

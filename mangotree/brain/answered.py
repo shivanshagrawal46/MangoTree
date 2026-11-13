@@ -76,6 +76,22 @@ LINK_LABEL = {"same_conversation": "in the same conversation", "direct_reply": "
               "to_same_person": "sent to the same person afterwards"}
 
 
+def replied(verdict: Dict[str, Any]) -> bool:
+    """Has RKB dealt with this email, so that no draft should be waiting for it?
+
+    Yes when it is fully answered. Also yes when someone at RKB replied to this very
+    email — in its own conversation or as a direct reply — and that reply went to the
+    person who wrote it, even if it did not take up every point: RKB chose what to
+    say, and a draft that keeps waiting beside a reply already sent is the mistake
+    Rakesh Sir saw (Jerry Sanders, 12 Nov 2026). What was left open is kept on the
+    closed draft and in the property's log. An internal forward ("Manju, please
+    respond") does not count: the person who wrote has heard nothing yet."""
+    if verdict.get("status") == "answered":
+        return True
+    return verdict.get("status") == "partly_answered" and any(
+        b.get("link") in ("same_conversation", "direct_reply") and b.get("reached_sender") for b in verdict.get("by") or [])
+
+
 class Answered:
     def __init__(self, mongo: Mongo, records: Optional[Records] = None):
         self.mongo = mongo
@@ -154,13 +170,16 @@ class Answered:
             logger.warning("answered-check could not run for %s: %s", art["sha256"][:12], exc)
             return {**base, "status": "unknown", "error": str(exc)[:200]}
         d = r["data"]
+        asked = {str(a).lower() for a in ((art.get("participants") or {}).get("from") or [])}       # who wrote the incoming email
         by_sha = {c["sha256"][:12]: c for c in cands}
         by = []
         for tag in d.get("answered_by") or []:
             c = by_sha.get(str(tag).replace("sha=", "").strip("[] ")[:12])
             if c:
                 frm_c = ((c.get("participants") or {}).get("from") or [""])[0]
-                by.append({"sha": c["sha256"], "who": self.records.name(frm_c), "at": c.get("date"), "subject": c.get("subject"), "link": c["link"]})
+                got = {str(a).lower() for k in ("to", "cc") for a in ((c.get("participants") or {}).get(k) or [])}
+                by.append({"sha": c["sha256"], "who": self.records.name(frm_c), "at": c.get("date"), "subject": c.get("subject"), "link": c["link"],
+                           "reached_sender": bool(got & asked)})
         status = d.get("status") if d.get("status") in ("answered", "partly_answered", "not_answered") else "unknown"
         if status in ("answered", "partly_answered") and not by:
             # It says RKB answered but named no email we hold: do not act on it.

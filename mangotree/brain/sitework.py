@@ -326,15 +326,15 @@ def after_pull(mongo: Mongo, *, workers: int = 3) -> Dict[str, Any]:
     """After a Buildertrend pull: for every property that got logs it did not have
     before, read the last month again (logs and photos) and place the deal on its
     path again. Properties with no new log are left as they are — nothing changed
-    for them. Safe to call more than once: a pull is marked once it has been read."""
+    for them. Then every bill still waiting for approval is checked line by line
+    (see billcheck.py). Safe to call more than once: a pull is marked once it has
+    been read, and a bill whose check still holds is not read again."""
     from concurrent.futures import ThreadPoolExecutor
     from .snapshot import refresh_stage
     sw = SiteWork(mongo)
     waiting = list(sw.bt.pulls.find({"analysed": False, "new_logs": {"$exists": True}}))
     pids = sorted({p for w in waiting for p in (w.get("new_logs") or {})})
     out: Dict[str, Any] = {"properties_with_new_logs": pids, "read_again": [], "failed": [], "cost_usd": 0.0}
-    if not pids:
-        return out
 
     def one(pid: str):
         try:
@@ -346,7 +346,7 @@ def after_pull(mongo: Mongo, *, workers: int = 3) -> Dict[str, Any]:
             return pid, None
 
     with ThreadPoolExecutor(max_workers=max(1, min(workers, 3))) as pool:
-        for pid, a in pool.map(one, pids):
+        for pid, a in (pool.map(one, pids) if pids else []):
             if a:
                 out["read_again"].append({"property_id": pid, "overall": a.get("overall"), "pace": a.get("pace"), "headline": a.get("headline") or a.get("one_line")})
                 out["cost_usd"] += float(a.get("cost_usd") or 0)
@@ -357,6 +357,15 @@ def after_pull(mongo: Mongo, *, workers: int = 3) -> Dict[str, Any]:
     for w in waiting:
         left = {p: n for p, n in (w.get("new_logs") or {}).items() if p in failed}
         sw.bt.pulls.update_one({"_id": w["_id"]}, {"$set": {"analysed": not left, "new_logs": left or w.get("new_logs"), "analysed_at": now()}})
+    # Then the bills: every bill RKB has not approved yet is checked line by line against the logs and
+    # photos — a new bill, a bill the contractor changed, or one that has had a newer log since it was read.
+    try:
+        from .billcheck import BillCheck
+        out["bills"] = BillCheck(mongo, sw.store).read_waiting()
+        out["cost_usd"] += out["bills"]["cost_usd"]
+    except Exception:
+        logger.exception("checking the waiting bills after the pull failed")
+        out["bills"] = {"read": [], "kept": [], "failed": [], "cost_usd": 0.0, "error": True}
     try:
         from mangotree.api import swr
         swr.clear()
