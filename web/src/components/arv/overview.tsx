@@ -10,8 +10,8 @@ import * as React from "react";
 import { AlertTriangle, Bot, ChevronRight, HelpCircle, Loader2 } from "lucide-react";
 import { Badge, Card } from "@/components/arv/ui";
 import { cn, money, fmtDate } from "@/lib/utils";
-import { PROPERTY_TYPE_LABEL, VERDICT_LABEL, VERDICT_TONE, fmtFact, isAsIs, num, type AnalysisDoc, type PropertyType } from "@/lib/arv";
-import { CheckLine, Compare, Disclosure, MorePill, RangeBar, Tile } from "./bits";
+import { PROPERTY_TYPE_LABEL, VERDICT_LABEL, VERDICT_TONE, fmtFact, isAsIs, noticesOf, num, type AnalysisDoc, type PropertyType } from "@/lib/arv";
+import { CheckLine, Compare, Disclosure, MorePill, Pill, RangeBar, Tile } from "./bits";
 import { TYPE_TONE } from "./documents-drop";
 import { PropertyFile } from "./feeds-ui";
 
@@ -37,6 +37,7 @@ export function Overview({ doc, setTab }: { doc: AnalysisDoc; setTab: (t: string
   const failedChecks = (uw?.checks || []).filter((c) => !c.ok);
   const s = doc.subject;
   const condText = asIs ? `${s.condition_current || doc.as_is?.condition || "?"} today` : `${s.condition_current || "?"} → ${s.condition_after}`;
+  const notices = noticesOf(doc.profile);
 
   return (
     <div className="space-y-5">
@@ -219,7 +220,7 @@ export function Overview({ doc, setTab }: { doc: AnalysisDoc; setTab: (t: string
         </Disclosure>
 
         {(doc.profile || doc.housecanary?.subject) && (
-          <Disclosure title="Property file" badge={<span className="text-[11px] text-muted">public record</span>}
+          <Disclosure title="Property file" badge={<span className="flex items-center gap-2 shrink-0"><span className="text-[11px] text-muted">public record</span>{notices.length > 0 && <Pill tone="critical">{notices.length} foreclosure notice{notices.length === 1 ? "" : "s"} · latest {fmtDate(notices[0].recorded, "MMM yyyy")}</Pill>}</span>}
             preview={[doc.housecanary?.subject?.condition ? `HouseCanary ${doc.housecanary.subject.condition}` : null, doc.profile?.mortgages?.length ? `${doc.profile.mortgages.length} open mortgage${doc.profile.mortgages.length === 1 ? "" : "s"} · ${money(doc.profile.open_mortgage_balance, true)}` : "no open mortgage",
               doc.profile?.last_sale?.price != null ? `last sale ${money(doc.profile.last_sale.price, true)} ${fmtDate(doc.profile.last_sale.date, "MMM yy")}` : null, Object.keys(doc.profile?.flags || {}).includes("vacant") ? "vacant" : null].filter(Boolean).join(" · ")}>
             <PropertyFile doc={doc} />

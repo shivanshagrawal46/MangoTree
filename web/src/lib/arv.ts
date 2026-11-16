@@ -78,6 +78,23 @@ export type PropertyProfile = {
   tax?: { assessed_value?: number | null; market_value?: number | null; annual?: number | null; year?: number | string | null; delinquent_year?: number | null } | null;
   flood?: { zone?: any; description?: string | null } | null; flags?: Record<string, any>; units?: number | null; neighborhood?: string | null;
 };
+/** One court or foreclosure filing against the property, as the public record reports it. Not a loan: a lis pendens says a lawsuit is pending. */
+export type Notice = { recorded: string | null; kind: string; filed_by: string | null; original_loan: number | null; auction: string | null; judgment: number | null };
+
+const _day = (v: any): string | null => (v ? String(v).slice(0, 10) : null);
+const _amount = (v: any): number | null => { const n = Number(v); return v !== null && v !== undefined && v !== "" && !isNaN(n) && n > 0 ? n : null; };
+const _proper = (v: any): string | null => (v ? String(v).toLowerCase().replace(/(^|[\s\-/.])([a-z])/g, (_m, a, b) => a + b.toUpperCase()) : null);
+
+/** The filings the public record holds for the subject (RealEstateAPI's foreclosure list, kept on the file as it came), newest first. */
+export function noticesOf(p?: PropertyProfile | null): Notice[] {
+  const raw = p?.flags?.foreclosureInfo;
+  if (!Array.isArray(raw)) return [];
+  return raw.map((f: any): Notice => ({
+    recorded: _day(f?.recordingDate), kind: f?.documentType === "LisPendens" ? "Lis pendens" : String(f?.documentType || f?.noticeType || "Notice"),
+    filed_by: _proper(f?.lenderName), original_loan: _amount(f?.originalLoanAmount), auction: _day(f?.auctionDate), judgment: _amount(f?.judgmentAmount),
+  })).sort((a, b) => (b.recorded || "").localeCompare(a.recorded || ""));
+}
+
 export type Shortlist = { picks: { comp_id: string; rank?: number | null; reason?: string | null; address?: string | null }[]; rejected: { comp_id: string; reason?: string | null; address?: string | null }[];
   notes?: string | null; model?: string; effort?: string; size?: number; candidates?: number; usage?: { total_cost_usd?: number } };
 export type HouseCanaryBlock = { subject?: (HcFacts & Record<string, any>) | null; comps?: Record<string, HcFacts | null>; changed?: Record<string, string[]>; errors?: string[]; cost_usd?: number; billed_properties?: number; at?: string };

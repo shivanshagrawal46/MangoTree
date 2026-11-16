@@ -13,7 +13,7 @@ import { Table, Tooltip } from "antd";
 import { Bot, ShieldCheck, Sparkles } from "lucide-react";
 import { Button, Card } from "@/components/arv/ui";
 import { cn, money, fmtDate } from "@/lib/utils";
-import { num, type AnalysisDoc, type Comp } from "@/lib/arv";
+import { noticesOf, num, type AnalysisDoc, type Comp, type Notice } from "@/lib/arv";
 import { Pill } from "./bits";
 
 const short = (s?: string | null) => (s ? fmtDate(s, "d MMM yy") : "—");
@@ -140,7 +140,10 @@ export function PropertyFile({ doc }: { doc: AnalysisDoc }) {
   const hc = doc.housecanary?.subject;
   if (!p && !hc) return null;
   const mortgages = p?.mortgages || [];
-  const flags = Object.keys(p?.flags || {});
+  const notices = noticesOf(p);
+  // The filings have their own table below; and "free clear" is not repeated beside filings that contradict it.
+  const flags = Object.keys(p?.flags || {}).filter((f) => f !== "foreclosureInfo" && !(f === "freeClear" && notices.length > 0));
+  const anyAuction = notices.some((n) => n.auction);
   return (
     <div className="space-y-3 text-[12.5px]">
       <div className="grid gap-x-6 gap-y-1 md:grid-cols-2">
@@ -158,12 +161,24 @@ export function PropertyFile({ doc }: { doc: AnalysisDoc }) {
       {mortgages.length > 0 && (
         <div>
           <div className="text-[11px] uppercase tracking-wide text-muted font-medium mb-1">Open mortgages · {money(p?.open_mortgage_balance)}</div>
-          <Table size="small" pagination={false} rowKey={(r: any, i) => String(i)} dataSource={mortgages}
+          <Table size="small" pagination={false} dataSource={mortgages.map((m, i) => ({ ...m, key: i }))}
             columns={[{ title: "Lender", dataIndex: "lender", render: (t: string) => <span className="font-medium">{t || "—"}</span> },
               { title: "Amount", dataIndex: "amount", align: "right", width: 110, render: (v: number) => <span className="tnum">{money(v)}</span> },
               { title: "Type", dataIndex: "loan_type", render: (t: string, r: any) => <span className="text-muted">{[t, r.position, r.term].filter(Boolean).join(" · ")}</span> },
               { title: "Recorded", dataIndex: "recorded", width: 100, render: (t: string) => <span className="tnum">{short(t)}</span> },
               { title: "Matures", dataIndex: "maturity", width: 100, render: (t: string) => <span className="tnum">{short(t)}</span> }]} />
+        </div>
+      )}
+      {notices.length > 0 && (
+        <div>
+          <div className="text-[11px] uppercase tracking-wide text-critical font-medium mb-1">Court and foreclosure notices · {notices.length}</div>
+          <Table<Notice & { key: number }> size="small" pagination={false} dataSource={notices.map((n, i) => ({ ...n, key: i }))}
+            columns={[{ title: "Recorded", dataIndex: "recorded", width: 100, render: (t: string) => <span className="tnum">{short(t)}</span> },
+              { title: "Type", dataIndex: "kind", width: 190, render: (t: string) => <span className="font-medium">{t}</span> },
+              { title: "Filed by", dataIndex: "filed_by", render: (t: string) => t || "—" },
+              { title: "Original loan", dataIndex: "original_loan", align: "right" as const, width: 120, render: (v: number | null) => <span className="tnum">{v ? money(v) : <span className="text-muted">not stated</span>}</span> },
+              ...(anyAuction ? [{ title: "Auction", dataIndex: "auction", width: 100, render: (t: string) => <span className="tnum">{short(t)}</span> }] : [])]} />
+          <div className="text-[10.5px] text-muted mt-1">A lis pendens is a notice that a lawsuit affecting the property is pending. It is not a loan balance, and the record does not say whether the case is still open. A title search settles both.</div>
         </div>
       )}
       {(p?.sale_history?.length || 0) > 0 && (
