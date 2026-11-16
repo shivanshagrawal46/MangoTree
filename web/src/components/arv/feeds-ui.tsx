@@ -13,7 +13,7 @@ import { Table, Tooltip } from "antd";
 import { Bot, ShieldCheck, Sparkles } from "lucide-react";
 import { Button, Card } from "@/components/arv/ui";
 import { cn, money, fmtDate } from "@/lib/utils";
-import { noticesOf, num, type AnalysisDoc, type Comp, type Notice } from "@/lib/arv";
+import { looksLikeRent, noticesOf, num, type AnalysisDoc, type Comp, type Notice } from "@/lib/arv";
 import { Pill } from "./bits";
 
 const short = (s?: string | null) => (s ? fmtDate(s, "d MMM yy") : "—");
@@ -152,7 +152,9 @@ export function PropertyFile({ doc }: { doc: AnalysisDoc }) {
         )}
         {p?.owner?.name && <Row k="Owner" v={<span>{p.owner.name}{p.owner.absentee ? <span className="text-muted"> · absentee</span> : null}{p.owner.mail_address && p.owner.mail_address !== p.address ? <span className="text-muted"> · mail {p.owner.mail_address}</span> : null}</span>} />}
         {p?.last_sale?.price != null && <Row k="Last market sale" v={`${money(p.last_sale.price)} · ${short(p.last_sale.date)}${p.last_sale.arms_length === false ? " · not arm's length" : ""}`} />}
-        {p?.mls?.status && <Row k="MLS" v={`${p.mls.status}${p.mls.sold_price ? ` · sold ${money(p.mls.sold_price)} ${short(p.mls.sold_date)}` : p.mls.listing_price ? ` · listed ${money(p.mls.listing_price)}` : ""}${p.mls.dom != null ? ` · ${p.mls.dom} DOM` : ""}`} />}
+        {p?.mls?.status && (looksLikeRent(p.mls.sold_price || p.mls.listing_price, p)
+          ? <Row k="MLS" v={<span>{p.mls.status} · <RentTag /> {money(p.mls.sold_price || p.mls.listing_price)} a month{p.mls.dom != null ? ` · ${p.mls.dom} DOM` : ""}</span>} />
+          : <Row k="MLS" v={`${p.mls.status}${p.mls.sold_price ? ` · sold ${money(p.mls.sold_price)} ${short(p.mls.sold_date)}` : p.mls.listing_price ? ` · listed ${money(p.mls.listing_price)}` : ""}${p.mls.dom != null ? ` · ${p.mls.dom} DOM` : ""}`} />)}
         {p?.tax?.annual != null && <Row k="Tax · assessed" v={`${money(p.tax.annual)}/yr · ${money(p.tax.assessed_value)}${p.tax.market_value ? ` (market ${money(p.tax.market_value)})` : ""}`} />}
         {p?.estimated_value != null && <Row k="Record AVM · equity" v={`${money(p.estimated_value)} · ${p.equity_pct != null ? `${num(p.equity_pct)}%` : "—"}`} />}
         {p?.apn && <Row k="Parcel" v={`${p.apn}${p.legal_description ? ` · ${p.legal_description}` : ""}`} />}
@@ -195,13 +197,18 @@ export function PropertyFile({ doc }: { doc: AnalysisDoc }) {
         <div>
           <div className="text-[11px] uppercase tracking-wide text-muted font-medium mb-1">MLS history</div>
           <ul className="space-y-0.5 text-[12px]">
-            {p!.mls!.history!.map((m, i) => <li key={i} className="flex flex-wrap gap-x-2 text-muted"><span className="tnum text-fg w-[76px] shrink-0">{short(m.date)}</span><span className="text-fg w-[84px] shrink-0">{m.status}</span><span>{money(m.price)}{m.dom != null ? ` · ${m.dom} DOM` : ""}{m.agent ? ` · ${m.agent}${m.office ? `, ${m.office}` : ""}` : ""}</span></li>)}
+            {p!.mls!.history!.map((m, i) => <li key={i} className="flex flex-wrap gap-x-2 text-muted"><span className="tnum text-fg w-[76px] shrink-0">{short(m.date)}</span><span className="text-fg w-[84px] shrink-0">{m.status}</span><span>{looksLikeRent(m.price, p) ? <><RentTag /> {money(m.price)} a month</> : money(m.price)}{m.dom != null ? ` · ${m.dom} DOM` : ""}{m.agent ? ` · ${m.agent}${m.office ? `, ${m.office}` : ""}` : ""}</span></li>)}
           </ul>
         </div>
       )}
       <div className="text-[10.5px] text-muted">RealEstateAPI public record{p?.fetched_at ? `, ${fmtDate(p.fetched_at)}` : ""}{hc ? " · HouseCanary condition grade" : ""}. Deed amounts are what the county recorded; MLS figures are from the listing feed.</div>
     </div>
   );
+}
+
+/* The feed calls every listing a sale. A figure this small against the house's value is a monthly rent (lib/arv looksLikeRent). */
+function RentTag() {
+  return <span title="The listing feed records this as a sale. The figure is under 3% of the house's value, so it is read as a monthly rent, not a sale price." className="text-fg font-medium underline decoration-dotted underline-offset-2 cursor-help">rental listing</span>;
 }
 
 function Row({ k, v }: { k: string; v: React.ReactNode }) {

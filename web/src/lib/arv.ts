@@ -95,6 +95,13 @@ export function noticesOf(p?: PropertyProfile | null): Notice[] {
   })).sort((a, b) => (b.recorded || "").localeCompare(a.recorded || ""));
 }
 
+/** The listing feed files a rental listing in the same fields as a sale, so a monthly rent can arrive as a "sold price".
+ *  A figure under 3% of the house's own value is read as a rent. With no value on record nothing is assumed. Screen wording only. */
+export function looksLikeRent(price?: number | null, p?: PropertyProfile | null): boolean {
+  const worth = p?.estimated_value || p?.tax?.market_value || null;
+  return !!price && price > 0 && !!worth && price < worth * 0.03;
+}
+
 export type Shortlist = { picks: { comp_id: string; rank?: number | null; reason?: string | null; address?: string | null }[]; rejected: { comp_id: string; reason?: string | null; address?: string | null }[];
   notes?: string | null; model?: string; effort?: string; size?: number; candidates?: number; usage?: { total_cost_usd?: number } };
 export type HouseCanaryBlock = { subject?: (HcFacts & Record<string, any>) | null; comps?: Record<string, HcFacts | null>; changed?: Record<string, string[]>; errors?: string[]; cost_usd?: number; billed_properties?: number; at?: string };
