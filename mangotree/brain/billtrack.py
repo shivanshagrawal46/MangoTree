@@ -58,6 +58,7 @@ class BillTracker:
             "buildertrend_status": b.get("status"), "in_buildertrend": not b.get("_gone"), "approvers": b.get("approvers") or [],
             "line_items": b.get("line_items") or [], "created_by": b.get("created_by"), "documents": b.get("documents") or 0, "file_names": b.get("file_names") or [],
             "steps": {k: steps.get(k) for k in STEP_KEYS},
+            "comment": (t or {}).get("comment") or None,
         }
 
     def rows(self, view: str = "open") -> List[Dict[str, Any]]:
@@ -93,6 +94,29 @@ class BillTracker:
         held = list(self.bills.find({"holdback": True, "status": {"$ne": "Paid"}}, {"amount": 1, "balance": 1}))
         return {"in_review": len(review), "in_review_amount": round(sum(b.get("amount") or 0 for b in review), 2),
                 "held": len(held), "held_amount": round(sum((b.get("balance") if b.get("balance") is not None else b.get("amount")) or 0 for b in held), 2)}
+
+    def set_comment(self, bill_id: int, text: str, user: Dict[str, Any]) -> Dict[str, Any]:
+        """RKB's own note on a bill, shown in the Comment column of the Bills page. One comment
+        per bill: writing again replaces it, an empty one removes it, and every change is kept in
+        the bill's history with who made it and when. Nothing is sent and nothing goes to Buildertrend."""
+        text = " ".join(str(text or "").split())[:500]
+        b = self.bills.find_one({"bill_id": int(bill_id)}, {"_id": 0})
+        t = self.track.find_one({"bill_id": int(bill_id)}, {"_id": 0})
+        if not b and not t:
+            raise KeyError(bill_id)
+        mark = {"at": now(), "by": user.get("user_id"), "by_name": user.get("name") or user.get("user_id")}
+        if text != ((t or {}).get("comment") or {}).get("text", ""):
+            change: Dict[str, Any] = {"$set": {"updated_at": now()}, "$setOnInsert": {"bill_id": int(bill_id), "started_at": now()},
+                                      "$push": {"history": {"comment": text, **mark}}}
+            if text:
+                change["$set"]["comment"] = {"text": text, **mark}
+            else:
+                change["$unset"] = {"comment": ""}
+            if b:
+                change["$set"]["bill"] = {k: b.get(k) for k in _KEEP}
+            self.track.update_one({"bill_id": int(bill_id)}, change, upsert=bool(text))
+            t = self.track.find_one({"bill_id": int(bill_id)}, {"_id": 0})
+        return self._row(b or {**(t or {}).get("bill", {}), "status": "No longer in Buildertrend", "_gone": True}, t)
 
     def set_step(self, bill_id: int, step: str, done: bool, user: Dict[str, Any]) -> Dict[str, Any]:
         if step not in STEP_KEYS:

@@ -103,6 +103,10 @@ class StepBody(BaseModel):
     done: bool = True
 
 
+class BillCommentBody(BaseModel):
+    text: str = ""
+
+
 class BillLineBody(BaseModel):
     key: str
     decision: Optional[str] = None       # "ok" | "hold" | "" (clear the mark); None leaves it as it is
@@ -275,13 +279,26 @@ def install(app: FastAPI, mongo: Mongo, jobs) -> None:
         except KeyError:
             raise HTTPException(404, "That bill is not on file.")
 
+    @app.post("/brain/bills/{bill_id}/comment")
+    def brain_bill_comment(bill_id: int, body: BillCommentBody, user=CurrentUser):
+        """RKB's own comment on a bill (the Comment column). An empty text removes it. Nothing is sent."""
+        try:
+            return data.clean({"bill_id": bill_id, "comment": billtrack.set_comment(bill_id, body.text, user)["comment"]})
+        except KeyError:
+            raise HTTPException(404, "That bill is not on file.")
+
     # ---------------------------------------------------------- one bill, checked line by line
+    def _bill_check_page(d: Dict[str, Any], user: Dict[str, Any]) -> Dict[str, Any]:
+        """The check, with who the page's "ready to pay" email goes to and whether it has gone."""
+        return data.clean({**d, "can": {"lines": user.get("role") in ("ceo", "accountant", "operations")},
+                           "mail_to": billmail.recipients(), "mail": billmail.state(d["bill_id"])})
+
     @app.get("/brain/bills/{bill_id}/check")
     @swr.cached("bill-check", fresh=10, keep=120)
     def brain_bill_check(bill_id: int, user=CurrentUser):
         """One bill against the proposal and the site record: which line, how much, and what supports it."""
         try:
-            return data.clean({**billcheck.draw(bill_id), "can": {"lines": user.get("role") in ("ceo", "accountant", "operations")}})
+            return _bill_check_page(billcheck.draw(bill_id), user)
         except KeyError:
             raise HTTPException(404, "That bill is not on file.")
 
@@ -298,7 +315,7 @@ def install(app: FastAPI, mongo: Mongo, jobs) -> None:
     @app.post("/brain/bills/{bill_id}/check/line")
     def brain_bill_check_line(bill_id: int, body: BillLineBody, user=CurrentUser):
         try:
-            return data.clean({**billcheck.decide(bill_id, body.key, user, decision=body.decision, note=body.note), "can": {"lines": True}})
+            return _bill_check_page(billcheck.decide(bill_id, body.key, user, decision=body.decision, note=body.note), user)
         except PermissionError as exc:
             raise HTTPException(403, str(exc))
         except ValueError as exc:
