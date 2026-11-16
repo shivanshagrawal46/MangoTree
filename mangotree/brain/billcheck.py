@@ -209,7 +209,7 @@ class BillCheck:
             budget, prev = a["revised"], round(b0.get("billed") or 0.0, 2)
             line = {"key": a["key"], "kind": a["kind"], "group": a["group"], "title": a["title"], "cost_code": a["cost_code"], "budget": budget,
                     "before": prev, "this": this, "after": round(prev + this, 2),
-                    "left": round(budget - prev - this, 2) if a["kind"] != "other" else 0.0,
+                    "left": (round(budget - prev - this, 2) + 0.0) if a["kind"] != "other" else 0.0,      # + 0.0: never "-0.00"
                     "percent_after": round(100 * (prev + this) / budget) if budget else None, "flags": []}
             if a["kind"] == "other" and a.get("unplaced"):
                 line["flags"].append({"kind": "outside", "text": "The proposal has more than one line with this name, and Buildertrend's line id has not been read "
