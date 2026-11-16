@@ -125,13 +125,37 @@ class MoneySheet:
             row["held_back"] += amount
         elif b.get("status") == PAID or b["bill_id"] in paid_here:
             row["paid"] += amount
-        elif b.get("status") == IN_REVIEW:
+        elif b.get("in_review"):                                   # on Buildertrend's "Bills need your approval" list
             row["in_review"] += amount
+
+    @staticmethod
+    def _row_for(li: Dict[str, Any], index: Dict[Tuple[str, str], List[Dict[str, Any]]],
+                 by_po: Dict[Any, List[Dict[str, Any]]]) -> Tuple[Optional[Dict[str, Any]], bool]:
+        """The proposal row a bill line belongs to, and whether it could NOT be decided.
+
+        Buildertrend's own tie comes first: the bill line names the purchase-order line it is
+        taken from, and the proposal line names the same one. Without that tie the line goes by
+        its name and cost code. When the proposal has that name more than once (two "Plumbing-
+        Modify and Upgrade"), the line's price and then its description must leave exactly one;
+        if they do not, the line is not placed at all — the system does not guess, a person says."""
+        tied = by_po.get(li.get("po_line_id")) if li.get("po_line_id") else None
+        if tied and len(tied) == 1:
+            return tied[0], False
+        cands = tied or index.get((_norm(li.get("cost_code")), _norm(li.get("title")))) or []
+        if len(cands) <= 1:
+            return (cands[0] if cands else None), False
+        unit = li.get("unit_cost") or 0
+        pool = [c for c in cands if abs((c["proposal"] or 0) - unit) < 0.01 or abs((c.get("_unit") or 0) - unit) < 0.01] or cands
+        if len(pool) > 1:
+            said = _norm(li.get("description"))
+            pool = [c for c in pool if said and _norm(c.get("description")) == said]
+        return (pool[0], False) if len(pool) == 1 else (None, True)
 
     def _rows(self, estimate: Optional[Dict[str, Any]], bills: List[Dict[str, Any]], paid_here: set) -> Tuple[List[Dict[str, Any]], List[str]]:
         """The proposal's lines, with every bill line added to the row it belongs to."""
         rows: List[Dict[str, Any]] = []
         index: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
+        by_po: Dict[Any, List[Dict[str, Any]]] = {}
         for g in (estimate or {}).get("groups") or []:
             for li in g["lines"]:
                 row = {"key": f"e{li['line_id']}", "kind": "proposal", "group": g["title"], "title": li["title"] or li["cost_code"], "cost_code": li["cost_code"],
@@ -139,6 +163,8 @@ class MoneySheet:
                        "_unit": li.get("unit_cost") or 0.0, "change_orders": 0.0, "billed": 0.0, "in_review": 0.0, "paid": 0.0, "held_back": 0.0, "bills": 0}
                 rows.append(row)
                 index.setdefault((_norm(li["cost_code"]), _norm(li["title"])), []).append(row)
+                if li.get("po_line_id"):
+                    by_po.setdefault(li["po_line_id"], []).append(row)
         extras: Dict[str, Dict[str, Any]] = {}
         notes: List[str] = []
         no_lines = [b for b in bills if not b.get("line_items")]
@@ -148,42 +174,17 @@ class MoneySheet:
         for b in bills:
             for li in b.get("line_items") or []:
                 amount = li.get("amount") or 0.0
-                cands = index.get((_norm(li.get("cost_code")), _norm(li.get("title")))) or []
-                row = None
-                if len(cands) == 1:
-                    row = cands[0]
-                elif cands:
-                    # Two proposal lines with the same name (two "Framing/Masonry", two "Toilet"): the bill line carries
-                    # the line's price, which usually tells them apart. Where it does not (same unit price on both), the
-                    # money goes to the line that still has the most room, so one line is not shown as billed three
-                    # times over while its twin shows nothing.
-                    unit = li.get("unit_cost") or 0
-                    same = [c for c in cands if abs((c["proposal"] or 0) - unit) < 0.01 or abs((c.get("_unit") or 0) - unit) < 0.01]
-                    pool = same or cands
-                    row = max(pool, key=lambda c: (c["proposal"] or 0) - c["billed"]) if amount else pool[0]
-                    if amount > 0 and len(pool) > 1:
-                        # The contractor's purchase order can hold these as ONE line (three toilets) where the proposal
-                        # has two (two toilets, one toilet). Fill the line with the most room, and pass on what does not fit.
-                        left = amount
-                        for c in sorted(pool, key=lambda c: (c["proposal"] or 0) - c["billed"], reverse=True)[:-1]:
-                            part = round(min(left, max(0.0, (c["proposal"] or 0) - c["billed"])), 2)
-                            if part > 0 and part < left:
-                                self._put(c, part, b, paid_here)
-                                left = round(left - part, 2)
-                                row = next((x for x in pool if x is not c and (x["proposal"] or 0) - x["billed"] > 0), row)
-                            else:
-                                row = c
-                                break
-                        amount = left
+                row, unplaced = self._row_for(li, index, by_po)
                 if row is None:
-                    is_co = "change order" in str(li.get("variance") or "").lower()
+                    is_co = "change order" in str(li.get("variance") or "").lower() and not unplaced
                     if not amount and not is_co:
                         continue                                   # an unbilled line of some other purchase order: not this proposal's
                     k = self._extra_key(li)
                     row = extras.get(k)
                     if row is None:
-                        row = extras[k] = {"key": k, "kind": "change_order" if is_co else "other",
-                                           "group": "Change orders" if is_co else "Billed, but not a line of the proposal",
+                        row = extras[k] = {"key": k, "kind": "change_order" if is_co else "other", "unplaced": unplaced,
+                                           "group": "Change orders" if is_co else "Not placed: the proposal has this name more than once" if unplaced
+                                           else "Billed, but not a line of the proposal",
                                            "title": li.get("title") or b.get("title") or "", "cost_code": li.get("cost_code") or "",
                                            "description": li.get("description") or "", "proposal": 0.0, "price": 0.0,
                                            "change_orders": (li.get("unit_cost") or 0.0) if is_co else 0.0,
@@ -308,7 +309,15 @@ class MoneySheet:
         tracking = {t["bill_id"]: t for t in self.track.find({"bill_id": {"$in": [b["bill_id"] for b in bills]}}, {"_id": 0, "bill_id": 1, "steps": 1})}
         paid_here = {bid for bid, t in tracking.items() if (t.get("steps") or {}).get("paid")}
         saved = self.inputs.find_one({"property_id": pid}, {"_id": 0}) or {}
-        rows, notes = self._rows(estimate, bills, paid_here)
+        # "In review" on this sheet is RKB's own list: Buildertrend's "Bills need your approval" (the stored
+        # in_review flag), not everything under its In Review tab (admin directive 2026-11-16). A bill that
+        # only sits under that tab is waiting on someone else: it is named in a note and kept out of the columns.
+        aside = [b for b in bills if b.get("status") == IN_REVIEW and not b.get("in_review") and b["bill_id"] not in paid_here]
+        counted = [b for b in bills if b not in aside]
+        rows, notes = self._rows(estimate, counted, paid_here)
+        if aside:
+            notes.append(f"{len(aside)} bill(s) are under Buildertrend's In Review tab but not on RKB's approval list "
+                         f"(${sum(b.get('amount') or 0 for b in aside):,.2f}); they are in the bill list below but not in the columns.")
         rows = self._place(rows, saved)
         for r in rows:
             mine = (saved.get("lines") or {}).get(r["key"]) or {}
@@ -344,14 +353,14 @@ class MoneySheet:
             return b.get("date_paid") or tick.get("at")
 
         paid_bills = [b for b in bills if not b.get("holdback") and (b.get("status") == PAID or b["bill_id"] in paid_here)]
-        open_bills = [b for b in bills if not b.get("holdback") and b not in paid_bills]
+        open_bills = [b for b in counted if not b.get("holdback") and b not in paid_bills]
         last = max(paid_bills, key=lambda b: (paid_at(b) or datetime(1970, 1, 1)).replace(tzinfo=None), default=None)
         payments = {
             "paid": round(sum(b.get("amount") or 0 for b in paid_bills), 2), "paid_count": len(paid_bills),
-            "to_pay": round(sum(b.get("amount") or 0 for b in open_bills if b.get("status") != IN_REVIEW), 2),
-            "to_pay_count": sum(1 for b in open_bills if b.get("status") != IN_REVIEW),
-            "in_review": round(sum(b.get("amount") or 0 for b in open_bills if b.get("status") == IN_REVIEW), 2),
-            "in_review_count": sum(1 for b in open_bills if b.get("status") == IN_REVIEW),
+            "to_pay": round(sum(b.get("amount") or 0 for b in open_bills if not b.get("in_review")), 2),
+            "to_pay_count": sum(1 for b in open_bills if not b.get("in_review")),
+            "in_review": round(sum(b.get("amount") or 0 for b in open_bills if b.get("in_review")), 2),
+            "in_review_count": sum(1 for b in open_bills if b.get("in_review")),
             "held_back": round(sum((b.get("balance") if b.get("balance") is not None else b.get("amount")) or 0 for b in bills if b.get("holdback") and b.get("status") != PAID), 2),
             "last_paid": None if not last else {"title": last.get("title"), "amount": last.get("amount"), "at": paid_at(last)},
         }

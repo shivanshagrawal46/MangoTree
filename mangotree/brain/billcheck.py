@@ -211,7 +211,10 @@ class BillCheck:
                     "before": prev, "this": this, "after": round(prev + this, 2),
                     "left": round(budget - prev - this, 2) if a["kind"] != "other" else 0.0,
                     "percent_after": round(100 * (prev + this) / budget) if budget else None, "flags": []}
-            if a["kind"] == "other":
+            if a["kind"] == "other" and a.get("unplaced"):
+                line["flags"].append({"kind": "outside", "text": "The proposal has more than one line with this name, and Buildertrend's line id has not been read "
+                                                                 "for this bill. Say which line it belongs to."})
+            elif a["kind"] == "other":
                 line["flags"].append({"kind": "outside", "text": "Not a line of the proposal. Say what it is: a contingency, a payment to the homeowner, or which line."})
             elif a["kind"] == "change_order":
                 line["flags"].append({"kind": "change_order", "text": "A change order. Check that RKB agreed to it and to this price."})

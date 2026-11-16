@@ -198,9 +198,13 @@ class Buildertrend:
             if not pid:
                 continue
             review = set(v.get("inReviewIds") or [])
+            # Which bills are waiting for RKB (admin directive 2026-11-14): the ones on Buildertrend's
+            # "Bills need your approval" list, not everything under its "In Review" tab. A pull
+            # that does not carry that list (the earlier ones) falls back to the tab.
+            queue = set(v["toApproveIds"]) if v.get("toApproveIds") is not None else None
             ops, seen = [], []
             for r in v.get("rows") or []:
-                doc = self._bill(r, pid, r["id"] in review, details.get(str(r["id"])))
+                doc = self._bill(r, pid, r["id"] in review, details.get(str(r["id"])), waiting=None if queue is None else r["id"] in queue)
                 doc["pulled_at"] = bills_at
                 ops.append(UpdateOne({"bill_id": r["id"]}, {"$set": doc}, upsert=True))
                 seen.append(r["id"])
@@ -218,7 +222,11 @@ class Buildertrend:
         """What a bill's own page adds to its row in the list: who entered it, and its lines.
         Every bill carries the WHOLE proposal — one line per proposal item and per change
         order — with the line's price (unit cost) and the share of it this bill claims
-        (quantity, a fraction) and the money that share comes to (amount)."""
+        (quantity, a fraction) and the money that share comes to (amount).
+        ``po_line_id`` is Buildertrend's own tie: the purchase-order line this bill line is
+        taken from (the proposal line carries the same id). It is what tells two lines with
+        the same name apart. ``billed_elsewhere`` is what Buildertrend shows as billed on that
+        purchase-order line by the other bills ("Previous billed" on its screen)."""
         return {
             "created_by": detail.get("createdByName"),
             "description": ((detail.get("description") or {}).get("value") or "").strip(),
@@ -226,6 +234,7 @@ class Buildertrend:
                 "title": (li.get("title") or "").strip(), "description": (li.get("description") or "").strip(), "cost_code": (li.get("costCodeTitle") or "").strip(),
                 "quantity": li.get("quantity"), "unit_cost": _money(li.get("unitCost")), "amount": _money(li.get("builderCost") if li.get("builderCost") is not None else li.get("calculatedAmount")),
                 "variance": None if (li.get("varianceCodeTitle") or "").startswith("--") else li.get("varianceCodeTitle"),
+                "po_line_id": li.get("purchaseOrderLineItemId") or None, "billed_elsewhere": _money(li.get("amountBilled")),
             } for li in ((detail.get("lineItems") or {}).get("value") or [])],
             "file_names": [f.get("title") for f in ((detail.get("attachedFiles") or {}).get("files") or []) if f.get("title")][:40],
         }
@@ -429,7 +438,11 @@ class Buildertrend:
         return out
 
     @staticmethod
-    def _bill(r: Dict[str, Any], pid: str, in_review: bool, detail: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    def _bill(r: Dict[str, Any], pid: str, in_review: bool, detail: Optional[Dict[str, Any]], *, waiting: Optional[bool] = None) -> Dict[str, Any]:
+        """``in_review``: the bill is under Buildertrend's "In Review" tab (that is its status).
+        ``waiting``: it is on Buildertrend's "Bills need your approval" list. The stored
+        ``in_review`` flag — which the Bills page, the follow-ups and the bill check all read as
+        "waiting for RKB" — is ``waiting`` when the pull carries that list, else the tab."""
         code = (r.get("purchaseOrderPaymentStatus") or {}).get("paymentStatus")
         amount, paid, balance = _money(r.get("paymentAmount")), _money(r.get("amountPaid")), _money(r.get("remainingBalance"))
         if in_review:
@@ -446,7 +459,8 @@ class Buildertrend:
         doc: Dict[str, Any] = {
             "bill_id": r["id"], "job_id": r.get("jobId"), "property_id": pid, "number": (r.get("billNumberLink") or {}).get("title"),
             "title": (r.get("billTitleLink") or {}).get("title"), "pay_to": (r.get("payTo") or {}).get("payTo"), "kind": r.get("documentType") or "Bill",
-            "amount": amount, "paid": paid, "balance": balance, "status": status, "status_code": code, "in_review": in_review,
+            "amount": amount, "paid": paid, "balance": balance, "status": status, "status_code": code,
+            "in_review": in_review if waiting is None else bool(waiting), "bt_in_review": in_review, "to_approve": waiting,
             "holdback": is_holdback((r.get("billTitleLink") or {}).get("title")),
             "invoice_date": _dt(r.get("invoicedDate")), "due_date": _dt(due.get("date")), "past_due": bool(due.get("isPastDue")), "date_paid": _dt(r.get("datePaid")),
             "created": _dt(r.get("createdDate")), "cost_codes": r.get("costCodes") or [], "variance_codes": r.get("varianceCodes") or [],
