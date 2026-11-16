@@ -24,11 +24,17 @@ export async function copyText(text: string): Promise<boolean> {
     }
   } catch { /* fall through */ }
   try {
+    // Inside an open dialog the page keeps the keyboard focus within the dialog, so the hidden box has to
+    // live there too — put anywhere else it cannot be selected and nothing is copied.
+    const dialogs = document.querySelectorAll<HTMLElement>('[role="dialog"]');
+    const host = dialogs.length ? dialogs[dialogs.length - 1] : document.body;
+    const before = document.activeElement as HTMLElement | null;
     const ta = document.createElement("textarea");
-    ta.value = text; ta.setAttribute("readonly", ""); ta.style.position = "fixed"; ta.style.left = "-9999px";
-    document.body.appendChild(ta); ta.select(); ta.setSelectionRange(0, text.length);
+    ta.value = text; ta.setAttribute("readonly", ""); ta.style.position = "fixed"; ta.style.left = "-9999px"; ta.style.top = "0";
+    host.appendChild(ta); ta.focus({ preventScroll: true }); ta.select(); ta.setSelectionRange(0, text.length);
     const ok = document.execCommand("copy");
-    document.body.removeChild(ta);
+    host.removeChild(ta);
+    before?.focus?.({ preventScroll: true });
     return ok;
   } catch { return false; }
 }

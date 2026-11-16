@@ -13,14 +13,14 @@ import { Badge, Button, Input } from "@/components/ui";
 import { useEvidence } from "@/components/evidence";
 import { ago, cn, fmtDate } from "@/lib/utils";
 import { errText, type Draft, type Person, type Verification } from "@/lib/brain";
+import { copyText } from "@/components/email-draft";
 
 function people(list: Person[] | undefined) {
   return (list || []).map((p) => (p.name && p.name !== p.email ? `${p.name}${p.email ? ` <${p.email}>` : ""}` : p.email || p.name || "")).filter(Boolean).join(", ");
 }
 
-async function copy(text: string) {
-  try { await navigator.clipboard.writeText(text); return true; } catch { return false; }
-}
+/* The site is reached over plain HTTP, where the browser's clipboard API does not exist: copyText falls back to the selection copy. */
+const copy = (text: string) => copyText(text);
 
 export function useDraftRefresh() {
   const qc = useQueryClient();

@@ -16,6 +16,7 @@ import { Card, Skeleton } from "@/components/ui";
 import { usd } from "@/components/brain/side";
 import { ago, cn } from "@/lib/utils";
 import { errText } from "@/lib/brain";
+import { copyText } from "@/components/email-draft";
 
 export type FollowItem = {
   key: string; kind: string; property_id: string; property: string; owner: string; owner_name: string; title: string; detail: string;
@@ -124,7 +125,7 @@ export function FollowUpsPage() {
     qc.invalidateQueries({ queryKey: ["brain", "alerts"] });
     qc.invalidateQueries({ queryKey: ["brain", "counts"] });
   };
-  const copyWes = async () => { try { await navigator.clipboard.writeText(d.message_for_wes); toast.success("Message for Wes copied. Read it, change it, and send it yourself."); } catch { toast.error("Could not copy."); } };
+  const copyWes = async () => { if (await copyText(d.message_for_wes)) toast.success("Message for Wes copied. Read it, change it, and send it yourself."); else toast.error("Could not copy."); };
   const tabs: [string, string][] = [...Object.entries(d.owners), ["all", "Everyone"]];
 
   return (

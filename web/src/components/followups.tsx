@@ -14,6 +14,7 @@ import { Badge, Button, Card, CardHeader, Dialog, DialogContent, Empty, Textarea
 import { useEvidence } from "@/components/evidence";
 import { useUser } from "@/components/providers";
 import { cn, fmtDate, ago, propertyLabel } from "@/lib/utils";
+import { copyText } from "@/components/email-draft";
 import type { Followup, FollowupsResponse } from "@/lib/types";
 
 const OWNER: Record<string, string> = { rakesh: "Rakesh Sir", jp: "JP Sir", manjunath: "Manjunath Sir" };
@@ -71,7 +72,7 @@ export function FollowupRow({ f, onChange, ceo }: { f: Followup; onChange: () =>
               <input value={draft.subject} onChange={(e) => setDraft({ ...draft, subject: e.target.value })} className="h-9 w-full rounded-xl border border-line bg-elev px-3 text-sm" />
               <Textarea value={draft.body} onChange={(e) => setDraft({ ...draft, body: e.target.value })} className="min-h-[260px] text-[13px] leading-relaxed" />
               <div className="flex items-center justify-between">
-                <Button size="sm" variant="ghost" onClick={() => navigator.clipboard?.writeText(`${draft.subject}\n\n${draft.body}`)}><Copy size={12} /> Copy instead</Button>
+                <Button size="sm" variant="ghost" onClick={() => { void copyText(`${draft.subject}\n\n${draft.body}`); }}><Copy size={12} /> Copy instead</Button>
                 <div className="flex gap-2"><Button variant="secondary" onClick={() => setDraft(null)}>Cancel</Button><Button variant="primary" disabled={sendExt.isPending || !f.counterparty?.email} onClick={() => sendExt.mutate(draft)}><Mail size={13} /> Send now</Button></div>
               </div>
               {sendExt.error && <div className="text-xs text-critical">{(sendExt.error as any).message}</div>}

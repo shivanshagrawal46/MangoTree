@@ -21,6 +21,7 @@ import { api, subscribeJob } from "@/lib/api";
 import { Button, Card, Dialog, DialogContent, Skeleton } from "@/components/ui";
 import { ago, cn, fmtDate } from "@/lib/utils";
 import { errText } from "@/lib/brain";
+import { copyText } from "@/components/email-draft";
 
 type Verdict = "shown" | "said" | "partly" | "nothing" | "against";
 type Evidence = { verdict: Verdict; basis: string; log_dates: string[]; photo_ids: number[]; ask: string };
@@ -324,7 +325,7 @@ export function BillCheckPage({ billId }: { billId: string }) {
           <pre className="whitespace-pre-wrap rounded-xl border border-line bg-sunken/50 px-3.5 py-3 text-[12.5px] leading-relaxed font-sans max-h-[52vh] overflow-y-auto">{d.message_for_wes}</pre>
           <div className="mt-3 flex justify-end gap-2">
             <Button variant="ghost" onClick={() => setMsg(false)}>Close</Button>
-            <Button variant="primary" onClick={() => { navigator.clipboard.writeText(d.message_for_wes).then(() => toast.success("Copied.")).catch(() => toast.error("Could not copy. Select the text and copy it.")); }}><Copy size={13} /> Copy</Button>
+            <Button variant="primary" onClick={async () => { if (await copyText(d.message_for_wes)) toast.success("Copied."); else toast.error("Could not copy. Select the text and copy it."); }}><Copy size={13} /> Copy</Button>
           </div>
         </DialogContent>
       </Dialog>
