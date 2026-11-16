@@ -6,7 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Command } from "cmdk";
 import { motion } from "framer-motion";
-import { Gavel, Tag, LayoutGrid, Building2, CheckSquare, Inbox, Users, MessageSquare, Search, LogOut, Moon, Sun, AlertTriangle, ChevronRight, HardHat, ClipboardList, BellRing, FileBadge, Calculator, Archive, ChevronDown, Reply, Receipt } from "lucide-react";
+import { Gavel, Tag, LayoutGrid, Building2, CheckSquare, Inbox, Users, MessageSquare, Search, LogOut, Moon, Sun, AlertTriangle, ChevronRight, HardHat, ClipboardList, BellRing, FileBadge, Calculator, Archive, ChevronDown, Reply, Receipt, Handshake } from "lucide-react";
 import { api } from "@/lib/api";
 import { useUser } from "@/components/providers";
 import { Kbd } from "@/components/ui";
@@ -22,6 +22,7 @@ const NAV = [
   { href: "/replies", label: "To reply", icon: Reply },
   { href: "/bills", label: "Bills", icon: Receipt },
   { href: "/chase", label: "Follow-ups", icon: BellRing },
+  { href: "/brokers", label: "Brokers", icon: Handshake },
   { href: "/ask", label: "Ask", icon: MessageSquare },
   { href: "/arv", label: "ARV & underwriting", icon: Calculator },
   { href: "/sold", label: "Sold deals", icon: Archive },

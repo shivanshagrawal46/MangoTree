@@ -279,6 +279,16 @@ def install(app: FastAPI, mongo: Mongo, jobs) -> None:
         except KeyError:
             raise HTTPException(404, "That bill is not on file.")
 
+    # ---------------------------------------------------------- brokers and agents, by area
+    from .brokers import Brokers
+    brokers = Brokers(mongo)
+
+    @app.get("/brain/brokers")
+    @swr.cached("brokers", fresh=60, keep=900, per_user=False)
+    def brain_brokers(user=CurrentUser):
+        """The agents and brokers RKB knows, by the area of its properties (see brain/brokers.py)."""
+        return data.clean(brokers.page())
+
     @app.post("/brain/bills/{bill_id}/comment")
     def brain_bill_comment(bill_id: int, body: BillCommentBody, user=CurrentUser):
         """RKB's own comment on a bill (the Comment column). An empty text removes it. Nothing is sent."""
