@@ -8,7 +8,7 @@ import * as React from "react";
 import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { ChevronRight } from "lucide-react";
+import { Banknote, ChevronRight, Clock, Lock, Receipt } from "lucide-react";
 import { api } from "@/lib/api";
 import { Button, Card, Checkbox, Dialog, DialogContent, Skeleton } from "@/components/ui";
 import { BillLines, usd } from "@/components/brain/side";
@@ -52,6 +52,31 @@ const daysOpen = (from?: string | null) => (from ? Math.floor((Date.now() - new 
 const COLS = "grid-cols-[200px_136px_74px_88px_repeat(4,92px)_78px_minmax(190px,1fr)]";
 /* Hold-back bills are never listed here, so "(Contractor)" on a name says nothing: the row shows the name without it. */
 const shortName = (t?: string) => (t || "").replace(/\s*\(contractor\)\s*$/i, "").trim();
+
+/* The four figures on top of the list, each with its own colour so the page reads at a glance. */
+const TONES = {
+  accent: { bar: "bg-accent", chip: "bg-accent-soft text-accent" },
+  blue: { bar: "bg-money-in", chip: "bg-[color-mix(in_srgb,var(--money-in)_13%,transparent)] text-money-in" },
+  good: { bar: "bg-good", chip: "bg-good-soft text-good" },
+  high: { bar: "bg-high", chip: "bg-high-soft text-high" },
+  critical: { bar: "bg-critical", chip: "bg-critical-soft text-critical" },
+  slate: { bar: "bg-info", chip: "bg-info-soft text-info" },
+} as const;
+function Tile({ tone, icon, label, value, sub }: { tone: keyof typeof TONES; icon: React.ReactNode; label: string; value: React.ReactNode; sub?: React.ReactNode }) {
+  return (
+    <div className="relative overflow-hidden rounded-xl border border-line bg-elev pl-4 pr-3.5 py-3 flex items-center gap-3 shadow-[var(--shadow-sm)]">
+      <span className={cn("absolute inset-y-0 left-0 w-[3px]", TONES[tone].bar)} />
+      <span className={cn("grid place-items-center size-9 rounded-lg shrink-0", TONES[tone].chip)}>{icon}</span>
+      <div className="min-w-0">
+        <div className="text-[10px] font-semibold uppercase tracking-[0.09em] text-faint">{label}</div>
+        <div className="text-[18px] font-semibold tracking-tight tnum leading-tight mt-0.5">{value}</div>
+        {sub && <div className="text-[11px] text-muted truncate mt-0.5">{sub}</div>}
+      </div>
+    </div>
+  );
+}
+/* A bill is overdue once its due day has passed and it is not ticked paid (worked out now, not from the day Buildertrend was last read). */
+const overdue = (due?: string | null) => !!due && Date.now() > new Date(due).getTime() + 12 * 3_600_000;
 
 /* RKB's own note on a bill. Written in place; saved when the box is left (or on Enter). Empty removes it. */
 function Comment({ row, onSaved }: { row: Row; onSaved: (c: Row["comment"]) => void }) {
@@ -129,21 +154,35 @@ export default function BillsPage() {
           <h1 className="text-[20px] font-semibold tracking-tight">Bills</h1>
           <p className="text-[12.5px] text-muted mt-0.5">
             {!q.data ? "Loading…" : view === "open"
-              ? (rows.length ? <>{rows.length} bill{rows.length === 1 ? "" : "s"} to process · {usd(total)} · oldest is {oldest} days old</> : "No bill is waiting.")
-              : (rows.length ? <>{rows.length} paid · {usd(total)}{avgDays != null ? ` · on average ${avgDays.toFixed(1)} days from bill date to paid` : ""}</> : "No bill has been marked paid yet.")}
+              ? (rows.length ? "Bills waiting for RKB, from approval to payment" : "No bill is waiting.")
+              : (rows.length ? "Bills ticked Paid, with the time each one took" : "No bill has been marked paid yet.")}
             {q.data?.pulled_at && <span className="text-faint"> · Buildertrend read {ago(q.data.pulled_at)}</span>}
           </p>
         </div>
         <div className="inline-flex rounded-lg bg-sunken p-0.5 border border-line">
           {([["open", "To process"], ["paid", "Paid"]] as const).map(([k, l]) => (
-            <button key={k} type="button" onClick={() => { setView(k); setOpen(null); }} className={cn("h-7 px-3 rounded-md text-[12.5px] font-medium transition", view === k ? "bg-elev text-fg shadow-[var(--shadow-sm)]" : "text-muted hover:text-fg")}>{l}</button>
+            <button key={k} type="button" onClick={() => { setView(k); setOpen(null); }} className={cn("h-7 px-3 rounded-md text-[12.5px] font-medium transition", view === k ? "bg-accent text-white shadow-[var(--shadow-sm)]" : "text-muted hover:text-fg")}>{l}</button>
           ))}
         </div>
       </div>
 
-      <Card className="mt-4 overflow-x-auto">
+      {q.data && rows.length > 0 && (
+        <div className="mt-4 grid grid-cols-2 xl:grid-cols-4 gap-3">
+          <Tile tone="accent" icon={<Receipt size={17} />} label={view === "open" ? "Bills to process" : "Bills paid"} value={rows.length}
+            sub={view === "open" ? `${rows.filter((r) => r.check?.check.count).length} with lines to check` : "ticked Paid here"} />
+          <Tile tone="blue" icon={<Banknote size={17} />} label={view === "open" ? "Amount waiting" : "Amount paid"} value={usd(total)}
+            sub={view === "open" ? `${new Set(rows.map((r) => r.property_id)).size} properties` : `${new Set(rows.map((r) => r.property_id)).size} properties`} />
+          {view === "open"
+            ? <Tile tone={oldest > 14 ? "critical" : oldest > 7 || rows.some((r) => !r.steps.paid && overdue(r.due_day)) ? "high" : "good"} icon={<Clock size={17} />} label="Oldest bill" value={`${oldest} day${oldest === 1 ? "" : "s"}`}
+                sub={`${rows.filter((r) => !r.steps.paid && overdue(r.due_day)).length} past their due date`} />
+            : <Tile tone="good" icon={<Clock size={17} />} label="Average time to pay" value={avgDays != null ? `${avgDays.toFixed(1)} days` : "—"} sub="from bill date to Paid" />}
+          <Tile tone="slate" icon={<Lock size={16} />} label="Held back (10%)" value={usd(q.data.held_back?.held_amount ?? 0)} sub={`${q.data.held_back?.held ?? 0} hold-back bills, not listed`} />
+        </div>
+      )}
+
+      <Card className="mt-3 overflow-x-auto">
         <div className="min-w-[1256px]">
-          <div className={cn("grid gap-2.5 px-4 py-2 border-b border-line bg-sunken/40 text-[9.5px] font-semibold uppercase tracking-[0.09em] text-faint items-end", COLS)}>
+          <div className={cn("grid gap-2.5 px-4 py-2.5 border-b border-accent/20 bg-accent-soft/70 text-[9.5px] font-semibold uppercase tracking-[0.09em] text-accent items-end", COLS)}>
             <div className="pl-[19px]">Bill</div><div>Property</div><div>Bill date</div><div className="text-right">Amount</div>
             {steps.map((s) => <div key={s.key} className="text-center leading-tight">{s.label}</div>)}
             <div className="text-right">Time taken</div>
@@ -154,9 +193,12 @@ export default function BillsPage() {
               : rows.map((r) => {
                 const paid = r.steps.paid;
                 const days = daysOpen(r.bill_moment || r.bill_date);
+                const late = !paid && overdue(r.due_day);
+                const next = steps.find((s) => !r.steps[s.key])?.key;                  // the step this bill is waiting on
                 return (
-                  <div key={r.bill_id} className="border-b border-line/70 last:border-0">
-                    <div className={cn("grid gap-2.5 px-4 py-2.5 items-start hover:bg-sunken/30 transition-colors", COLS)}>
+                  <div key={r.bill_id} className="relative border-b border-line/70 last:border-0">
+                    <span className={cn("absolute left-0 top-0 bottom-0 w-[3px]", paid ? "bg-good" : !r.check ? "bg-line-strong" : r.check.check.count ? "bg-high" : "bg-good")} />
+                    <div className={cn("grid gap-2.5 px-4 py-2.5 items-start hover:bg-accent-soft/25 transition-colors", COLS)}>
                       <button type="button" onClick={() => setOpen(open === r.bill_id ? null : r.bill_id)} title={[r.title || r.number, r.number, r.pay_to].filter(Boolean).join(" · ")} className="min-w-0 text-left flex gap-1.5">
                         <ChevronRight size={13} className={cn("mt-[3px] shrink-0 text-faint transition", open === r.bill_id && "rotate-90")} />
                         <span className="min-w-0">
@@ -165,7 +207,7 @@ export default function BillsPage() {
                         </span>
                       </button>
                       <div className="min-w-0 text-[12.5px]">
-                        <div className="truncate">{r.property_id ? <Link href={`/property/${r.property_id}?tab=bills`} className="hover:text-accent hover:underline">{r.property}</Link> : r.property}</div>
+                        <div className="truncate">{r.property_id ? <Link href={`/property/${r.property_id}?tab=bills`} className="font-medium text-accent hover:underline">{r.property}</Link> : r.property}</div>
                         {r.in_buildertrend !== false && (
                           <Link href={`/bills/${r.bill_id}`} title="Open this bill line by line: the proposal line, what was billed before, and what the logs and photos show"
                             className={cn("mt-1 inline-flex items-center gap-1 h-[20px] pl-1.5 pr-1 rounded text-[11px] font-semibold whitespace-nowrap hover:brightness-95",
@@ -177,16 +219,17 @@ export default function BillsPage() {
                       </div>
                       <div className="text-[12.5px] tnum">
                         {fmtDate(r.bill_day, "d MMM yy")}
-                        {r.due_day && <div className={cn("text-[10.5px]", r.past_due && !paid ? "text-critical font-medium" : "text-faint")}>due {fmtDate(r.due_day, "d MMM")}</div>}
+                        {r.due_day && <div className={cn("text-[10.5px]", late ? "text-critical font-semibold" : "text-faint")}>due {fmtDate(r.due_day, "d MMM")}</div>}
                       </div>
                       <div className="text-[13px] font-semibold tnum text-right">{usd(r.amount)}</div>
                       {steps.map((s) => {
                         const m = r.steps[s.key];
                         return (
                           <div key={s.key} className="flex flex-col items-center text-center">
-                            <Checkbox checked={!!m} onCheckedChange={(v) => (v && SENDS[s.key] ? setAsk({ row: r, step: s.key }) : tick(r, s.key, v))} size={18} label={`${s.label} — ${r.title || r.number}`} className="rounded-md" />
+                            <Checkbox checked={!!m} onCheckedChange={(v) => (v && SENDS[s.key] ? setAsk({ row: r, step: s.key }) : tick(r, s.key, v))} size={18} label={`${s.label} — ${r.title || r.number}`}
+                              className={cn("rounded-md data-[state=checked]:bg-good data-[state=checked]:border-good", !m && next === s.key && "border-accent shadow-[0_0_0_3px_color-mix(in_srgb,var(--accent)_14%,transparent)]")} />
                             {m && (
-                              <div className="mt-1 text-[10.5px] leading-tight text-muted">
+                              <div className="mt-1 w-full rounded-md bg-good-soft/70 px-1 py-[3px] text-[10.5px] leading-tight text-muted">
                                 <div className="tnum">{et(m.at)}</div>
                                 <div className="text-faint">{took(r.bill_moment || r.bill_date, m.at) ? `+${took(r.bill_moment || r.bill_date, m.at)}` : ""}{m.by_name ? ` · ${m.by_name.replace(/ Sir$/, "")}` : ""}</div>
                                 {r.mail?.[s.key]?.status === "queued" && !r.mail[s.key].error && <div className="text-high">email to {(r.mail[s.key].to || []).join(", ")} is being sent</div>}
@@ -200,8 +243,8 @@ export default function BillsPage() {
                         );
                       })}
                       <div className="text-right text-[12.5px] tnum">
-                        {paid ? <><div className="font-semibold text-good">{took(r.bill_moment || r.bill_date, paid.at) || "—"}</div><div className="text-[10.5px] text-faint">bill date to paid</div></>
-                          : <><div className={cn("font-semibold", days > 14 ? "text-critical" : days > 7 ? "text-high" : "text-fg")}>{days} day{days === 1 ? "" : "s"}</div><div className="text-[10.5px] text-faint">open so far</div></>}
+                        {paid ? <><span className="inline-flex h-[22px] items-center rounded-full bg-good-soft px-2 text-[12px] font-semibold text-good">{took(r.bill_moment || r.bill_date, paid.at) || "—"}</span><div className="mt-0.5 text-[10.5px] text-faint">bill date to paid</div></>
+                          : <><span className={cn("inline-flex h-[22px] items-center rounded-full px-2 text-[12px] font-semibold", days > 14 ? "bg-critical-soft text-critical" : days > 7 ? "bg-high-soft text-high" : "bg-good-soft text-good")}>{days} day{days === 1 ? "" : "s"}</span><div className="mt-0.5 text-[10.5px] text-faint">open so far</div></>}
                       </div>
                       <Comment row={r} onSaved={(c) => { qc.setQueryData<Resp>(key, (cur) => cur ? { ...cur, rows: cur.rows.map((x) => x.bill_id === r.bill_id ? { ...x, comment: c } : x) } : cur); }} />
                     </div>
