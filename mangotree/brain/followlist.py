@@ -133,10 +133,11 @@ class FollowUps:
 
         # 4. A line billed past its price, or billed ahead of the work Manjunath Sir recorded.
         for r in s["rows"]:
-            if r["kind"] != "other" and r["revised"] > 0 and r["billed"] > r["revised"] + 1:
+            billed = r.get("billed_all", r["billed"])              # every bill, also the ones the sheet's columns leave out
+            if r["kind"] != "other" and r["revised"] > 0 and billed > r["revised"] + 1:
                 add("overbilled", "manju", f"Billed more than the proposal: {r['title']}",
-                    f"Billed {_usd(r['billed'])} against {_usd(r['revised'])} ({r['cost_code']}). Either a change order is missing or the bill is too high.",
-                    ident=(r["key"], round(r["billed"])), amount=round(r["billed"] - r["revised"], 2), level="high")
+                    f"Billed {_usd(billed)} against {_usd(r['revised'])} ({r['cost_code']}). Either a change order is missing or the bill is too high.",
+                    ident=(r["key"], round(billed)), amount=round(billed - r["revised"], 2), level="high")
             elif r.get("work_done") is not None and r.get("billed_percent") is not None and r["billed_percent"] > r["work_done"] + 10:
                 add("ahead_of_work", "manju", f"Billed ahead of the work: {r['title']}",
                     f"{r['billed_percent']}% of the line is billed; work done is recorded as {r['work_done']}%.", ident=(r["key"], r["billed_percent"], r["work_done"]), level="high")

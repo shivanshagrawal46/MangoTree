@@ -30,7 +30,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from mangotree.storage.mongo import Mongo
 
 from . import snapshot
-from .buildertrend import IN_REVIEW, PAID, Buildertrend
+from .buildertrend import PAID, Buildertrend
 from .store import BrainStore
 
 #: The figures a person may set, who may set them, and how each is read.
@@ -127,6 +127,27 @@ class MoneySheet:
             row["paid"] += amount
         elif b.get("in_review"):                                   # on Buildertrend's "Bills need your approval" list
             row["in_review"] += amount
+
+    @staticmethod
+    def _taken(bills: List[Dict[str, Any]], paid_here: set) -> set:
+        """The bills the sheet counts (admin directive 2026-11-16): a bill that is PAID, and a bill
+        on Buildertrend's "Bills need your approval" list (shown as in review). A hold-back bill
+        goes with the bill it was entered with (same name, same day): held back only once that
+        bill is counted. Everything else — approved but unpaid, or only under Buildertrend's
+        In Review tab — is named in a note and kept out of the columns."""
+        side = re.compile(r"\s*\((?:contractor|hold[\s-]?back)\)\s*$", re.I)
+        name = lambda b: (side.sub("", str(b.get("title") or "")).strip().lower(), str(b.get("invoice_date"))[:10])
+        mains = [b for b in bills if not b.get("holdback")]
+        taken = {b["bill_id"] for b in mains if b.get("status") == PAID or b["bill_id"] in paid_here or b.get("in_review")}
+        by_name: Dict[Tuple[str, str], List[int]] = {}
+        for b in mains:
+            by_name.setdefault(name(b), []).append(b["bill_id"])
+        for b in bills:
+            if b.get("holdback"):
+                twins = by_name.get(name(b)) or []
+                if not twins or any(t in taken for t in twins):
+                    taken.add(b["bill_id"])
+        return taken
 
     @staticmethod
     def _row_for(li: Dict[str, Any], index: Dict[Tuple[str, str], List[Dict[str, Any]]],
@@ -309,16 +330,21 @@ class MoneySheet:
         tracking = {t["bill_id"]: t for t in self.track.find({"bill_id": {"$in": [b["bill_id"] for b in bills]}}, {"_id": 0, "bill_id": 1, "steps": 1})}
         paid_here = {bid for bid, t in tracking.items() if (t.get("steps") or {}).get("paid")}
         saved = self.inputs.find_one({"property_id": pid}, {"_id": 0}) or {}
-        # "In review" on this sheet is RKB's own list: Buildertrend's "Bills need your approval" (the stored
-        # in_review flag), not everything under its In Review tab (admin directive 2026-11-16). A bill that
-        # only sits under that tab is waiting on someone else: it is named in a note and kept out of the columns.
-        aside = [b for b in bills if b.get("status") == IN_REVIEW and not b.get("in_review") and b["bill_id"] not in paid_here]
-        counted = [b for b in bills if b not in aside]
+        # The sheet counts paid bills, and — as "in review" — the bills on Buildertrend's "Bills need your
+        # approval" list (admin directive 2026-11-16). The rest are named in a note, not put in the columns.
+        taken = self._taken(bills, paid_here)
+        counted = [b for b in bills if b["bill_id"] in taken]
+        aside = [b for b in bills if b["bill_id"] not in taken]
         rows, notes = self._rows(estimate, counted, paid_here)
-        if aside:
-            notes.append(f"{len(aside)} bill(s) are under Buildertrend's In Review tab but not on RKB's approval list "
-                         f"(${sum(b.get('amount') or 0 for b in aside):,.2f}); they are in the bill list below but not in the columns.")
         rows = self._place(rows, saved)
+        if aside:
+            names = "; ".join(f"{(b.get('title') or '').strip()} ${b.get('amount') or 0:,.2f}" for b in aside[:6]) + (f"; and {len(aside) - 6} more" if len(aside) > 6 else "")
+            notes.append(f"{len(aside)} bill(s) are neither paid nor on RKB's approval list (${sum(b.get('amount') or 0 for b in aside):,.2f}); "
+                         f"they are in the bill list below but not in the columns: {names}.")
+            # What has been billed in all, those bills included: the checks for a line billed past its price read this.
+            every = {r["key"]: r["billed"] for r in self._place(self._rows(estimate, bills, paid_here)[0], saved)}
+            for r in rows:
+                r["billed_all"] = every.get(r["key"], r["billed"])
         for r in rows:
             mine = (saved.get("lines") or {}).get(r["key"]) or {}
             r["work_done"], r["note"], r["input_by"], r["input_at"] = mine.get("work_done"), mine.get("note") or "", mine.get("by_name"), mine.get("at")
@@ -361,7 +387,7 @@ class MoneySheet:
             "to_pay_count": sum(1 for b in open_bills if not b.get("in_review")),
             "in_review": round(sum(b.get("amount") or 0 for b in open_bills if b.get("in_review")), 2),
             "in_review_count": sum(1 for b in open_bills if b.get("in_review")),
-            "held_back": round(sum((b.get("balance") if b.get("balance") is not None else b.get("amount")) or 0 for b in bills if b.get("holdback") and b.get("status") != PAID), 2),
+            "held_back": round(sum((b.get("balance") if b.get("balance") is not None else b.get("amount")) or 0 for b in counted if b.get("holdback") and b.get("status") != PAID), 2),
             "last_paid": None if not last else {"title": last.get("title"), "amount": last.get("amount"), "at": paid_at(last)},
         }
         return {
