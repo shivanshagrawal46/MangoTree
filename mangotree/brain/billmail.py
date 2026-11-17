@@ -1,7 +1,7 @@
 """The two emails a bill sends by itself, from Rakesh Sir's mailbox.
 
     "Ready to pay" ticked  ->  JP Sir: the bill, and everything about the property
-    "Paid" ticked          ->  Wes and Kelly, copy Manjunath Sir and Shivansh:
+    "Paid" ticked          ->  Wes and Kelly, copy Manjunath Sir only:
                                the bill, when each step happened, and how long
                                it took from the bill date to payment
 
@@ -43,7 +43,7 @@ DEFAULTS: Dict[str, Any] = {
     "enabled": True,
     "ready_to": [["JP Sir", "jp@mtreh.com"]],
     "paid_to": [["Wes Stone", "wes@roiblocks.com"], ["Kelly Stone", "kelly@roiblocks.com"]],
-    "paid_cc": [["Manjunath Sir", "manjunath@mtreh.com"], ["Shivansh", "shivansh@mtreh.com"]],
+    "paid_cc": [["Manjunath Sir", "manjunath@mtreh.com"]],
 }
 SENDS_ON = ("ready_to_pay", "paid")
 _STEP_LABEL = dict(STEPS)

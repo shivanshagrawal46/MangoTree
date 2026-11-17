@@ -270,7 +270,7 @@ export default function BillsPage() {
         </p>
       )}
       <p className="mt-2.5 text-[11px] text-faint leading-relaxed">
-        Ticking “Ready to pay” emails JP Sir, and ticking “Paid” emails Wes and Kelly (copy Manjunath Sir and Shivansh), from rakesh@mtreh.com. The page asks first, and on yes the email is sent at once. All times are US Eastern.
+        Ticking “Ready to pay” emails JP Sir, and ticking “Paid” emails Wes and Kelly (copy Manjunath Sir), from rakesh@mtreh.com. The page asks first, and on yes the email is sent at once. All times are US Eastern.
         A bill appears here when it is on Buildertrend’s “Bills need your approval” list, and stays until it is ticked paid. Each tick records the time and who made it; “+2d 3h” is the time since the bill date. Unticking a box removes its time.
         A comment is RKB’s own note on the bill: it is saved when you leave the box, with who wrote it, and is not sent to anyone.
       </p>

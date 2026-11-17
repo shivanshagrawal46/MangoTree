@@ -632,7 +632,7 @@ def test_ready_to_pay_emails_jp_sir_with_the_bill_and_the_property(monkeypatch):
 def test_paid_emails_wes_and_kelly_with_every_time_in_eastern_and_how_long_it_took(monkeypatch):
     mail, row = _bill_mail(monkeypatch)
     m = mail.compose(row, "paid", "Rakesh Sir")
-    assert [a for _, a in m["to"]] == ["wes@roiblocks.com", "kelly@roiblocks.com"] and [a for _, a in m["cc"]] == ["manjunath@mtreh.com", "shivansh@mtreh.com"]
+    assert [a for _, a in m["to"]] == ["wes@roiblocks.com", "kelly@roiblocks.com"] and [a for _, a in m["cc"]] == ["manjunath@mtreh.com"]
     assert m["text"].startswith("Wes, Kelly, this bill has been paid.")
     for piece in ("BILL-0018-PO-0002", "$7,531.88", "Bill date     11 Nov 2026, 6:03 PM EST", "Paid          12 Nov 2026, 4:10 PM EST", "Paid within   22 hours 7 minutes of the bill date",
                   "Ready to pay         12 Nov 2026, 3:00 PM EST — Rakesh Sir"):
@@ -666,14 +666,14 @@ def test_a_confirmed_tick_sends_at_once_and_an_outage_only_delays_the_email(monk
     assert ob.coll.count_documents({"ref": "77:ready_to_pay"}) == 1 and len(tried) == 2
     assert mail.on_step(row, "ready_to_pay", True, user)["now"] == "already_sent" and len(tried) == 2   # once gone, never again
     st = mail.on_step(row, "paid", True, user)
-    assert st["now"] == "sent" and st["to"] == ["Wes Stone", "Kelly Stone"] and st["cc"] == ["Manjunath Sir", "Shivansh"]
+    assert st["now"] == "sent" and st["to"] == ["Wes Stone", "Kelly Stone"] and st["cc"] == ["Manjunath Sir"]
     monkeypatch.setattr(ob, "send_one", timing_out)
     other = dict(row, bill_id=79)
     mail.on_step(other, "paid", True, user)
     assert mail.on_step(other, "paid", False, user) == {"status": "cancelled"}    # unticked while it had not managed to go: stopped
     hold = dict(row, bill_id=78, title="General Remodel / Repair-5 (Hold-back)")
     assert mail.on_step(hold, "paid", True, user)["status"] == "not_sent" and ob.coll.count_documents({"ref": "78:paid"}) == 0
-    assert mail.recipients() == {"ready_to_pay": {"to": ["JP Sir"], "cc": []}, "paid": {"to": ["Wes Stone", "Kelly Stone"], "cc": ["Manjunath Sir", "Shivansh"]}}
+    assert mail.recipients() == {"ready_to_pay": {"to": ["JP Sir"], "cc": []}, "paid": {"to": ["Wes Stone", "Kelly Stone"], "cc": ["Manjunath Sir"]}}
 
 
 def test_a_mail_service_outage_never_drops_an_email_but_a_refused_email_ends(monkeypatch):
