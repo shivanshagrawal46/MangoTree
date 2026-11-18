@@ -3,6 +3,8 @@
     pull.json  -> jobs, bills (with the "need your approval" list) and daily logs, into the database
     a pack     -> photos: sent from memory straight to the server's own disk (its raw_store) over ssh,
                   checked there, then recorded. Nothing is written to this laptop's disk.
+    billfiles  -> the papers attached to the bills waiting for approval (receipt, invoice, photos):
+                  the same road as the photos. Which ones to fetch: Buildertrend.files_wanted().
 
 Run:  python scripts/bt_receive_to_server.py        (port 8766)
 """
@@ -82,7 +84,48 @@ def to_server(photos):
     return stored, already, failed
 
 
+def bill_files_to_server(files):
+    """files: [{file_id, bill_id, job_id, title, ext, is_photo, blob}] — the papers attached to a bill
+    (receipt, invoice, photos). Same road as the photos: from memory to the server's disk,
+    checked there by size, then recorded. Returns (stored, already, failed)."""
+    known = {f["file_id"]: f for f in bt.bill_files.find({"file_id": {"$in": [f["file_id"] for f in files]}}, {"file_id": 1, "sha256": 1})}
+    items = []
+    for f in files:
+        f["sha"] = hashlib.sha256(f["blob"]).hexdigest()
+        if (known.get(f["file_id"]) or {}).get("sha256") != f["sha"]:
+            items.append(f)
+    already = len(files) - len(items)
+    if not items:
+        return 0, already, 0
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w") as tar:
+        for sha, blob in {f["sha"]: f["blob"] for f in items}.items():
+            info = tarfile.TarInfo(rel(sha))
+            info.size, info.mtime, info.mode = len(blob), int(time.time()), 0o644
+            tar.addfile(info, io.BytesIO(blob))
+    r = subprocess.run(SSH + ["tar -xf - -C %s --no-same-owner" % STORE], input=buf.getvalue(), capture_output=True, timeout=600)
+    if r.returncode != 0:
+        raise RuntimeError("the server did not take the bill files: " + r.stderr.decode("utf-8", "replace")[:300])
+    listing = subprocess.run(SSH + ["cd %s && xargs stat -c '%%n %%s'" % STORE], input="\n".join(rel(f["sha"]) for f in items).encode(),
+                             capture_output=True, timeout=120).stdout.decode("utf-8", "replace")
+    sizes = {line.split()[0].split("/")[-1]: int(line.split()[1]) for line in listing.splitlines() if len(line.split()) == 2}
+    stored = failed = 0
+    for f in items:
+        if sizes.get(f["sha"]) != len(f["blob"]):
+            failed += 1
+            continue
+        bt.record_bill_file(file_id=f["file_id"], bill_id=f["bill_id"], job_id=f.get("job_id"), title=f.get("title") or "", ext=f.get("ext") or "",
+                            sha256=f["sha"], nbytes=len(f["blob"]), is_photo=bool(f.get("is_photo")))
+        stored += 1
+    return stored, already, failed
+
+
 def handle(name, kind, data):
+    if kind == "billfiles":
+        files = [{**{k: v for k, v in f.items() if k != "b64"}, "file_id": int(f["file_id"]), "bill_id": int(f["bill_id"]), "blob": base64.b64decode(f["b64"])}
+                 for f in json.loads(data)]
+        stored, already, failed = bill_files_to_server(files)
+        return say("bill files %s: %d stored on the server, %d already there, %d FAILED" % (name, stored, already, failed))
     if kind == "pack":
         photos = []
         for path, b64 in json.loads(data).items():
@@ -103,6 +146,11 @@ def handle(name, kind, data):
             r = bt.import_logs({"pulled_at": d.get("pulled_at"), "logs": d["logs"]})
             out.append("daily logs: %d loaded; new: %s" % (r["logs"], ", ".join("%s +%d" % (p, n) for p, n in sorted(r["new_logs"].items())) or "none"))
         return say(" | ".join(out) or "nothing in the pull")
+    if name == "estimates.json":
+        # The proposal of a job (GET /api/Proposals/<job>/Worksheet): its lines are what a bill's lines are placed on.
+        r = bt.import_estimates(json.loads(data))
+        return say("proposals: %d loaded, %d lines; with no lines: %s; job not matched: %s" % (
+            r["estimates"], r["lines"], ", ".join(r["empty"]) or "none", ", ".join(str(j) for j in r["unmatched"]) or "none"))
     if name == "details.json":
         # The lines of bills already on file, read again from each bill's own page (with the purchase-order line ids).
         r = bt.import_bill_details(json.loads(data))

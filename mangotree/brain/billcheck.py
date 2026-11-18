@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import html
 import re
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
@@ -47,6 +48,10 @@ from .store import BrainStore, name_of, now
 
 LOG_DAYS = 45                    # how far back the logs are read for one bill
 MAX_PHOTOS = 120
+MAX_PAPERS = 12                  # attached files given to one reading
+MAX_PAPER_BYTES = 8_000_000      # a PDF larger than this is named, not read
+PAPER_SIDE = 2000                # pixels: a photographed receipt must stay legible
+IMAGE_EXT = ("jpg", "jpeg", "png", "webp", "gif", "heic", "bmp")
 HOLDBACK = 0.10
 VERDICTS = ("shown", "said", "partly", "nothing", "against")
 VERDICT_LABEL = {"shown": "Shown in a photo", "said": "Said in a log, no photo", "partly": "Partly supported", "nothing": "Not in the record",
@@ -88,17 +93,43 @@ Rules:
 - log_dates: the dates (YYYY-MM-DD) of the logs your basis rests on. Everywhere else — in
   basis, ask and other_points — write a date the way people do: "11 Nov", never "11-11".
 
+THE PAPERS ATTACHED TO THE BILL. When the bill was entered in Buildertrend, files may have
+been attached to it: the supplier's receipt, the subcontractor's invoice, a proof of
+payment, photos. You are given each one that could be read, before the logs. Read them fully.
+- They say WHAT is being paid for (items, quantities, prices, delivery date and address)
+  and whether the paper's total is the bill's amount. Use that to name exactly what a line
+  covers and to ask a precise question.
+- A receipt or invoice is the seller's paper. It is NOT proof that the material is on site
+  or the work is done: the verdict still comes from the logs and photos. But if the paper
+  gives a delivery or service date later than the newest log, say so in the basis — the
+  record could not show it yet — and ask for a photo once it is delivered.
+- A photo attached to the bill counts like a log photo: it can make a line "shown"; give
+  its file id in photo_ids.
+- Never ask for a receipt, invoice or item list that is already attached.
+- In `papers`, give one entry per attached file you were shown: what it is, and in at most
+  three sentences (under 90 words) what it says that matters for approving the bill
+  (seller, date, the main items, delivery date and address, the total). `total` is the paper's grand total in
+  dollars when it states one, else null.
+- Never copy a bank account number, routing number or card number into anything you write.
+
 other_points: at most three things in the record that bear on approving THIS bill but are
 not one of its lines — for example work the logs call a change order with no price on file.
 One or two short sentences each. Do not repeat the arithmetic (it is checked separately),
 do not say how many photos you were shown, and do not add a disclaimer: the page already
 says this is a reading of the contractor's record and not an inspection. Leave it empty if
-there is nothing of that kind.
+there is nothing of that kind. If an attached paper's total, property or date does not
+agree with the bill, that is one of these points.
 """
 
+PAPER_KINDS = ("receipt", "invoice", "payment_proof", "photo", "other")
+
 SCHEMA = {
-    "type": "object", "additionalProperties": False, "required": ["lines", "other_points"],
+    "type": "object", "additionalProperties": False, "required": ["lines", "papers", "other_points"],
     "properties": {
+        "papers": {"type": "array", "items": {
+            "type": "object", "additionalProperties": False, "required": ["file_id", "kind", "says", "total"],
+            "properties": {"file_id": {"type": "integer"}, "kind": {"type": "string", "enum": list(PAPER_KINDS)}, "says": {"type": "string"},
+                           "total": {"type": ["number", "null"]}}}},
         "lines": {"type": "array", "items": {
             "type": "object", "additionalProperties": False, "required": ["key", "verdict", "basis", "log_dates", "photo_ids", "ask"],
             "properties": {"key": {"type": "string"}, "verdict": {"type": "string", "enum": list(VERDICTS)}, "basis": {"type": "string"},
@@ -145,9 +176,41 @@ def signature(lines: List[Dict[str, Any]]) -> str:
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
 
 
-def clean_reading(data: Dict[str, Any], keys: set, shown: set, log_days: set) -> Dict[str, Any]:
+_SECRET_NUMBER = re.compile(r"\b\d[\d\s-]{7,}\d\b")
+
+
+def _no_account_numbers(text: str) -> str:
+    """A long run of digits (bank account, routing, card) is never kept, whatever the paper says."""
+    return _SECRET_NUMBER.sub(lambda m: m.group(0) if sum(c.isdigit() for c in m.group(0)) < 9 else "[number removed]", text)
+
+
+def paper_image(blob: bytes) -> Optional[bytes]:
+    """An attached picture at a size where a photographed receipt can still be read; None if it cannot be opened."""
+    try:
+        import io
+        from PIL import Image, ImageOps
+        im = ImageOps.exif_transpose(Image.open(io.BytesIO(blob))).convert("RGB")
+        im.thumbnail((PAPER_SIDE, PAPER_SIDE))
+        out = io.BytesIO()
+        im.save(out, "JPEG", quality=85)
+        return out.getvalue()
+    except Exception:
+        return None
+
+
+def clean_reading(data: Dict[str, Any], keys: set, shown: set, log_days: set, papers: Optional[Dict[int, str]] = None) -> Dict[str, Any]:
     """Keep only what can be pointed at. A line the bill does not have is dropped; a photo
-    that was never shown is dropped; "shown" with no photo left behind it is not "shown"."""
+    that was never shown is dropped; "shown" with no photo left behind it is not "shown";
+    a paper that was not given is dropped. ``papers``: file id -> name, of the files given."""
+    said: List[Dict[str, Any]] = []
+    for p in data.get("papers") or []:
+        fid = p.get("file_id")
+        if not isinstance(fid, int) or fid not in (papers or {}) or any(x["file_id"] == fid for x in said):
+            continue
+        total = p.get("total")
+        said.append({"file_id": fid, "title": (papers or {})[fid], "kind": p.get("kind") if p.get("kind") in PAPER_KINDS else "other",
+                     "says": _no_account_numbers(str(p.get("says") or "").strip())[:1200],
+                     "total": round(float(total), 2) if isinstance(total, (int, float)) and not isinstance(total, bool) else None})
     lines: Dict[str, Dict[str, Any]] = {}
     for l in data.get("lines") or []:
         key = str(l.get("key") or "")
@@ -158,9 +221,9 @@ def clean_reading(data: Dict[str, Any], keys: set, shown: set, log_days: set) ->
         verdict = l["verdict"]
         if verdict == "shown" and not ids:
             verdict = "said" if days else "nothing"
-        lines[key] = {"verdict": verdict, "basis": str(l.get("basis") or "").strip()[:600], "log_dates": days, "photo_ids": ids,
-                      "ask": "" if verdict == "shown" else str(l.get("ask") or "").strip()[:300]}
-    return {"lines": lines, "points": [str(x).strip()[:400] for x in data.get("other_points") or [] if str(x).strip()][:3]}
+        lines[key] = {"verdict": verdict, "basis": _no_account_numbers(str(l.get("basis") or "").strip())[:600], "log_dates": days, "photo_ids": ids,
+                      "ask": "" if verdict == "shown" else _no_account_numbers(str(l.get("ask") or "").strip())[:300]}
+    return {"lines": lines, "points": [_no_account_numbers(str(x).strip())[:400] for x in data.get("other_points") or [] if str(x).strip()][:3], "papers": said}
 
 
 class BillCheck:
@@ -214,6 +277,8 @@ class BillCheck:
             if a["kind"] == "other" and a.get("unplaced"):
                 line["flags"].append({"kind": "outside", "text": "The proposal has more than one line with this name, and Buildertrend's line id has not been read "
                                                                  "for this bill. Say which line it belongs to."})
+            elif a["kind"] == "other" and not estimate:
+                line["flags"].append({"kind": "outside", "text": "This job's proposal has not been read from Buildertrend, so the line could not be placed on it."})
             elif a["kind"] == "other":
                 line["flags"].append({"kind": "outside", "text": "Not a line of the proposal. Say what it is: a contingency, a payment to the homeowner, or which line."})
             elif a["kind"] == "change_order":
@@ -307,7 +372,7 @@ class BillCheck:
         if reading:
             newest = self.bt.logs.find_one({"property_id": pid}, {"date": 1}, sort=[("date", -1)])
             last = reading.get("last_log")
-            reading = {k: reading.get(k) for k in ("at", "points", "photos_shown", "photos_posted", "logs_read", "last_log", "cost_usd")}
+            reading = {k: reading.get(k) for k in ("at", "points", "photos_shown", "photos_posted", "logs_read", "last_log", "cost_usd", "papers", "papers_unread")}
             reading["points"] = [plain_dates(x) for x in reading.get("points") or []]
             reading["newer_logs"] = bool(newest and last and newest["date"].replace(tzinfo=newest["date"].tzinfo or timezone.utc) > last.replace(tzinfo=last.tzinfo or timezone.utc))
         t = self.track.find_one({"bill_id": main["bill_id"]}, {"_id": 0, "steps": 1}) or {}
@@ -339,14 +404,56 @@ class BillCheck:
             out[c["bill_id"]] = {**c["summary"], "read_at": (c.get("reading") or {}).get("at")}
         return out
 
+    # ------------------------------------------------------------ the papers attached to the bill
+    def _paper_ids(self, main: Dict[str, Any], held: Optional[Dict[str, Any]]) -> List[int]:
+        """The attached files of the draw that are held (both bills of the pair), as file ids."""
+        return [f["file_id"] for f in self.bt.bill_files_of([b["bill_id"] for b in (main, held) if b])]
+
+    def _papers(self, main: Dict[str, Any], held: Optional[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], Dict[int, str], List[int], List[str]]:
+        """(what to show the model, {file id: name} of the files shown, the ids among them that
+        are photos, the names of files that could not be shown). A PDF goes as it is; a
+        picture is shown large enough to read a photographed receipt."""
+        blocks: List[Dict[str, Any]] = []
+        given: Dict[int, str] = {}
+        photos: List[int] = []
+        files = self.bt.bill_files_of([b["bill_id"] for b in (main, held) if b])
+        names = {f.get("title") for f in files}
+        unread = [n for b in (main, held) if b for n in (b.get("file_names") or []) if n not in names]     # attached in Buildertrend, never brought over
+        seen = set()
+        for f in files:
+            name = f.get("title") or f"file {f['file_id']}"
+            if f["sha256"] in seen:                                     # the same file attached to both bills of the pair
+                continue
+            if len(given) >= MAX_PAPERS:
+                unread.append(name)
+                continue
+            blob = self.bt.bill_file(f["file_id"])
+            ext = (f.get("ext") or "").lower()
+            block = None
+            if blob and ext == "pdf" and len(blob) <= MAX_PAPER_BYTES:
+                block = {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": base64.b64encode(blob).decode()}}
+            elif blob and (ext in IMAGE_EXT or f.get("is_photo")):
+                small = paper_image(blob)
+                if small:
+                    block = {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": base64.b64encode(small).decode()}}
+                    photos.append(f["file_id"])
+            if not block:
+                unread.append(name)
+                continue
+            seen.add(f["sha256"])
+            given[f["file_id"]] = name
+            blocks += [{"type": "text", "text": f"attached file id {f['file_id']} — “{name}”:"}, block]
+        return blocks, given, photos, list(dict.fromkeys(unread))
+
     # ------------------------------------------------------------ the engineer's reading
-    def read(self, bill_id: int, *, force: bool = False) -> Optional[Dict[str, Any]]:
-        """One reading of the contractor's logs and photos against this bill's lines. Stored; shown by ``draw``.
+    def read(self, bill_id: int, *, force: bool = False, save: bool = True) -> Optional[Dict[str, Any]]:
+        """One reading of the bill's attached papers and the contractor's logs and photos against
+        this bill's lines. Stored (unless ``save`` is off, to try a reading); shown by ``draw``.
 
         A reading that looked at photos is not replaced by one that cannot (the photos are
         not held on every machine): that returns ``{"kept": True, ...}`` and changes nothing."""
         pid, main, held, bills = self._find(bill_id)
-        lines, _job = self._lines(pid, main, held, bills)
+        lines, job = self._lines(pid, main, held, bills)
         if not lines:
             return None
         logs = self.bt.logs_of(pid, days=LOG_DAYS)[::-1]                # oldest first
@@ -362,16 +469,28 @@ class BillCheck:
         gross = round((main.get("amount") or 0) + ((held or {}).get("amount") or 0), 2)
         head = [f"TODAY: {now():%d %b %Y}", f"PROPERTY: {name_of(pid)}", "",
                 f"THE BILL: “{stem(main.get('title'))}” ({main.get('number')}), dated {_when(main)[0]:%d %b %Y}, entered by {main.get('created_by') or 'the contractor'}, "
-                f"pay to {main.get('pay_to') or 'not stated'}. Request {usd(gross)} in all" + (f", of which {usd(held.get('amount'))} is the 10% hold-back." if held else "."),
-                "", "THE LINES IT BILLS (key | proposal section | line | cost code | line budget | billed before | this bill | share of the line billed after this bill):"]
+                f"pay to {main.get('pay_to') or 'not stated'}. Request {usd(gross)} in all" + (f", of which {usd(held.get('amount'))} is the 10% hold-back." if held else ".")]
+        note = re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", str(main.get("description") or "")))).strip()
+        if note:
+            head.append(f"NOTE WRITTEN ON THE BILL by {main.get('created_by') or 'whoever entered it'}: {note[:1200]}")
+        papers, given, paper_photos, unread = self._papers(main, held)
+        head += ["", "THE LINES IT BILLS (key | proposal section | line | cost code | line budget | billed before | this bill | share of the line billed after this bill):"]
         for l in lines:
             head.append(f"  {l['key']} | {l['group']} | {l['title']} | {l['cost_code']} | {usd(l['budget'])} | {usd(l['before'])} | {usd(l['this'])} | "
-                        + (f"{l['percent_after']}%" if l["percent_after"] is not None else "not a proposal line"))
-        head += ["", f"THE CONTRACTOR'S DAILY LOGS OF THE LAST {LOG_DAYS} DAYS: {len(logs)} log(s), {posted} photo(s) posted; you are shown {sum(len(v) for v in chosen.values())} of them."
-                 + ("" if have else " NO PHOTO is held on this machine, so nothing can be 'shown': judge from the log text only."),
-                 "The logs follow, oldest first. Each photo is preceded by its id."]
-        content: List[Dict[str, Any]] = [{"type": "text", "text": "\n".join(head)}]
-        shown: List[int] = []
+                        + (f"{l['percent_after']}%" if l["percent_after"] is not None else "not a proposal line" if job["has_proposal"] else "proposal not read"))
+        if not job["has_proposal"]:
+            head.append("NOTE: RKB's system has NOT read this job's proposal from Buildertrend. So the budgets above are blank, not zero, and no line can be "
+                        "called outside the proposal or over budget: do not say either. You may say that the proposal has not been read, so the line could not be placed.")
+        papers_head = (["", f"THE PAPERS ATTACHED TO THE BILL: {len(given)} file(s) follow, each preceded by its file id."] if given else
+                       ["", "THE PAPERS ATTACHED TO THE BILL: none could be read here."])
+        if unread:
+            papers_head.append("Attached in Buildertrend but NOT readable here (you have not seen them; do not say what they contain): " + "; ".join(unread[:20]))
+        logs_head = ["", f"THE CONTRACTOR'S DAILY LOGS OF THE LAST {LOG_DAYS} DAYS: {len(logs)} log(s), {posted} photo(s) posted; you are shown {sum(len(v) for v in chosen.values())} of them."
+                     + ("" if have else " NO PHOTO is held on this machine, so nothing can be 'shown': judge from the log text only."),
+                     "The logs follow, oldest first. Each photo is preceded by its id."]
+        content: List[Dict[str, Any]] = ([{"type": "text", "text": "\n".join(head + papers_head)}, *papers, {"type": "text", "text": "\n".join(logs_head)}] if papers else
+                                         [{"type": "text", "text": "\n".join(head + papers_head + logs_head)}])
+        shown: List[int] = list(paper_photos)
         for l in logs:
             ids = chosen.get(l["log_id"]) or []
             n = len(l.get("photos") or [])
@@ -386,14 +505,33 @@ class BillCheck:
                 shown.append(fid)
         if not logs:
             content.append({"type": "text", "text": "\n(There is no daily log in this period.)"})
+        def ask(blocks: List[Dict[str, Any]]) -> Dict[str, Any]:
+            return structured(system=prompts.CORE + "\n" + BRIEF, user=blocks, schema=SCHEMA, effort="high", max_tokens=12_000, label=f"bill check {main['bill_id']}")
         try:
-            r = structured(system=prompts.CORE + "\n" + BRIEF, user=content, schema=SCHEMA, effort="high", max_tokens=12_000, label=f"bill check {main['bill_id']}")
+            try:
+                r = ask(content)
+            except BrainError:
+                raise
+            except Exception as exc:
+                if not papers:
+                    raise
+                # A file the model cannot take (damaged, too long) must not stop the bill being checked: read it without the papers.
+                logger.warning("bill %s: the attached files could not be read by the model (%s); checking without them", main["bill_id"], str(exc)[:200])
+                unread = list(given.values()) + unread
+                shown = [i for i in shown if i not in paper_photos]
+                given, paper_photos = {}, []
+                content[0] = {"type": "text", "text": "\n".join(head + ["", "THE PAPERS ATTACHED TO THE BILL: none could be read here.",
+                                                                        "Attached in Buildertrend but NOT readable here (you have not seen them; do not say what they contain): " + "; ".join(unread[:20])])}
+                r = ask([b for b in content if not any(b is p for p in papers)])
         except BrainError as exc:
             logger.warning("bill %s could not be checked against the site record: %s", main["bill_id"], exc)
             return None
-        d = clean_reading(r["data"], {l["key"] for l in lines}, set(shown), {f"{l['date']:%Y-%m-%d}" for l in logs})
-        reading = {"at": now(), "lines": d["lines"], "points": d["points"], "photos_shown": len(shown), "photos_posted": posted, "logs_read": len(logs),
-                   "last_log": logs[-1]["date"] if logs else None, "sig": signature(lines), "model": bc.MODEL, "cost_usd": cost_of(r["usage"])}
+        d = clean_reading(r["data"], {l["key"] for l in lines}, set(shown), {f"{l['date']:%Y-%m-%d}" for l in logs}, given)
+        reading = {"at": now(), "lines": d["lines"], "points": d["points"], "photos_shown": len(shown) - len(paper_photos), "photos_posted": posted, "logs_read": len(logs),
+                   "last_log": logs[-1]["date"] if logs else None, "sig": signature(lines), "model": bc.MODEL, "cost_usd": cost_of(r["usage"]),
+                   "papers": d["papers"], "papers_held": sorted(self._paper_ids(main, held)), "papers_unread": unread[:20]}
+        if not save:
+            return reading
         self.coll.update_one({"bill_id": main["bill_id"]}, {"$set": {"reading": reading, "property_id": pid, "updated_at": now()},
                                                             "$setOnInsert": {"bill_id": main["bill_id"], "created_at": now()}}, upsert=True)
         self._remember(self.draw(main["bill_id"]))
@@ -411,11 +549,13 @@ class BillCheck:
         lines, _job = self._lines(pid, main, held, bills)
         if not lines:
             return None                                                 # its lines have not been read from Buildertrend: nothing to check yet
-        reading = (self.coll.find_one({"bill_id": main["bill_id"]}, {"reading.at": 1, "reading.sig": 1, "reading.last_log": 1}) or {}).get("reading")
+        reading = (self.coll.find_one({"bill_id": main["bill_id"]}, {"reading.at": 1, "reading.sig": 1, "reading.last_log": 1, "reading.papers_held": 1}) or {}).get("reading")
         if not reading:
             return "not checked yet"
         if reading.get("sig") and reading["sig"] != signature(lines):
             return "the bill has changed"
+        if set(self._paper_ids(main, held)) - set(reading.get("papers_held") or []):
+            return "a file attached to the bill has not been read yet"
         newest = self.bt.logs.find_one({"property_id": pid}, {"date": 1}, sort=[("date", -1)])
         last = reading.get("last_log")
         if newest and (not last or newest["date"].replace(tzinfo=newest["date"].tzinfo or timezone.utc) > last.replace(tzinfo=last.tzinfo or timezone.utc)):

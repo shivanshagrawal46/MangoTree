@@ -186,6 +186,7 @@ class MoneySheet:
                 index.setdefault((_norm(li["cost_code"]), _norm(li["title"])), []).append(row)
                 if li.get("po_line_id"):
                     by_po.setdefault(li["po_line_id"], []).append(row)
+        has_proposal = bool(rows)                          # with no proposal on file a line cannot be "outside" it: it has just not been placed
         extras: Dict[str, Dict[str, Any]] = {}
         notes: List[str] = []
         no_lines = [b for b in bills if not b.get("line_items")]
@@ -205,7 +206,8 @@ class MoneySheet:
                     if row is None:
                         row = extras[k] = {"key": k, "kind": "change_order" if is_co else "other", "unplaced": unplaced,
                                            "group": "Change orders" if is_co else "Not placed: the proposal has this name more than once" if unplaced
-                                           else "Billed, but not a line of the proposal",
+                                           else "Billed, but not a line of the proposal" if has_proposal
+                                           else "The proposal has not been read from Buildertrend",
                                            "title": li.get("title") or b.get("title") or "", "cost_code": li.get("cost_code") or "",
                                            "description": li.get("description") or "", "proposal": 0.0, "price": 0.0,
                                            "change_orders": (li.get("unit_cost") or 0.0) if is_co else 0.0,

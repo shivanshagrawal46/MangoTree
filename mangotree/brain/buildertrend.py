@@ -123,8 +123,11 @@ class Buildertrend:
         db = mongo.db
         self.jobs, self.logs, self.bills, self.photos, self.pulls = db["bt_jobs"], db["bt_daily_logs"], db["bt_bills"], db["bt_photos"], db["bt_pulls"]
         self.estimates = db["bt_estimates"]
+        self.bill_files = db["bt_bill_files"]      # the papers attached to a bill (receipt, invoice, photos), kept on the server
 
     def ensure_indexes(self) -> None:
+        self.bill_files.create_index("file_id")
+        self.bill_files.create_index("bill_id")
         self.logs.create_index([("property_id", 1), ("date", -1)])
         self.logs.create_index("log_id")
         self.bills.create_index([("property_id", 1), ("invoice_date", -1)])
@@ -237,6 +240,10 @@ class Buildertrend:
                 "po_line_id": li.get("purchaseOrderLineItemId") or None, "billed_elsewhere": _money(li.get("amountBilled")),
             } for li in ((detail.get("lineItems") or {}).get("value") or [])],
             "file_names": [f.get("title") for f in ((detail.get("attachedFiles") or {}).get("files") or []) if f.get("title")][:40],
+            # The same files with Buildertrend's ids, so each can be brought over and read (see ``files_wanted``).
+            "files": [{"file_id": int(f["id"]), "title": f.get("title"), "ext": str(f.get("extension") or "").lower().lstrip("."),
+                       "size": f.get("fileSize"), "is_photo": bool(f.get("isPhoto"))}
+                      for f in ((detail.get("attachedFiles") or {}).get("files") or []) if f.get("id")][:40],
         }
 
     def import_bill_details(self, d: Dict[str, Any]) -> Dict[str, Any]:
@@ -662,7 +669,9 @@ class Buildertrend:
         not moved there yet, from the copy still on this machine."""
         p = self.photos.find_one({"file_id": int(file_id)}, {"_id": 0})
         if not p:
-            return None
+            # A photo attached to a bill is shown the same way as a photo of a daily log.
+            f = self.bill_files.find_one({"file_id": int(file_id), "is_photo": True}, {"_id": 1})
+            return self.bill_file(file_id) if f else None
         try:
             store = photo_store()
             if p.get("where") == "server" and store is not None:
@@ -670,6 +679,45 @@ class Buildertrend:
             return self._local_bytes(p)
         except Exception:
             logger.exception("buildertrend photo %s could not be read", file_id)
+            return None
+
+    # ------------------------------------------------- the papers attached to a bill
+    def files_wanted(self) -> List[Dict[str, Any]]:
+        """The attached files of the bills waiting for approval that have not been brought
+        over yet (or have changed size since). The pull fetches exactly these."""
+        held = {f["file_id"]: f for f in self.bill_files.find({}, {"_id": 0, "file_id": 1, "bytes": 1})}
+        out = []
+        for b in self.bills.find({"in_review": True, "files.0": {"$exists": True}}, {"_id": 0, "bill_id": 1, "job_id": 1, "files": 1}):
+            for f in b["files"]:
+                if f["file_id"] not in held:
+                    out.append({"bill_id": b["bill_id"], "job_id": b.get("job_id"), **f})
+        return out
+
+    def record_bill_file(self, *, file_id: int, bill_id: int, job_id: Optional[int], title: str, ext: str, sha256: str, nbytes: int, is_photo: bool) -> None:
+        """Note a bill's attached file once it is confirmed on the server's disk."""
+        self.bill_files.update_one({"file_id": int(file_id)}, {"$set": {
+            "file_id": int(file_id), "bill_id": int(bill_id), "job_id": int(job_id) if job_id else None, "title": title, "ext": (ext or "").lower().lstrip("."),
+            "sha256": sha256, "bytes": int(nbytes), "is_photo": bool(is_photo), "where": "server", "stored_at": now()},
+            "$setOnInsert": {"added_at": now()}}, upsert=True)
+
+    def bill_files_of(self, bill_ids: List[int]) -> List[Dict[str, Any]]:
+        """The stored attached files of these bills, in Buildertrend's order (by file id)."""
+        return list(self.bill_files.find({"bill_id": {"$in": [int(b) for b in bill_ids]}}, {"_id": 0}).sort("file_id", 1))
+
+    def bill_file(self, file_id: int) -> Optional[bytes]:
+        """The file's bytes, from wherever the photos are kept; None when it is not on this machine."""
+        f = self.bill_files.find_one({"file_id": int(file_id)}, {"_id": 0})
+        if not f:
+            return None
+        try:
+            store = photo_store()
+            if store is not None:
+                blob = store.get(f["sha256"])
+                if blob:
+                    return blob
+            return self._local_bytes(f)
+        except Exception:
+            logger.exception("bill file %s could not be read", file_id)
             return None
 
     def photo_url(self, file_id: int) -> Optional[str]:
