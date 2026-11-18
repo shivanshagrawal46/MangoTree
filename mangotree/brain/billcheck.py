@@ -89,7 +89,9 @@ Rules:
 - basis: one or two short plain sentences on what the record shows, naming the log date.
   Do not write photo ids in the basis; put them in photo_ids.
 - ask: when the verdict is not "shown", the exact thing to ask the contractor for (a photo
-  of what, in which room; or a date), in one sentence. Empty when the verdict is "shown".
+  of what, in which room; or a date), in one or two sentences of at most 60 words in all:
+  it is sent to the contractor as written, so it must be complete. Empty when "shown".
+- Say who a person is, or which company they work for, only if a log or a paper says so.
 - log_dates: the dates (YYYY-MM-DD) of the logs your basis rests on. Everywhere else — in
   basis, ask and other_points — write a date the way people do: "11 Nov", never "11-11".
 
@@ -222,7 +224,7 @@ def clean_reading(data: Dict[str, Any], keys: set, shown: set, log_days: set, pa
         if verdict == "shown" and not ids:
             verdict = "said" if days else "nothing"
         lines[key] = {"verdict": verdict, "basis": _no_account_numbers(str(l.get("basis") or "").strip())[:600], "log_dates": days, "photo_ids": ids,
-                      "ask": "" if verdict == "shown" else _no_account_numbers(str(l.get("ask") or "").strip())[:300]}
+                      "ask": "" if verdict == "shown" else _no_account_numbers(str(l.get("ask") or "").strip())[:700]}
     return {"lines": lines, "points": [_no_account_numbers(str(x).strip())[:400] for x in data.get("other_points") or [] if str(x).strip()][:3], "papers": said}
 
 
