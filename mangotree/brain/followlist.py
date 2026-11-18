@@ -253,7 +253,9 @@ class FollowUps:
         today = today or now()
         items = self.build(today=today) if items is None else items
         me = ROLE_OWNER.get(user.get("role") or "")
-        pids = [f["property_id"] for f in self.construction()]
+        # Every property that has a job in Buildertrend, whatever stage it is in: a bill or a log can
+        # still come in after the work is logged complete (Tahona's repair bill, 2026-11-18).
+        pids = sorted({f["property_id"] for f in self.construction()} | {p for p in self.bt._job_pid().values() if p})
         pull = self.bt.pulls.find_one({"new_logs": {"$exists": True}}, sort=[("loaded_at", -1)]) or {}
         new_logs = {p: n for p, n in (pull.get("new_logs") or {}).items() if p in pids and n}
         stages = {f["property_id"]: (f.get("stage") or {}) for f in self.store.files.find({"property_id": {"$in": list(new_logs)}}, {"_id": 0, "property_id": 1, "stage.site_now": 1})}

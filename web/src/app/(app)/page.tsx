@@ -62,9 +62,10 @@ export default function TodayPage() {
         </div>
       </div>
 
-      <MyDay />
-
+      {/* What came in from the sites first — new daily logs, new bills — then the person's own five things. */}
       <AlertsCard />
+
+      <MyDay />
 
       {d.missing.length > 0 && ceo && (
         <div className="mt-4 rounded-xl border border-high/25 bg-high-soft/60 px-4 py-2.5 text-[13px]">

@@ -124,13 +124,20 @@ function LaterRow({ c, a, mine }: { c: DayCard; a: ReturnType<typeof useActions>
   );
 }
 
-function Fold({ label, count, children, open: start = false }: { label: string; count: number; children: React.ReactNode; open?: boolean }) {
+/* What a list is made of, in words: "35 to-dos · 19 replies to send". */
+function madeOf(cards: DayCard[]) {
+  const n = (t: DayCard["type"]) => cards.filter((c) => c.type === t).length;
+  const part = (k: number, one: string, many: string) => (k ? `${k} ${k === 1 ? one : many}` : "");
+  return [part(n("todo"), "to-do", "to-dos"), part(n("reply"), "reply to send", "replies to send"), part(n("bill"), "bill", "bills"), part(n("check"), "site check", "site checks")].filter(Boolean).join(" · ");
+}
+
+function Fold({ label, count, children, hint, open: start = false }: { label: string; count: number; children: React.ReactNode; hint?: string; open?: boolean }) {
   const [open, setOpen] = React.useState(start);
   if (!count) return null;
   return (
     <div className="border-t border-line">
       <button type="button" onClick={() => setOpen((v) => !v)} className="w-full flex items-center gap-2 px-5 h-10 text-[12.5px] text-muted hover:bg-sunken/60">
-        <ChevronDown size={13} className={cn("transition", !open && "-rotate-90")} /> {label} <span className="tnum text-faint">· {count}</span>
+        <ChevronDown size={13} className={cn("transition", !open && "-rotate-90")} /> {label} <span className="tnum text-faint">· {count}</span>{hint && <span className="text-faint">— {hint}</span>}
       </button>
       {open && children}
     </div>
@@ -240,7 +247,7 @@ function TeamCard({ rows, a, onGive }: { rows: TeamRow[]; a: ReturnType<typeof u
         <div className="border-t border-line">
           <div className="px-5 pt-3 pb-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-faint">{row.name} — first {row.now.length}</div>
           {row.now.length === 0 ? <div className="px-5 pb-4 text-[13px] text-muted">Nothing is waiting for {row.name}.</div> : <ul className="divide-y divide-line">{row.now.map((c) => <LaterRow key={c.key} c={c} a={a} mine={false} />)}</ul>}
-          <Fold label="After that" count={row.later.length}><ul className="divide-y divide-line">{row.later.map((c) => <LaterRow key={c.key} c={c} a={a} mine={false} />)}</ul></Fold>
+          <Fold label="After that" count={row.later.length} hint={madeOf(row.later)}><ul className="divide-y divide-line">{row.later.map((c) => <LaterRow key={c.key} c={c} a={a} mine={false} />)}</ul></Fold>
           <Fold label="Done today" count={row.done.length}><DoneList rows={row.done} /></Fold>
         </div>
       )}
@@ -272,7 +279,7 @@ export function MyDay() {
           </div>
         </div>
         {d.now.length > 0 && <ol className="divide-y divide-line border-t border-line">{d.now.map((c, i) => <NowCard key={c.key} c={c} n={i + 1} a={a} mine />)}</ol>}
-        <Fold label="Later" count={d.later.length}><ul className="divide-y divide-line">{d.later.map((c) => <LaterRow key={c.key} c={c} a={a} mine />)}</ul></Fold>
+        <Fold label="Later" count={d.later.length} hint={madeOf(d.later)}><ul className="divide-y divide-line">{d.later.map((c) => <LaterRow key={c.key} c={c} a={a} mine />)}</ul></Fold>
         <Fold label="Done today" count={done}><DoneList rows={d.done_today} /></Fold>
       </Card>
 

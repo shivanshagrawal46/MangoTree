@@ -388,3 +388,40 @@ def test_what_the_trial_decided_is_done_to_the_real_files_without_the_model():
     assert st.get_draft(live["draft_id"])["stale"]["why"] == "The bill was paid on 16 Nov."
     again = Sweep(m, st).replay_trial(today=NOW)                       # a second time changes nothing
     assert again["done"] == 0 and again["put_aside"] == 0 and again["replies_marked"] == 0
+
+
+def test_only_the_last_week_stays_open_by_the_date_of_what_raised_it():
+    """The strict rule: a to-do is as old as the email or call behind it, not as the day the system wrote it down."""
+    m, store = _store()
+    today = datetime(2026, 11, 18, 12, 0, tzinfo=UTC)
+    built = datetime(2026, 11, 12, 0, 0, tzinfo=UTC)                      # the file was first built inside the week
+    item = lambda i, **k: {"id": i, "title": f"to-do {i}", "detail": "", "owner": "rakesh", "kind": "action", "due": None, "status": "open", "opened_at": built, "source_sha": None, **k}
+    m.artifacts.insert_many([{"sha256": "mail-new", "date": today - timedelta(days=2)}, {"sha256": "mail-old", "date": today - timedelta(days=20)}])
+    m.db["calls"].insert_many([
+        {"note_id": "c-old", "status": "applied", "started_at": today - timedelta(days=12), "applied": {"live": {}}},
+        {"note_id": "c-new", "status": "applied", "started_at": today - timedelta(days=1), "applied": {"live": {"durham_st": {"changes": {"items_update": [{"id": "touched", "why": "moved"}]}}}}}])
+    store.files.insert_one({"property_id": "durham_st", "built_at": built, "open_items": [
+        item("from-build"),                                                # carried over from older history at the first build
+        item("touched"),                                                   # the same, but a call this week changed it
+        item("new-mail", source_sha="mail-new"), item("old-mail", source_sha="mail-old"),
+        item("old-call", source_sha="granola-c-old", opened_at=today - timedelta(days=12)), item("new-call", source_sha="granola-c-new"),
+        item("by-hand", opened_at=today - timedelta(days=3), by="rakesh"),   # written by a person inside the week
+        item("given", assigned_by="rakesh", opened_at=today - timedelta(days=30))]})
+    store.drafts.insert_many([
+        {"draft_id": "d-old", "status": "ready", "subject": "Re: old", "in_reply_to": {"date": today - timedelta(days=9), "subject": "old"}},
+        {"draft_id": "d-new", "status": "ready", "subject": "Re: new", "in_reply_to": {"date": today - timedelta(days=2), "subject": "new"}}])
+    sw = Sweep(m, store)
+    look = sw.week_cut(today=today)                                        # listed only: nothing changes
+    assert sorted(r["id"] for r in look["put_aside"]) == ["from-build", "old-call", "old-mail"] and look["kept"] == 5
+    assert [r["draft_id"] for r in look["replies_put_aside"]] == ["d-old"]
+    assert len(BrainStore.open_items(store.get_file("durham_st"))) == 8 and store.drafts.count_documents({"status": "ready"}) == 2
+    done = sw.week_cut(today=today, apply=True)
+    assert len(done["put_aside"]) == 3
+    left = {i["id"] for i in BrainStore.open_items(store.get_file("durham_st"))}
+    assert left == {"touched", "new-mail", "new-call", "by-hand", "given"}
+    gone = {i["id"]: i for i in store.get_file("durham_st")["open_items"] if i["status"] != "open"}
+    assert gone["old-mail"]["status"] == "dropped" and "an email of 29 Oct" in gone["old-mail"]["closed_note"] and "Reopen it" in gone["old-mail"]["closed_note"]
+    assert "older history" in gone["from-build"]["closed_note"]
+    d = store.drafts.find_one({"draft_id": "d-old"})
+    assert d["status"] == "dismissed" and "older than one week" in d["put_aside"]["why"] and store.drafts.find_one({"draft_id": "d-new"})["status"] == "ready"
+    assert store.reopen_item("durham_st", "old-mail") and "old-mail" in {i["id"] for i in BrainStore.open_items(store.get_file("durham_st"))}   # nothing is lost

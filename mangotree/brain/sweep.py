@@ -313,12 +313,92 @@ class Sweep:
         return [{k: i.get(k) for k in ("key", "kind", "owner", "property", "title", "days", "amount")} for i in old]
 
 
+    # ------------------------------------------------------------ the strict one-week rule
+    def week_cut(self, *, today: Optional[datetime] = None, apply: bool = False) -> Dict[str, Any]:
+        """Keep open only what belongs to the last week; put everything older aside (never deleted).
+
+        The admin's rule (2026-11-17, repeated 2026-11-18): "keep only the past one week un replied or
+        to dos open everything else should be closed". The age of a to-do is the age of what raised
+        it, not the day the system wrote it down — the files were first built on 11-12 Nov, so by
+        that day's date everything looked new. A to-do stays open when any of these holds:
+          * the email or call it came from is dated inside the week;
+          * a person or a later reading wrote it inside the week (after the file's first build);
+          * a call held inside the week changed it;
+          * Rakesh Sir gave it as a task.
+        Everything else — carried over from older history when the file was built, or raised by an
+        email or call older than a week — is put aside with a note, and can be reopened.
+        A waiting reply is put aside when the email it answers is older than a week."""
+        today = today or now()
+        cut = today - timedelta(days=WEEK)
+        where = "trial" if type(self.store).__name__ == "TrialStore" else "live"
+
+        def aware(d: Any) -> Optional[datetime]:
+            return d.replace(tzinfo=d.tzinfo or timezone.utc) if isinstance(d, datetime) else None
+        files = list(self.store.files.find({}, {"_id": 0, "property_id": 1, "built_at": 1, "open_items": 1}))
+        open_items = [(f, i) for f in files for i in f.get("open_items") or [] if i.get("status") == "open"]
+        shas = {str(i["source_sha"]) for _, i in open_items if i.get("source_sha")}
+        call_at: Dict[str, Optional[datetime]] = {}
+        touched: set = set()
+        for c in self.mongo.db["calls"].find({"status": {"$ne": "skipped"}}, {"note_id": 1, "started_at": 1, f"applied.{where}": 1}):
+            at = aware(c.get("started_at"))
+            call_at["granola-" + str(c.get("note_id"))] = at
+            if at and at >= cut:
+                for pid, a in (((c.get("applied") or {}).get(where)) or {}).items():
+                    for u in ((a.get("changes") or {}).get("items_update") or []):
+                        touched.add((pid, str(u.get("id") or "")))
+        art_at = {a["sha256"]: aware(a.get("date") or a.get("created_at"))
+                  for a in self.mongo.artifacts.find({"sha256": {"$in": [s for s in shas if not s.startswith("granola-")]}}, {"sha256": 1, "date": 1, "created_at": 1})}
+        out: Dict[str, Any] = {"cut": cut, "kept": 0, "put_aside": [], "replies_put_aside": [], "applied": apply}
+        for f, i in open_items:
+            pid, sha = f["property_id"], str(i.get("source_sha") or "")
+            raised = (call_at.get(sha) if sha.startswith("granola-") else art_at.get(sha)) if sha else None
+            opened, built = aware(i.get("opened_at")), aware(f.get("built_at"))
+            if i.get("assigned_by"):
+                why = None
+            elif (pid, str(i.get("id"))) in touched:
+                why = None
+            elif raised is not None:
+                why = None if raised >= cut else f"it comes from {'a call' if sha.startswith('granola-') else 'an email'} of {raised:%d %b}"
+            elif opened and opened >= cut and (not built or opened > built + timedelta(hours=1)):
+                why = None                                              # written inside the week, by a person or a later reading
+            else:
+                why = "it was carried over from older history when the file was first built"
+            if why is None:
+                out["kept"] += 1
+                continue
+            row = {"property_id": pid, "id": i.get("id"), "owner": i.get("owner"), "title": i.get("title"), "due": i.get("due"), "why": why}
+            if apply and not self.store.close_item(pid, str(i.get("id")), by="sweep", status="dropped",
+                                                   note=f"Put aside on {today:%d %b %Y}: {why}, and nothing in the last week touched it. Only the last week is kept open. Reopen it if it is still needed."):
+                continue
+            out["put_aside"].append(row)
+        for d in self.store.drafts.find({"status": "ready"}, {"_id": 0, "draft_id": 1, "subject": 1, "in_reply_to": 1, "created_at": 1, "property_ids": 1}):
+            got = aware((d.get("in_reply_to") or {}).get("date") or d.get("created_at"))
+            if got is None or got >= cut:
+                continue
+            if apply:
+                self.store.drafts.update_one({"draft_id": d["draft_id"], "status": "ready"},
+                                             {"$set": {"status": "dismissed", "status_by": "sweep", "updated_at": today,
+                                                       "put_aside": {"at": today, "why": f"The email it answers is from {got:%d %b}: older than one week. Put aside on {today:%d %b %Y}; set it back to waiting if a reply is still owed."}}})
+            out["replies_put_aside"].append({"draft_id": d["draft_id"], "subject": (d.get("in_reply_to") or {}).get("subject") or d.get("subject"), "email_date": got})
+        if apply:
+            by_pid: Dict[str, List[Dict[str, Any]]] = {}
+            for r in out["put_aside"]:
+                by_pid.setdefault(r["property_id"], []).append(r)
+            for pid, rows in by_pid.items():
+                self.store.add_activity(pid, at=today, kind="sweep", who="MangoTree", relevance="minor",
+                                        title=f"Only the last week is kept open: {len(rows)} older to-do{'' if len(rows) == 1 else 's'} put aside",
+                                        summary="; ".join(str(r["title"]) for r in rows)[:1200])
+            self.mongo.db["sweep_runs"].insert_one({"at": today, "where": where, "kind": "week_cut", "cut": cut, "kept": out["kept"],
+                                                    "put_aside": out["put_aside"], "replies_put_aside": out["replies_put_aside"]})
+        return out
+
+
 def main(argv=None) -> int:
     import argparse
     import json
     from mangotree.storage.mongo import get_mongo
     ap = argparse.ArgumentParser(description="Read the open to-dos over: run | old-follow")
-    ap.add_argument("action", choices=["run", "old-follow", "replay-trial", "rewrite"])
+    ap.add_argument("action", choices=["run", "old-follow", "replay-trial", "rewrite", "week-cut"])
     ap.add_argument("--trial", action="store_true")
     ap.add_argument("--apply", action="store_true", help="old-follow: put the old lines aside (without it they are only listed)")
     ap.add_argument("--pid", action="append")
@@ -337,6 +417,14 @@ def main(argv=None) -> int:
         print(json.dumps(sw.replay_trial(), indent=1, default=str))
     elif args.action == "rewrite":
         print(json.dumps(sw.rewrite_outdated(limit=4), indent=1, default=str, ensure_ascii=False))
+    elif args.action == "week-cut":
+        r = sw.week_cut(apply=args.apply)
+        for x in r["put_aside"]:
+            print(f"{str(x['owner']):<10} {x['property_id'][:14]:<14} {str(x['title'])[:70]:<70} | {x['why']}")
+        for x in r["replies_put_aside"]:
+            print(f"reply      {x['email_date']:%d %b}  {str(x['subject'])[:80]}")
+        print(f"cut-off {r['cut']:%d %b %Y %H:%M} UTC | kept open {r['kept']} | to-dos put aside {len(r['put_aside'])} | replies put aside {len(r['replies_put_aside'])} |",
+              "APPLIED" if args.apply else "listed only (add --apply)")
     else:
         rows = sw.old_follow_lines(apply=args.apply)
         for r in rows:
