@@ -145,3 +145,19 @@ def test_long_numbers_are_removed_and_ordinary_ones_are_kept():
     assert "435061476992" not in out and "026009593" not in out and "4111" not in out and out.count("[number removed]") == 3
     r = clean_reading({"lines": [], "papers": [], "other_points": ["Pay by wire to 435061476992."]}, set(), set(), set(), {})
     assert r["points"] == ["Pay by wire to [number removed]."] and r["papers"] == []
+
+
+def test_the_lines_of_a_receipt_are_kept_and_its_total_is_checked_against_the_bill():
+    from mangotree.brain.billcheck import paper_check
+    raw = {"lines": [], "other_points": [], "papers": [{"file_id": 501, "kind": "receipt", "says": "Home Depot.", "total": 500, "items": [
+        {"item": "Drywall 1/2 in. x 4 ft. x 8 ft.", "qty": 70, "unit_price": 20.03, "amount": 1402.1}, {"item": "", "qty": 1, "unit_price": 1, "amount": 1},
+        {"item": "Sales tax", "qty": None, "unit_price": None, "amount": "334.15"}]}]}
+    p = clean_reading(raw, set(), set(), set(), {501: "HD receipt.pdf"})["papers"][0]
+    assert p["items"] == [{"item": "Drywall 1/2 in. x 4 ft. x 8 ft.", "qty": 70.0, "unit_price": 20.03, "amount": 1402.1},
+                          {"item": "Sales tax", "qty": None, "unit_price": None, "amount": None}]          # a row with no name is dropped; a figure that is not a number is not kept
+    assert paper_check([p], 500.0) == {"key": "paper_total", "ok": True, "text": "The attached receipt comes to $500.00, the same as the bill."}
+    assert paper_check([p], 650.0) == {"key": "paper_total", "ok": False, "text": "The attached receipt comes to $500.00; the bill asks $650.00."}
+    inv = {"kind": "invoice", "total": 150.0, "title": "inv.pdf"}
+    assert paper_check([p, inv], 650.0)["text"] == "The 2 attached papers add up to $650.00, the same as the bill."
+    assert paper_check([{"kind": "photo", "total": None}], 650.0) is None and paper_check([], 650.0) is None
+    assert paper_check([{"kind": "payment_proof", "total": 650.0}], 650.0) is None                     # a proof of payment is not what the bill is checked against

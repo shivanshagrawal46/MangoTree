@@ -369,6 +369,20 @@ def install(app: FastAPI, mongo: Mongo, jobs) -> None:
             raise HTTPException(404, "That photo has not been brought over from Buildertrend.")
         return Response(content=blob, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=604800"})
 
+    @app.get("/brain/bill-files/{file_id}")
+    def brain_bill_file(file_id: int, user=CurrentUser):
+        """A paper attached to a bill in Buildertrend (receipt, invoice, photo), opened in the browser. RKB's team only:
+        an invoice can carry the vendor's bank details."""
+        if user.get("role") not in ("ceo", "accountant", "operations", "team"):
+            raise HTTPException(403, "Only RKB's team can open a bill's attached files.")
+        f = bt.bill_files.find_one({"file_id": int(file_id)}, {"_id": 0, "title": 1, "ext": 1})
+        blob = bt.bill_file(file_id) if f else None
+        if not blob:
+            raise HTTPException(404, "That file has not been brought over from Buildertrend.")
+        media = {"pdf": "application/pdf", "jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png", "webp": "image/webp", "gif": "image/gif"}.get(f.get("ext") or "", "application/octet-stream")
+        name = "".join(c if c.isalnum() or c in " ._-" else "_" for c in (f.get("title") or f"file {file_id}"))[:120]
+        return Response(content=blob, media_type=media, headers={"Content-Disposition": f'inline; filename="{name}"', "Cache-Control": "private, max-age=3600"})
+
     @app.get("/brain/properties/{pid}/site/logs")
     @swr.cached("site-logs", fresh=60, keep=900)
     def brain_site_logs(pid: str, skip: int = 0, limit: int = 30, user=CurrentUser):

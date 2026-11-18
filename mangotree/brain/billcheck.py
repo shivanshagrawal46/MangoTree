@@ -50,6 +50,7 @@ LOG_DAYS = 45                    # how far back the logs are read for one bill
 MAX_PHOTOS = 120
 MAX_PAPERS = 12                  # attached files given to one reading
 MAX_PAPER_BYTES = 8_000_000      # a PDF larger than this is named, not read
+MAX_PAPER_ITEMS = 120            # lines kept from one receipt or invoice
 PAPER_SIDE = 2000                # pixels: a photographed receipt must stay legible
 IMAGE_EXT = ("jpg", "jpeg", "png", "webp", "gif", "heic", "bmp")
 HOLDBACK = 0.10
@@ -112,6 +113,12 @@ payment, photos. You are given each one that could be read, before the logs. Rea
   three sentences (under 90 words) what it says that matters for approving the bill
   (seller, date, the main items, delivery date and address, the total). `total` is the paper's grand total in
   dollars when it states one, else null.
+- `items`: for a receipt or an invoice, EVERY line the paper lists, in its order, copied
+  exactly: the item as written (shortened to under 12 words, keep the brand and the size),
+  the quantity, the unit price actually charged (after any discount shown) and the line's
+  amount. Include delivery, shipping, discount and tax rows when the paper shows them as
+  rows or totals, so that the amounts can be added up to the total. Use null for a figure
+  the paper does not give; never work one out yourself. Empty for photos and other files.
 - Never copy a bank account number, routing number or card number into anything you write.
 
 other_points: at most three things in the record that bear on approving THIS bill but are
@@ -129,9 +136,13 @@ SCHEMA = {
     "type": "object", "additionalProperties": False, "required": ["lines", "papers", "other_points"],
     "properties": {
         "papers": {"type": "array", "items": {
-            "type": "object", "additionalProperties": False, "required": ["file_id", "kind", "says", "total"],
+            "type": "object", "additionalProperties": False, "required": ["file_id", "kind", "says", "total", "items"],
             "properties": {"file_id": {"type": "integer"}, "kind": {"type": "string", "enum": list(PAPER_KINDS)}, "says": {"type": "string"},
-                           "total": {"type": ["number", "null"]}}}},
+                           "total": {"type": ["number", "null"]},
+                           "items": {"type": "array", "items": {
+                               "type": "object", "additionalProperties": False, "required": ["item", "qty", "unit_price", "amount"],
+                               "properties": {"item": {"type": "string"}, "qty": {"type": ["number", "null"]}, "unit_price": {"type": ["number", "null"]},
+                                              "amount": {"type": ["number", "null"]}}}}}}},
         "lines": {"type": "array", "items": {
             "type": "object", "additionalProperties": False, "required": ["key", "verdict", "basis", "log_dates", "photo_ids", "ask"],
             "properties": {"key": {"type": "string"}, "verdict": {"type": "string", "enum": list(VERDICTS)}, "basis": {"type": "string"},
@@ -186,6 +197,25 @@ def _no_account_numbers(text: str) -> str:
     return _SECRET_NUMBER.sub(lambda m: m.group(0) if sum(c.isdigit() for c in m.group(0)) < 9 else "[number removed]", text)
 
 
+def _number(x: Any) -> Optional[float]:
+    return round(float(x), 2) if isinstance(x, (int, float)) and not isinstance(x, bool) else None
+
+
+def paper_check(papers: List[Dict[str, Any]], gross: float) -> Optional[Dict[str, Any]]:
+    """Arithmetic only: do the attached receipts and invoices come to what the bill asks?
+    None when no attached paper states a total."""
+    totals = [(p.get("title") or "the attached paper", p["total"]) for p in papers or [] if p.get("kind") in ("receipt", "invoice") and p.get("total") is not None]
+    if not totals:
+        return None
+    what = "receipt" if all(p.get("kind") == "receipt" for p in papers if p.get("total") is not None and p.get("kind") in ("receipt", "invoice")) else "invoice"
+    if any(abs(t - gross) < 0.02 for _, t in totals):
+        return {"key": "paper_total", "ok": True, "text": f"The attached {what} comes to {usd(gross)}, the same as the bill."}
+    if len(totals) > 1 and abs(sum(t for _, t in totals) - gross) < 0.02:
+        return {"key": "paper_total", "ok": True, "text": f"The {len(totals)} attached papers add up to {usd(gross)}, the same as the bill."}
+    return {"key": "paper_total", "ok": False, "text": ("The attached " + what + f" comes to {usd(totals[0][1])}" if len(totals) == 1 else
+                                                         f"The {len(totals)} attached papers come to {usd(sum(t for _, t in totals))}") + f"; the bill asks {usd(gross)}."}
+
+
 def paper_image(blob: bytes) -> Optional[bytes]:
     """An attached picture at a size where a photographed receipt can still be read; None if it cannot be opened."""
     try:
@@ -211,8 +241,10 @@ def clean_reading(data: Dict[str, Any], keys: set, shown: set, log_days: set, pa
             continue
         total = p.get("total")
         said.append({"file_id": fid, "title": (papers or {})[fid], "kind": p.get("kind") if p.get("kind") in PAPER_KINDS else "other",
-                     "says": _no_account_numbers(str(p.get("says") or "").strip())[:1200],
-                     "total": round(float(total), 2) if isinstance(total, (int, float)) and not isinstance(total, bool) else None})
+                     "says": _no_account_numbers(str(p.get("says") or "").strip())[:1200], "total": _number(total),
+                     "items": [{"item": _no_account_numbers(str(i.get("item") or "").strip())[:160], "qty": _number(i.get("qty")),
+                                "unit_price": _number(i.get("unit_price")), "amount": _number(i.get("amount"))}
+                               for i in (p.get("items") or []) if isinstance(i, dict) and str(i.get("item") or "").strip()][:MAX_PAPER_ITEMS]})
     lines: Dict[str, Dict[str, Any]] = {}
     for l in data.get("lines") or []:
         key = str(l.get("key") or "")
@@ -387,7 +419,8 @@ class BillCheck:
             "created_by": main.get("created_by"), "file_names": main.get("file_names") or [], "description": main.get("description") or "",
             "gross": gross, "pay_now": round(main.get("amount") or 0, 2) if not main.get("holdback") else 0.0,
             "held": round((held or {}).get("amount") or (main.get("amount") if main.get("holdback") else 0) or 0, 2), "holdback_bill": (held or {}).get("number"),
-            "lines": lines, "job": job, "checks": self._checks(main, held, lines, job), "summary": summary, "reading": reading,
+            "lines": lines, "job": job, "checks": self._checks(main, held, lines, job) + [c for c in [paper_check((reading or {}).get("papers") or [], gross)] if c],
+            "summary": summary, "reading": reading,
             "steps": t.get("steps") or {}, "draws": draws, "history": (doc.get("history") or [])[-20:][::-1],
         }
         out["message_for_wes"] = self.message(out)
@@ -508,7 +541,7 @@ class BillCheck:
         if not logs:
             content.append({"type": "text", "text": "\n(There is no daily log in this period.)"})
         def ask(blocks: List[Dict[str, Any]]) -> Dict[str, Any]:
-            return structured(system=prompts.CORE + "\n" + BRIEF, user=blocks, schema=SCHEMA, effort="high", max_tokens=12_000, label=f"bill check {main['bill_id']}")
+            return structured(system=prompts.CORE + "\n" + BRIEF, user=blocks, schema=SCHEMA, effort="high", max_tokens=20_000, label=f"bill check {main['bill_id']}")
         try:
             try:
                 r = ask(content)
