@@ -9,9 +9,9 @@ import { Check, Gavel, Tag } from "lucide-react";
 import { cn, fmtDate } from "@/lib/utils";
 import type { PersonOnDeal, PropertyFile, Stage } from "@/lib/brain";
 
-export type TabKey = "overview" | "emails" | "documents" | "files" | "timeline" | "site" | "bills" | "sheet" | "arv" | "permits" | "money" | "people";
+export type TabKey = "overview" | "emails" | "calls" | "documents" | "files" | "timeline" | "site" | "bills" | "sheet" | "arv" | "permits" | "money" | "people";
 export const TABS: { key: TabKey; label: string }[] = [
-  { key: "overview", label: "Overview" }, { key: "emails", label: "Emails" }, { key: "documents", label: "Documents" }, { key: "files", label: "Files" },
+  { key: "overview", label: "Overview" }, { key: "emails", label: "Emails" }, { key: "calls", label: "Calls" }, { key: "documents", label: "Documents" }, { key: "files", label: "Files" },
   { key: "timeline", label: "Timeline" }, { key: "site", label: "Site work" }, { key: "bills", label: "Bills" }, { key: "sheet", label: "Money sheet" }, { key: "arv", label: "ARV" },
   { key: "permits", label: "Permits" }, { key: "money", label: "Money" }, { key: "people", label: "People" },
 ];
@@ -87,7 +87,7 @@ function Party({ label, people }: { label: string; people: PersonOnDeal[] }) {
   return (
     <div className="flex items-baseline gap-1.5 min-w-0" title={people.map((x) => x.value).join("\n") || undefined}>
       <span className="text-[9.5px] font-semibold uppercase tracking-[0.1em] text-faint shrink-0">{label}</span>
-      {p ? <span className="text-[12px] font-medium text-fg truncate max-w-[168px]">{shortName(p.value)}</span> : <span className="text-[12px] text-faint">not on record</span>}
+      {p ? <span className="text-[12px] font-medium text-fg truncate max-w-[168px]">{shortName(p.value)}</span> : <span className="text-[12px] text-faint truncate">not on record</span>}
     </div>
   );
 }
@@ -117,7 +117,7 @@ export function PropertyHeader({ f, tab, onTab, counts }: { f: PropertyFile; tab
         {s && <div className="ml-auto hidden lg:block min-w-0 overflow-hidden"><Stepper s={s} /></div>}
       </div>
       <div className="h-[34px] px-3 flex items-center justify-between gap-4 border-t border-line/70">
-        <nav className="flex h-full gap-0.5 overflow-x-auto" style={{ scrollbarWidth: "none" }}>
+        <nav className="flex h-full gap-0.5 overflow-x-auto 2xl:shrink-0" style={{ scrollbarWidth: "none" }}>
           {tabs.map((t) => {
             const n = counts?.[t.key] || 0;
             return (
@@ -131,7 +131,7 @@ export function PropertyHeader({ f, tab, onTab, counts }: { f: PropertyFile; tab
           })}
         </nav>
         {!f.is_general && (
-          <div className="hidden xl:flex items-center gap-5 pr-2 shrink-0">
+          <div className="hidden xl:flex items-center gap-5 pr-2 shrink-0 2xl:shrink 2xl:min-w-0 2xl:overflow-hidden">
             <Party label="Homeowner" people={role("Homeowner / borrower")} />
             <Party label="Contractor" people={role("Contractor")} />
             <Party label="Title" people={role("Title company")} />

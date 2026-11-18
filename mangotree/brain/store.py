@@ -22,7 +22,7 @@ from mangotree.storage.mongo import Mongo
 
 from . import config as bc
 
-OWNERS = ("rakesh", "jp", "manjunath", "wes", "kelly", "other")
+OWNERS = ("rakesh", "jp", "manjunath", "shivansh", "wes", "kelly", "other")
 ITEM_KINDS = ("reply", "action", "waiting", "decision")
 
 

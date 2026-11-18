@@ -11,7 +11,7 @@ export type OpenItem = {
 
 export type Activity = {
   property_id: string; property?: string; at: string; kind: string; who?: string; title: string; summary?: string;
-  sha?: string | null; relevance?: string;
+  sha?: string | null; relevance?: string; call?: string;
 };
 
 export type OpenPoint = { kind: string; label: string; statement: string; record_shows: string; fix?: string };
@@ -118,12 +118,35 @@ export type ChatThread = {
 };
 
 export const OWNER_LABEL: Record<string, string> = {
-  rakesh: "Rakesh Sir", jp: "JP Sir", manjunath: "Manjunath Sir", wes: "Wes", kelly: "Kelly", other: "Other",
+  rakesh: "Rakesh Sir", jp: "JP Sir", manjunath: "Manjunath Sir", shivansh: "Shivansh", wes: "Wes", kelly: "Kelly", other: "Other",
+};
+
+/** One thing waiting for a person: a to-do, a reply written and not sent, a bill, a check on the site. */
+export type DayCard = {
+  key: string; type: "todo" | "reply" | "bill" | "check"; kind?: string; title: string; detail?: string;
+  property_id: string; property: string; due?: string | null; overdue?: boolean; opened_at?: string | null;
+  item_id?: string; draft_id?: string; follow_key?: string; href: string; why_now?: string; stale?: boolean;
+  assigned_by?: string | null; assigned_by_name?: string | null; amount?: number | null; days?: number | null; source_sha?: string | null;
+};
+export type DayDone = { title: string; property: string; property_id: string; closed_at: string; closed_by?: string; note?: string; assigned_by?: string | null };
+export type TeamRow = { person: string; name: string; left: number; late: number; done_today: number; given_open: number; now: DayCard[]; later: DayCard[]; done: DayDone[] };
+export type DayBoard = {
+  person: string; name: string; day: string; now: DayCard[]; later: DayCard[]; left: number; late: number; done_today: DayDone[];
+  people: { person: string; name: string }[]; can_give: boolean; team: TeamRow[] | null;
+};
+
+/** A call that was read: what it said about each property, with the speakers' own words. */
+export type CallPoint = { kind: string; text: string; by: string; quote: string; at: string };
+export type CallSection = { property_id: string; name: string; topic: string; summary: string; points: CallPoint[] };
+export type CallNote = {
+  note_id: string; title: string; when: string; started_at: string; speakers: string[]; separated?: boolean; picked_by?: string; overall?: string;
+  status?: string; web_url?: string; sections: CallSection[];
+  applied: Record<string, { changed?: string[]; items_added?: number; items_closed?: number; items_updated?: number; drafts_outdated?: number }>;
 };
 
 export const KIND_LABEL: Record<string, string> = {
   email_in: "Email in", email_out: "Email sent", call: "Call", document: "Document", said_in_chat: "Said in chat",
-  todo_closed: "To-do closed", note: "Note",
+  todo_closed: "To-do closed", note: "Note", sweep: "List read over", task_given: "Task given", reply_sent: "Reply sent", correction: "Correction",
 };
 
 /** A readable message from whatever a failed request threw. */

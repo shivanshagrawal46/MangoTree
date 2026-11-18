@@ -6,7 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Command } from "cmdk";
 import { motion } from "framer-motion";
-import { Gavel, Tag, LayoutGrid, Building2, CheckSquare, Inbox, Users, MessageSquare, Search, LogOut, Moon, Sun, AlertTriangle, ChevronRight, HardHat, ClipboardList, BellRing, FileBadge, Calculator, Archive, ChevronDown, Reply, Receipt, Handshake } from "lucide-react";
+import { Gavel, Tag, LayoutGrid, Building2, CheckSquare, Inbox, Users, MessageSquare, Search, LogOut, Moon, Sun, AlertTriangle, ChevronRight, HardHat, ClipboardList, BellRing, FileBadge, Calculator, Archive, ChevronDown, Reply, Receipt, Handshake, Phone } from "lucide-react";
 import { api } from "@/lib/api";
 import { useUser } from "@/components/providers";
 import { Kbd } from "@/components/ui";
@@ -16,12 +16,14 @@ import type { PropertySummary } from "@/lib/types";
 /* Three things: today, a chat that knows the files, and the replies waiting.
    The analysis tools follow. Everything the system used to show as its own
    screen (next steps, follow-ups, tasks, cards) now lives on the property file
-   as open items; those screens stay reachable under "Older screens". */
+   as open items; those screens stay reachable under "Older screens" — except the
+   old follow-ups (reminders from before October), taken off the menu on 2026-11-18. */
 const NAV = [
   { href: "/", label: "Today", icon: LayoutGrid },
   { href: "/replies", label: "To reply", icon: Reply },
   { href: "/bills", label: "Bills", icon: Receipt },
   { href: "/chase", label: "Follow-ups", icon: BellRing },
+  { href: "/calls", label: "Calls", icon: Phone },
   { href: "/brokers", label: "Brokers", icon: Handshake },
   { href: "/ask", label: "Ask", icon: MessageSquare },
   { href: "/arv", label: "ARV & underwriting", icon: Calculator },
@@ -30,7 +32,6 @@ const NAV = [
 const OLDER_NAV = [
   { href: "/classic", label: "Old dashboard", icon: LayoutGrid },
   { href: "/next-steps", label: "Next steps", icon: ClipboardList },
-  { href: "/followups", label: "Old follow-ups", icon: BellRing },
   { href: "/tasks", label: "Tasks", icon: CheckSquare },
   { href: "/permits", label: "Permits", icon: FileBadge },
   { href: "/review", label: "Review", icon: Inbox },
@@ -42,10 +43,10 @@ const TEAM_NAV = [
   { href: "/replies", label: "To reply", icon: Reply },
   { href: "/bills", label: "Bills", icon: Receipt },
   { href: "/chase", label: "Follow-ups", icon: BellRing },
+  { href: "/calls", label: "Calls", icon: Phone },
   { href: "/ask", label: "Ask", icon: MessageSquare },
 ];
 const TEAM_OLDER_NAV = [
-  { href: "/followups", label: "Old follow-ups", icon: BellRing },
   { href: "/tasks", label: "My tasks", icon: CheckSquare },
 ];
 
@@ -225,7 +226,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           {children}
         </motion.div>
       </main>
-      <Palette open={palette} onOpenChange={setPalette} properties={ceo ? (props.data || []) : []} nav={nav} />
+      <Palette open={palette} onOpenChange={setPalette} properties={props.data || []} nav={nav} />
     </div>
   );
 }

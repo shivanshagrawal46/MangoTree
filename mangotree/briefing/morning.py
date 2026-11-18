@@ -615,6 +615,57 @@ class Scheduler:
             self._record("brain", not out.get("errors"), {k: out.get(k) for k in ("read", "drafts", "errors", "remaining")})
         return out
 
+    CALLS_MINUTES = 15
+
+    def _due_calls(self) -> bool:
+        last = getattr(self, "_last_calls", None)
+        return last is None or (datetime.now(timezone.utc) - last) >= timedelta(minutes=self.CALLS_MINUTES)
+
+    def run_calls(self) -> Dict[str, Any]:
+        """New calls in the Granola folder: taken, read, and put into the property files."""
+        from mangotree.brain import config as bc
+        from mangotree.brain.calls import Calls
+        from mangotree.brain.store import BrainStore
+        store = BrainStore(self.mongo)
+        calls = Calls(self.mongo, store)
+        if not calls.client.ready or not store.setting(bc.SETTING_ENABLED, True):
+            return {"skipped": "no Granola key" if not calls.client.ready else "switched off"}
+        pulled = calls.pull_folder()
+        out = calls.run() if (pulled.get("taken") or calls.waiting("read") or calls.waiting("apply")) else {"read": [], "applied": [], "failed": []}
+        # A waiting reply that a call (or the morning reading) has overtaken is written again, a few each round.
+        from mangotree.brain.sweep import Sweep
+        redone = Sweep(self.mongo, store).rewrite_outdated(limit=3)
+        if out.get("applied") or redone["rewritten"] or redone["closed"]:
+            from mangotree.api import swr
+            swr.clear()
+        return {"taken": len(pulled.get("taken") or []), "read": len(out["read"]), "applied": len(out["applied"]), "failed": out["failed"] + redone["failed"],
+                "replies_rewritten": len(redone["rewritten"]), "replies_closed": len(redone["closed"])}
+
+    def _due_my_day(self) -> bool:
+        from mangotree.brain.myday import due_morning
+        return due_morning()
+
+    def run_my_day(self) -> Dict[str, Any]:
+        """The lists are read over (what is done is closed), put in order, and each person's morning email is queued."""
+        from mangotree.brain.myday import MyDay
+        from mangotree.brain.store import BrainStore
+        from mangotree.brain.sweep import Sweep
+        store = BrainStore(self.mongo)
+        out: Dict[str, Any] = {}
+        try:
+            # Monday's reading is the thorough one (against the emails word for word); the other days' is the short one.
+            deep = self._now_local().weekday() == 0
+            sw = Sweep(self.mongo, store).run(deep=deep)
+            out["sweep"] = {"deep": deep, "files": len(sw["files"]), "closed": sum(f.get("done", 0) + f.get("duplicate", 0) + f.get("put_aside", 0) for f in sw["files"].values()),
+                            "cost_usd": sw["cost_usd"], "failed": len(sw["failed"])}
+        except Exception as exc:   # the email still goes if the reading-over fails
+            logger.exception("morning sweep failed")
+            out["sweep"] = {"error": str(exc)[:300]}
+        sent = MyDay(self.mongo, store).send_morning()
+        from mangotree.api import swr
+        swr.clear()
+        return {**out, "sent": [s["person"] for s in sent["sent"]], "failed": sent["failed"], "plan_cost_usd": sent["cost_usd"]}
+
     def _record(self, job: str, ok: bool, detail: Any) -> None:
         self.runs.insert_one({"job": job, "ok": ok, "detail": detail if isinstance(detail, (dict, list, str, int)) else str(detail),
                               "at": datetime.now(timezone.utc)})
@@ -648,6 +699,28 @@ class Scheduler:
                 self.run_brain()
             except Exception:
                 logger.exception("property-file update failed")
+        # Calls (2026-11-18): every fifteen minutes, whatever Rakesh Sir has put in his
+        # Granola folder "RKB-ROI" is read and put into the property files it touches.
+        if self.intake_enabled and self._due_calls():
+            try:
+                out = self.run_calls()
+                if out.get("taken") or out.get("read") or out.get("applied") or out.get("failed") or out.get("replies_rewritten") or out.get("replies_closed"):
+                    self._record("calls", not out.get("failed"), out)
+            except Exception as exc:
+                logger.exception("reading calls failed")
+                self._record("calls", False, str(exc)[:400])
+            self._last_calls = datetime.now(timezone.utc)
+        # My day (2026-11-18): at 4:30 am US Eastern each person's list is read over and their
+        # morning email goes out. Not part of the paused daily analysis below; once a day.
+        if self.intake_enabled and self._due_my_day() and self._claim_daily("my_day"):
+            try:
+                out = self.run_my_day()
+                self._record("my_day", not out.get("failed"), out)
+                self._release_daily("my_day", not out.get("failed"))
+            except Exception as exc:
+                logger.exception("the morning emails failed")
+                self._record("my_day", False, str(exc)[:400])
+                self._release_daily("my_day", False)
         # A person's question outranks everything below. Heavy passes wait for
         # the next tick (60s) until no answer is in flight.
         try:

@@ -113,6 +113,14 @@ class BillLineBody(BaseModel):
     note: Optional[str] = None
 
 
+class TaskBody(BaseModel):
+    to: str
+    title: str
+    detail: str = ""
+    due: Optional[str] = None
+    property_id: Optional[str] = None
+
+
 class RedoBody(BaseModel):
     instruction: str = ""
 
@@ -154,7 +162,7 @@ def install(app: FastAPI, mongo: Mongo, jobs) -> None:
         items = BrainStore.open_items(f)
         return {"property_id": f["property_id"], "name": f.get("name") or name_of(f["property_id"]), "headline": f.get("headline") or "",
                 "updated_at": f.get("updated_at"), "last_event_at": f.get("last_event_at"), "open": len(items),
-                "open_mine": {o: sum(1 for i in items if i.get("owner") == o) for o in ("rakesh", "jp", "manjunath")},
+                "open_mine": {o: sum(1 for i in items if i.get("owner") == o) for o in ("rakesh", "jp", "manjunath", "shivansh")},
                 "waiting": sum(1 for i in items if i.get("kind") == "waiting"), "drafts": drafts_by.get(f["property_id"], 0),
                 "watch": len(f.get("watch") or []), "is_general": f["property_id"] == bc.GENERAL_ID}
 
@@ -229,7 +237,7 @@ def install(app: FastAPI, mongo: Mongo, jobs) -> None:
                 "followups": (follow.get(mine) or {}).get("open") if mine else None, "followups_high": (follow.get(mine) or {}).get("high") if mine else None,
                 "groups": {r["property_id"]: snapshot.group_of(r["stage"]) for r in staged},
                 "market_days": {r["property_id"]: snapshot.days_on_market(r["stage"]) for r in staged if snapshot.group_of(r["stage"]) == "market"},
-                "open": {r["property_id"]: sum(1 for i in r.get("open_items") or [] if i.get("status") == "open" and i.get("owner") == "rakesh") for r in rows}}
+                "open": {r["property_id"]: sum(1 for i in r.get("open_items") or [] if i.get("status") == "open" and i.get("owner") == user.get("user_id")) for r in rows}}
 
     # ---------------------------------------------------------- properties
     bt = Buildertrend(mongo)
@@ -300,7 +308,7 @@ def install(app: FastAPI, mongo: Mongo, jobs) -> None:
     # ---------------------------------------------------------- one bill, checked line by line
     def _bill_check_page(d: Dict[str, Any], user: Dict[str, Any]) -> Dict[str, Any]:
         """The check, with who the page's "ready to pay" email goes to and whether it has gone."""
-        return data.clean({**d, "can": {"lines": user.get("role") in ("ceo", "accountant", "operations")},
+        return data.clean({**d, "can": {"lines": user.get("role") in ("ceo", "accountant", "operations", "team")},
                            "mail_to": billmail.recipients(), "mail": billmail.state(d["bill_id"])})
 
     @app.get("/brain/bills/{bill_id}/check")
@@ -315,7 +323,7 @@ def install(app: FastAPI, mongo: Mongo, jobs) -> None:
     @app.post("/brain/bills/{bill_id}/check/read")
     def brain_bill_check_read(bill_id: int, user=CurrentUser):
         """Read the contractor's logs and photos against this bill's lines (one Opus reading, in the background)."""
-        if user.get("role") not in ("ceo", "accountant", "operations"):
+        if user.get("role") not in ("ceo", "accountant", "operations", "team"):
             raise HTTPException(403, "Only RKB's team can start a reading.")
         if not mongo.db["bt_bills"].count_documents({"bill_id": int(bill_id)}, limit=1):
             raise HTTPException(404, "That bill is not on file.")
@@ -401,7 +409,7 @@ def install(app: FastAPI, mongo: Mongo, jobs) -> None:
     def brain_sheet(pid: str, user=CurrentUser):
         """The proposal line by line with what is billed, paid and held back, and the deal's figures."""
         return data.clean({**sheet.build(_file_id(pid)), "can": {"figures": user.get("role") in ("ceo", "accountant"),
-                                                              "lines": user.get("role") in ("ceo", "accountant", "operations")}})
+                                                              "lines": user.get("role") in ("ceo", "accountant", "operations", "team")}})
 
     @app.get("/brain/properties/{pid}/sheet.xlsx")
     def brain_sheet_xlsx(pid: str, user=CurrentUser):
@@ -510,6 +518,42 @@ def install(app: FastAPI, mongo: Mongo, jobs) -> None:
     def brain_alerts(user=CurrentUser):
         """New on the construction jobs since Buildertrend was last read, and what waits for this person."""
         return data.clean(followups.alerts(user, items=[i for i in _follow_items() or [] if not i.get("mark")]))
+
+    # ---------------------------------------------------------- my day, the team, a task given, the calls
+    from .myday import TEAM, MyDay
+    from .calls import Calls
+    myday = MyDay(mongo, store, follow=lambda: _follow_items(wait=True))
+    calls = Calls(mongo, store)
+
+    @app.get("/brain/myday")
+    @swr.cached("myday", fresh=15, keep=60)
+    def brain_myday(user=CurrentUser):
+        """The few things this person does first today, the rest for later — and, for Rakesh Sir, the team."""
+        me = user.get("user_id")
+        out = myday.board(me)
+        out["people"] = [{"person": p, "name": t["name"]} for p, t in TEAM.items() if p != me]
+        out["can_give"] = user.get("role") == "ceo"
+        out["team"] = myday.team(me) if user.get("role") == "ceo" else None
+        return data.clean(out)
+
+    @app.post("/brain/tasks")
+    def brain_give_task(body: TaskBody, user=CurrentUser):
+        """Rakesh Sir gives someone a task: it is on their list at once and an email goes to them."""
+        if user.get("role") != "ceo":
+            raise HTTPException(403, "only Rakesh Sir gives tasks")
+        pid = _file_id(body.property_id) if body.property_id else None
+        try:
+            out = myday.assign(user, to=body.to, title=body.title, detail=body.detail, due=body.due, pid=pid)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        swr.clear()
+        return data.clean(out)
+
+    @app.get("/brain/calls")
+    def brain_calls(property_id: Optional[str] = None, user=CurrentUser):
+        """The calls that were read, newest first — for one property, or all of them."""
+        pid = _file_id(property_id) if property_id else None
+        return data.clean({"calls": calls.list(pid)})
 
     @app.get("/brain/properties/{pid}/arv")
     @swr.cached("property-arv", fresh=60, keep=900)

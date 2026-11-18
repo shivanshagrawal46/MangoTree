@@ -7,7 +7,8 @@
 import * as React from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { type LucideIcon, ArrowDownLeft, ArrowUpRight, CalendarClock, FileText, MessageSquareText, Phone, Plus, RefreshCw, X } from "lucide-react";
+import Link from "next/link";
+import { type LucideIcon, ArrowDownLeft, ArrowUpRight, CalendarClock, CheckCheck, FileText, MessageSquareText, Phone, Plus, RefreshCw, UserRoundCheck, X } from "lucide-react";
 import { api, subscribeJob } from "@/lib/api";
 import { Badge, Button, Checkbox, Input, Select, Skeleton } from "@/components/ui";
 import { useEvidence } from "@/components/evidence";
@@ -16,7 +17,7 @@ import { DraftCard } from "@/components/brain/draft";
 import { ago, cn, fmtDate } from "@/lib/utils";
 import { KIND_LABEL, OWNER_LABEL, errText, type Activity, type OpenItem, type PropertyFile } from "@/lib/brain";
 
-const KIND_ICON: Record<string, LucideIcon> = { email_in: ArrowDownLeft, email_out: ArrowUpRight, call: Phone, document: FileText, said_in_chat: MessageSquareText };
+const KIND_ICON: Record<string, LucideIcon> = { email_in: ArrowDownLeft, email_out: ArrowUpRight, call: Phone, document: FileText, said_in_chat: MessageSquareText, sweep: CheckCheck, task_given: UserRoundCheck };
 
 function Section({ title, right, children, className }: { title: string; right?: React.ReactNode; children: React.ReactNode; className?: string }) {
   return (
@@ -45,7 +46,9 @@ export function ItemRow({ item, onDone, onDrop, showProperty }: { item: OpenItem
           {item.kind === "decision" && <Badge tone="info">Decision</Badge>}
           {item.due && <Badge tone={item.overdue ? "critical" : "high"}><CalendarClock size={10} /> {item.overdue ? "Was due" : "Due"} {fmtDate(item.due, "MMM d")}</Badge>}
           {item.opened_at && <span>open {ago(item.opened_at).replace(" ago", "")}</span>}
-          {item.source_sha && <button type="button" className="text-accent hover:underline" onClick={() => evidence.open({ sha: item.source_sha! })}>source</button>}
+          {item.source_sha && (item.source_sha.startsWith("granola-")
+            ? <Link href={`/calls?open=${item.source_sha.slice(8)}`} className="text-accent hover:underline">from a call</Link>
+            : <button type="button" className="text-accent hover:underline" onClick={() => evidence.open({ sha: item.source_sha! })}>source</button>)}
         </div>
       </div>
       {onDrop && <button type="button" onClick={onDrop} title="Not needed" className="mt-0.5 h-7 w-7 grid place-items-center rounded-lg text-faint hover:text-critical hover:bg-sunken opacity-0 group-hover:opacity-100 transition"><X size={14} /></button>}
@@ -65,7 +68,9 @@ export function ActivityList({ rows, showProperty }: { rows: Activity[]; showPro
             <div className={cn("mt-0.5 h-7 w-7 rounded-lg grid place-items-center shrink-0", a.kind === "email_out" ? "bg-accent-soft text-accent" : "bg-sunken text-muted")}><Icon size={14} /></div>
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-baseline gap-x-2">
-                <button type="button" disabled={!a.sha} onClick={() => a.sha && evidence.open({ sha: a.sha })} className={cn("text-[13.5px] font-medium text-left leading-snug", a.sha && "hover:text-accent")}>{a.title}</button>
+                {a.kind === "call" && a.call
+                  ? <Link href={`/calls?open=${a.call}`} className="text-[13.5px] font-medium text-left leading-snug hover:text-accent">{a.title}</Link>
+                  : <button type="button" disabled={!a.sha} onClick={() => a.sha && evidence.open({ sha: a.sha })} className={cn("text-[13.5px] font-medium text-left leading-snug", a.sha && "hover:text-accent")}>{a.title}</button>}
                 <span className="text-[11px] text-faint whitespace-nowrap">{fmtDate(a.at, "EEE MMM d")} · {KIND_LABEL[a.kind] || a.kind}{a.who ? ` · ${a.who}` : ""}</span>
               </div>
               {showProperty && a.property && <div className="mt-0.5"><Badge>{a.property}</Badge></div>}

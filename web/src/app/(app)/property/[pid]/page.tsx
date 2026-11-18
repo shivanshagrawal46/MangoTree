@@ -11,6 +11,7 @@ import { api } from "@/lib/api";
 import { Skeleton } from "@/components/ui";
 import { BrainChat } from "@/components/brain/chat";
 import { PropertyHeader, TABS, type TabKey } from "@/components/brain/header";
+import { CallsList } from "@/components/brain/calls";
 import { PropertyDetails } from "@/components/brain/side";
 import { ArvTab, BillsTab, DocumentsTab, EmailsTab, FilesTab, MoneyTab, PeopleTab, TabBody } from "@/components/brain/tabs";
 import { SiteWorkTab } from "@/components/brain/sitework";
@@ -75,6 +76,7 @@ export default function PropertyPage() {
           </div>
         )}
         {tab === "emails" && <EmailsTab pid={pid} />}
+        {tab === "calls" && <TabBody><CallsList pid={pid} /></TabBody>}
         {tab === "documents" && <DocumentsTab pid={pid} />}
         {tab === "files" && <FilesTab pid={pid} />}
         {tab === "timeline" && <TabBody><Timeline propertyId={pid} /></TabBody>}

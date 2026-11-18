@@ -13,6 +13,11 @@ import type { Draft } from "@/lib/brain";
 type State = { label: string; cls: string; rank: number };
 
 export function replyState(d: Draft): State {
+  // A call after the draft was written changed what it says (see brain/calls.py).
+  if (d.stale?.kind === "call") return { label: "Changed by a call — rewrite", cls: "bg-critical-soft text-critical", rank: 0 };
+  // The reading-over of the lists found it overtaken by a later email (see brain/sweep.py).
+  if (d.stale?.kind === "record") return { label: "Out of date — rewrite", cls: "bg-critical-soft text-critical", rank: 0 };
+  if (d.stale?.kind === "not_needed") return { label: "Looks already answered", cls: "bg-high-soft text-high", rank: 0 };
   if (d.stale?.why) return { label: "Partly answered — rewrite", cls: "bg-critical-soft text-critical", rank: 0 };
   if (!d.verification?.ran) return { label: "Not yet checked", cls: "bg-high-soft text-high", rank: 1 };
   const n = d.verification.open?.length || 0;

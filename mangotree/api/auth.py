@@ -33,6 +33,8 @@ DEFAULT_USERS = [
     {"user_id": "rakesh", "login": "rakeshsir", "name": "Rakesh Sir", "role": "ceo", "full_name": "Rakesh Bhargava"},
     {"user_id": "jp", "login": "jpsir", "name": "JP Sir", "role": "accountant", "full_name": "Jaspreet Pahwa"},
     {"user_id": "manjunath", "login": "manjunathsir", "name": "Manjunath Sir", "role": "operations", "full_name": "Manjunath"},
+    # Added 2026-11-18 at his request: his own to-dos, and tasks Rakesh Sir gives him.
+    {"user_id": "shivansh", "login": "shivansh", "name": "Shivansh", "role": "team", "full_name": "Shivansh Agrawal"},
 ]
 ROLE_HOME = {"ceo": "decisions", "accountant": "review", "operations": "verification"}
 
