@@ -1076,6 +1076,8 @@ def _degrades() -> List[str]:
     failed = list(mongo.db["jobs"].find({"status": "failed", "created_at": {"$gte": since}}, {"kind": 1, "created_at": 1, "error": 1}))
     still_failing = []
     for f in failed:
+        if "server restarted" in str(f.get("error") or ""):
+            continue            # cut short by a restart (a deploy), not a fault: the same job runs again by itself
         ok_after = mongo.db["jobs"].find_one({"kind": f["kind"], "status": "done", "created_at": {"$gt": f["created_at"]}})
         if not ok_after:
             still_failing.append(f)

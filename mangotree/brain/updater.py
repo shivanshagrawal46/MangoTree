@@ -77,6 +77,9 @@ def _similar(a: str, b: str) -> bool:
     return bool(wa and wb) and len(wa & wb) / len(wa | wb) >= 0.6
 
 
+SCAN = 3000                      # how many of the newest records are looked through for unread ones
+
+
 class Updater:
     _run_lock = threading.Lock()
 
@@ -264,6 +267,10 @@ class Updater:
 
     # ------------------------------------------------------------ pending
     def pending(self, *, limit: int = 300) -> List[dict]:
+        """The records that have arrived and are not yet read into the files, oldest first.
+        The NEWEST records are the ones looked at: an unread record is by its nature a new one.
+        (Until 2026-11-18 the oldest were taken, so once more records than the cap had come in
+        since the files were built, nothing new was ever read.)"""
         built = {f["property_id"]: f.get("built_at") for f in self.store.files.find({"built_at": {"$exists": True}}, {"property_id": 1, "built_at": 1})}
         if not built:
             return []
@@ -271,7 +278,7 @@ class Updater:
         q = {"source_type": {"$in": ["email", "upload", "disk_file"]}, "is_inline_image": {"$ne": True},
              "created_at": {"$gt": earliest}, "placement": {"$exists": True}}
         rows = list(self.mongo.artifacts.find(q, {"sha256": 1, "source_type": 1, "property_ids": 1, "created_at": 1, "date": 1,
-                                                  "indexing.indexed_at": 1, "doc_class": 1, "meeting": 1}).sort("created_at", 1).limit(limit * 3))
+                                                  "indexing.indexed_at": 1, "doc_class": 1, "meeting": 1}).sort("created_at", -1).limit(max(limit * 3, SCAN)))
         if not rows:
             return []
         done: Dict[str, Dict[str, dict]] = {}
