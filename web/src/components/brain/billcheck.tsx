@@ -16,7 +16,7 @@ import * as React from "react";
 import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { AlertTriangle, Check, ChevronRight, Copy, MessageSquareText, Minus, Pause, RefreshCw, X } from "lucide-react";
+import { AlertTriangle, Check, ChevronRight, Copy, ExternalLink, FileText, MessageSquareText, Minus, Pause, RefreshCw, X } from "lucide-react";
 import { api, subscribeJob } from "@/lib/api";
 import { Button, Card, Dialog, DialogContent, Skeleton } from "@/components/ui";
 import { ago, cn, fmtDate } from "@/lib/utils";
@@ -32,6 +32,9 @@ type Line = {
   flags: { kind: string; text: string }[]; evidence: Evidence | null; decision: Decision | null; suggest: "ok" | "check" | null; state: "ok" | "check" | "hold" | null;
 };
 type Sum = { count: number; amount: number };
+type PaperItem = { item: string; qty: number | null; unit_price: number | null; amount: number | null };
+type Paper = { file_id: number; title: string; kind: "receipt" | "invoice" | "payment_proof" | "photo" | "other"; says: string; total: number | null; items?: PaperItem[] };
+const PAPER_KIND: Record<Paper["kind"], string> = { receipt: "Receipt", invoice: "Invoice", payment_proof: "Proof of payment", photo: "Photo", other: "File" };
 type Mark = { at?: string; by_name?: string } | null | undefined;
 type Draw = {
   bill_id: number; property_id: string; property: string; title: string; number?: string; pay_to?: string; bill_date?: string | null; status?: string; in_review: boolean;
@@ -39,7 +42,7 @@ type Draw = {
   lines: Line[]; job: { budget: number; before: number; this: number; after: number; left: number; paid: number; has_proposal: boolean };
   checks: { key: string; ok: boolean | null; text: string }[];
   summary: { ok: Sum; check: Sum; unread: Sum; photo: Sum; log_only: Sum };
-  reading: { at?: string; points?: string[]; photos_shown?: number; photos_posted?: number; logs_read?: number; last_log?: string | null; newer_logs?: boolean } | null;
+  reading: { at?: string; points?: string[]; photos_shown?: number; photos_posted?: number; logs_read?: number; last_log?: string | null; newer_logs?: boolean; papers?: Paper[]; papers_unread?: string[] } | null;
   steps: Record<string, Mark>; draws: { bill_id: number; title: string; number?: string; date?: string | null; status?: string; amount: number; in_review: boolean }[];
   message_for_wes: string; can: { lines: boolean };
 };
@@ -54,7 +57,7 @@ const VERDICT: Record<Verdict, { label: string; tone: string }> = {
   shown: { label: "Shown in a photo", tone: "bg-good-soft text-good" },
   said: { label: "In a log only, no photo", tone: "bg-sunken text-muted" },
   partly: { label: "Partly supported", tone: "bg-high-soft text-high" },
-  nothing: { label: "Not in the record", tone: "bg-high-soft text-high" },
+  nothing: { label: "Not in the logs or photos", tone: "bg-high-soft text-high" },
   against: { label: "The record says otherwise", tone: "bg-critical-soft text-critical" },
 };
 const STATUS_TONE = (s?: string) => (s === "Paid" ? "bg-good-soft text-good" : s === "In review" ? "bg-info-soft text-info" : "bg-high-soft text-high");
@@ -150,6 +153,73 @@ function Section({ title, tone, lines, children }: { title: string; tone: string
       </div>
       {children}
     </>
+  );
+}
+
+/* The papers entered with the bill in Buildertrend (receipt, invoice, photos), as the check read them:
+   what each says, whether its total is the bill's, and every line it lists. */
+function Papers({ papers, unread, gross }: { papers: Paper[]; unread: string[]; gross: number }) {
+  const [open, setOpen] = React.useState<number | null>(null);
+  if (!papers.length && !unread.length) return null;
+  return (
+    <Card className="mt-3">
+      <div className="px-4 pt-3 pb-2.5">
+        <div className="text-[13.5px] font-semibold tracking-tight">Attached to this bill</div>
+        <div className="text-[11.5px] text-muted">The papers entered with the bill in Buildertrend, as the check read them. Click a name to open the file.</div>
+      </div>
+      <ul className="border-t border-line divide-y divide-line">
+        {papers.map((p) => {
+          const priced = p.total != null && (p.kind === "receipt" || p.kind === "invoice");
+          const same = priced && Math.abs((p.total as number) - gross) < 0.02;
+          const items = p.items || [];
+          const word = PAPER_KIND[p.kind].toLowerCase();
+          return (
+            <li key={p.file_id} className="px-4 py-3">
+              <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+                <FileText size={15} className="shrink-0 text-muted" />
+                <a href={`/api/brain/bill-files/${p.file_id}`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[13px] font-semibold hover:underline">{p.title}<ExternalLink size={11} className="text-faint" /></a>
+                <span className="inline-flex items-center h-[19px] px-1.5 rounded bg-sunken text-[10.5px] font-semibold text-muted">{PAPER_KIND[p.kind]}</span>
+                {p.total != null && (
+                  <span className="ml-auto inline-flex items-center gap-2 text-[13px] font-semibold tnum">
+                    {usd(p.total)}
+                    {priced && <span className={cn("inline-flex items-center gap-1 h-[19px] px-1.5 rounded text-[10.5px] font-semibold", same ? "bg-good-soft text-good" : "bg-critical-soft text-critical")}>
+                      {same ? <Check size={11} strokeWidth={3} /> : <X size={11} strokeWidth={3} />}{same ? "same as the bill" : `the bill asks ${usd(gross)}`}</span>}
+                  </span>
+                )}
+              </div>
+              <p className="mt-1.5 max-w-4xl text-[12.5px] leading-snug">{p.says}</p>
+              {items.length > 0 && (
+                <button type="button" onClick={() => setOpen(open === p.file_id ? null : p.file_id)} className="mt-1.5 text-[12px] font-medium text-accent hover:underline">
+                  {open === p.file_id ? "Hide" : "Show"} the {items.length} line{items.length === 1 ? "" : "s"} of this {word}
+                </button>
+              )}
+              {open === p.file_id && (
+                <div className="mt-2 max-w-4xl overflow-x-auto rounded-lg border border-line">
+                  <table className="w-full text-[12px]">
+                    <thead>
+                      <tr className="bg-sunken/60 text-[9.5px] font-semibold uppercase tracking-[0.09em] text-faint">
+                        <th className="px-3 py-1.5 text-left font-semibold">Item, as written on the {word}</th><th className="px-3 py-1.5 text-right font-semibold">Qty</th>
+                        <th className="px-3 py-1.5 text-right font-semibold">Unit price</th><th className="px-3 py-1.5 text-right font-semibold">Amount</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-line/70">
+                      {items.map((it, i) => (
+                        <tr key={i}>
+                          <td className="px-3 py-1.5">{it.item}</td><td className="px-3 py-1.5 text-right tnum">{it.qty ?? "—"}</td>
+                          <td className="px-3 py-1.5 text-right tnum">{it.unit_price == null ? "—" : usd(it.unit_price)}</td><td className="px-3 py-1.5 text-right tnum">{it.amount == null ? "—" : usd(it.amount)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    {p.total != null && !items.some((it) => /total/i.test(it.item) && it.amount === p.total) && <tfoot><tr className="border-t border-line bg-sunken/40 font-semibold"><td className="px-3 py-1.5" colSpan={3}>Total on the {word}</td><td className="px-3 py-1.5 text-right tnum">{usd(p.total)}</td></tr></tfoot>}
+                  </table>
+                </div>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+      {unread.length > 0 && <div className="border-t border-line px-4 py-2 text-[12px] text-muted">Attached in Buildertrend but not read by the check: {unread.join("; ")}</div>}
+    </Card>
   );
 }
 
@@ -259,6 +329,8 @@ export function BillCheckPage({ billId }: { billId: string }) {
         </div>
       </Card>
 
+      <Papers papers={d.reading?.papers || []} unread={d.reading?.papers_unread || []} gross={d.gross} />
+
       {/* ───────── line by line ───────── */}
       <Card className="mt-3 overflow-x-auto">
         <div className="min-w-[1080px]">
@@ -266,7 +338,7 @@ export function BillCheckPage({ billId }: { billId: string }) {
             <div>
               <div className="text-[13.5px] font-semibold tracking-tight">Line by line</div>
               <div className="text-[11.5px] text-muted">
-                {d.reading ? <>Checked against the contractor&apos;s logs and photos {ago(d.reading.at)} · {d.reading.logs_read} logs{d.reading.last_log ? ` to ${fmtDate(d.reading.last_log, "d MMM")}` : ""} · {d.reading.photos_shown} of {d.reading.photos_posted} photos looked at</>
+                {d.reading ? <>Checked against {d.reading.papers?.length ? `the ${d.reading.papers.length === 1 ? "attached " + PAPER_KIND[d.reading.papers[0].kind].toLowerCase() : d.reading.papers.length + " attached papers"}, ` : ""}the contractor&apos;s logs and photos {ago(d.reading.at)} · {d.reading.logs_read} logs{d.reading.last_log ? ` to ${fmtDate(d.reading.last_log, "d MMM")}` : ""} · {d.reading.photos_shown} of {d.reading.photos_posted} photos looked at</>
                   : "Not checked against the contractor's logs and photos yet."}
                 {d.reading?.newer_logs && <span className="text-high font-medium"> · a newer log has come in since</span>}
               </div>
@@ -308,7 +380,7 @@ export function BillCheckPage({ billId }: { billId: string }) {
         </Card>
       </div>
       <p className="mt-3 text-[11px] text-faint leading-relaxed max-w-4xl">
-        The amounts are worked out from the proposal and the bills in Buildertrend. “What the record shows” is an AI reading of the contractor&apos;s own daily logs and photos. It is not an inspection, and it only suggests:
+        The amounts are worked out from the proposal and the bills in Buildertrend. “What the record shows” is an AI reading of the papers attached to the bill and the contractor&apos;s own daily logs and photos. It is not an inspection, and it only suggests:
         a person&apos;s OK or Hold on a line is what stands. The check is made by itself after every read of Buildertrend, for each bill not yet approved.
         Approving the bill ticks “Manju Sir approved” on the Bills page; no email is sent by it.
       </p>
