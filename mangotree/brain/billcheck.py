@@ -119,6 +119,44 @@ payment, photos. You are given each one that could be read, before the logs. Rea
   amount. Include delivery, shipping, discount and tax rows when the paper shows them as
   rows or totals, so that the amounts can be added up to the total. Use null for a figure
   the paper does not give; never work one out yourself. Empty for photos and other files.
+- THE MATERIALS, ONE BY ONE. For every item of a receipt or invoice that is a material or a
+  fixture, go through ALL the photos and logs you were given and say where that material is
+  on the property. RKB wants to know, item by item, that what was bought is really there and
+  what it was used for. `seen` is one of:
+    installed       a photo shows this item fixed in place or in use. `where`: the room, what
+                    it was used for, and the log date ("Upstairs bathroom, tub wall, 14 Nov").
+    on_site         a photo shows it delivered or stacked, not yet installed. Say where.
+    covered         the material itself cannot be seen because of what it is: it goes INTO
+                    or BEHIND the work and is hidden once the work is done (nails, screws,
+                    joint tape and compound under paint, thinset and cement board behind
+                    tile, waterproofing membrane, pipe and fittings inside a closed wall,
+                    primer under paint, foam, sealant, studs behind drywall). Use this when
+                    a photo dated ON OR AFTER the purchase shows the finished or closed-up
+                    work that this material goes into, at about the amount bought. Say in
+                    `where` which work, in which room, on which log date, and that the item
+                    itself is covered ("Behind the tiled tub wall, upstairs bath, 20 Nov —
+                    covered; tile set over it"). It is a reasoned judgement, not a sighting:
+                    give the photos of the covering work in `photo_ids`.
+    similar         a photo shows material of this kind (studs, drywall sheets, joint compound,
+                    plain pipe) but nothing in the photo ties it to this purchase: generic
+                    material looks the same whoever bought it. Say where it is seen and that
+                    it cannot be tied to this order. Use this also when the bill or receipt
+                    is dated after the photo.
+    log_only        a log names it as delivered or used, and no photo shows it.
+    not_seen        nothing in the logs or photos. If the paper's delivery date is after the
+                    newest log, say so in `where` ("Delivery set for 18 Nov; newest log 17 Nov").
+                    For a material that gets covered, also say how far the work it belongs
+                    to has got, because that tells RKB whether it CAN have been used yet:
+                    "Tile not started in any photo, so the thinset cannot have been used yet",
+                    or "Drywall is hung but not taped in the 20 Nov photos: tape and compound
+                    not used yet". If the work it would go into is already finished in photos
+                    taken BEFORE the purchase, say that too — the purchase came after the work.
+    not_a_material  delivery, shipping, discount, tax, subtotal and total rows; a service.
+  Go by what tells an item apart: brand, model, colour, size, finish, shape, the count. A
+  white round-front toilet with the seat in the box is that toilet; a 2x4 is any 2x4. Count
+  what you can see against the quantity bought and say so when fewer are visible ("2 bought,
+  1 visible"). `photo_ids`: the photos that show it (at most 3), only photos you were shown.
+  `where` is at most 25 words. Never guess a room you cannot see.
 - Never copy a bank account number, routing number or card number into anything you write.
 
 other_points: at most three things in the record that bear on approving THIS bill but are
@@ -131,6 +169,11 @@ agree with the bill, that is one of these points.
 """
 
 PAPER_KINDS = ("receipt", "invoice", "payment_proof", "photo", "other")
+#: Where one material of a receipt stands in the site record.
+SEEN = ("installed", "on_site", "covered", "similar", "log_only", "not_seen", "not_a_material")
+SEEN_LABEL = {"installed": "Seen installed", "on_site": "Seen on site, not installed", "covered": "Likely used, now covered", "similar": "Similar material seen",
+              "log_only": "In a log only, no photo",
+              "not_seen": "Not seen yet", "not_a_material": ""}
 
 SCHEMA = {
     "type": "object", "additionalProperties": False, "required": ["lines", "papers", "other_points"],
@@ -140,9 +183,10 @@ SCHEMA = {
             "properties": {"file_id": {"type": "integer"}, "kind": {"type": "string", "enum": list(PAPER_KINDS)}, "says": {"type": "string"},
                            "total": {"type": ["number", "null"]},
                            "items": {"type": "array", "items": {
-                               "type": "object", "additionalProperties": False, "required": ["item", "qty", "unit_price", "amount"],
+                               "type": "object", "additionalProperties": False, "required": ["item", "qty", "unit_price", "amount", "seen", "where", "photo_ids"],
                                "properties": {"item": {"type": "string"}, "qty": {"type": ["number", "null"]}, "unit_price": {"type": ["number", "null"]},
-                                              "amount": {"type": ["number", "null"]}}}}}}},
+                                              "amount": {"type": ["number", "null"]}, "seen": {"type": "string", "enum": list(SEEN)},
+                                              "where": {"type": "string"}, "photo_ids": {"type": "array", "items": {"type": "integer"}}}}}}}},
         "lines": {"type": "array", "items": {
             "type": "object", "additionalProperties": False, "required": ["key", "verdict", "basis", "log_dates", "photo_ids", "ask"],
             "properties": {"key": {"type": "string"}, "verdict": {"type": "string", "enum": list(VERDICTS)}, "basis": {"type": "string"},
@@ -201,6 +245,19 @@ def _number(x: Any) -> Optional[float]:
     return round(float(x), 2) if isinstance(x, (int, float)) and not isinstance(x, bool) else None
 
 
+def _item(i: Dict[str, Any], shown: set) -> Dict[str, Any]:
+    """One line of a receipt, with where the material is seen. A claim to have seen it stands
+    only on a photo that was really shown; without one it falls back to "not seen"."""
+    ids = [int(x) for x in i.get("photo_ids") or [] if isinstance(x, int) and not isinstance(x, bool) and x in shown][:3]
+    seen = i.get("seen") if i.get("seen") in SEEN else None
+    if seen in ("installed", "on_site", "covered", "similar") and not ids:
+        seen = "not_seen"
+    if seen in ("log_only", "not_seen", "not_a_material"):
+        ids = []
+    return {"item": _no_account_numbers(str(i.get("item") or "").strip())[:160], "qty": _number(i.get("qty")), "unit_price": _number(i.get("unit_price")),
+            "amount": _number(i.get("amount")), "seen": seen, "where": _no_account_numbers(str(i.get("where") or "").strip())[:240] if seen else "", "photo_ids": ids}
+
+
 def paper_check(papers: List[Dict[str, Any]], gross: float) -> Optional[Dict[str, Any]]:
     """Arithmetic only: do the attached receipts and invoices come to what the bill asks?
     None when no attached paper states a total."""
@@ -242,9 +299,7 @@ def clean_reading(data: Dict[str, Any], keys: set, shown: set, log_days: set, pa
         total = p.get("total")
         said.append({"file_id": fid, "title": (papers or {})[fid], "kind": p.get("kind") if p.get("kind") in PAPER_KINDS else "other",
                      "says": _no_account_numbers(str(p.get("says") or "").strip())[:1200], "total": _number(total),
-                     "items": [{"item": _no_account_numbers(str(i.get("item") or "").strip())[:160], "qty": _number(i.get("qty")),
-                                "unit_price": _number(i.get("unit_price")), "amount": _number(i.get("amount"))}
-                               for i in (p.get("items") or []) if isinstance(i, dict) and str(i.get("item") or "").strip()][:MAX_PAPER_ITEMS]})
+                     "items": [_item(i, shown) for i in (p.get("items") or []) if isinstance(i, dict) and str(i.get("item") or "").strip()][:MAX_PAPER_ITEMS]})
     lines: Dict[str, Dict[str, Any]] = {}
     for l in data.get("lines") or []:
         key = str(l.get("key") or "")
@@ -541,7 +596,7 @@ class BillCheck:
         if not logs:
             content.append({"type": "text", "text": "\n(There is no daily log in this period.)"})
         def ask(blocks: List[Dict[str, Any]]) -> Dict[str, Any]:
-            return structured(system=prompts.CORE + "\n" + BRIEF, user=blocks, schema=SCHEMA, effort="high", max_tokens=20_000, label=f"bill check {main['bill_id']}")
+            return structured(system=prompts.CORE + "\n" + BRIEF, user=blocks, schema=SCHEMA, effort="high", max_tokens=32_000, label=f"bill check {main['bill_id']}")
         try:
             try:
                 r = ask(content)

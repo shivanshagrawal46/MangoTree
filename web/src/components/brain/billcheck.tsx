@@ -32,7 +32,19 @@ type Line = {
   flags: { kind: string; text: string }[]; evidence: Evidence | null; decision: Decision | null; suggest: "ok" | "check" | null; state: "ok" | "check" | "hold" | null;
 };
 type Sum = { count: number; amount: number };
-type PaperItem = { item: string; qty: number | null; unit_price: number | null; amount: number | null };
+type Seen = "installed" | "on_site" | "covered" | "similar" | "log_only" | "not_seen" | "not_a_material";
+type PaperItem = { item: string; qty: number | null; unit_price: number | null; amount: number | null; seen?: Seen | null; where?: string; photo_ids?: number[] };
+/* Where one material of a receipt stands in the contractor's logs and photos. */
+const SEEN: Record<Seen, { label: string; tone: string }> = {
+  installed: { label: "Seen installed", tone: "bg-good-soft text-good" },
+  on_site: { label: "On site, not installed", tone: "bg-accent-soft text-accent" },
+  covered: { label: "Likely used, now covered", tone: "bg-accent-soft text-accent" },
+  similar: { label: "Similar material seen", tone: "bg-sunken text-muted" },
+  log_only: { label: "In a log only", tone: "bg-sunken text-muted" },
+  not_seen: { label: "Not seen yet", tone: "bg-high-soft text-high" },
+  not_a_material: { label: "", tone: "" },
+};
+const SEEN_ORDER: Seen[] = ["installed", "on_site", "covered", "similar", "log_only", "not_seen"];
 type Paper = { file_id: number; title: string; kind: "receipt" | "invoice" | "payment_proof" | "photo" | "other"; says: string; total: number | null; items?: PaperItem[] };
 const PAPER_KIND: Record<Paper["kind"], string> = { receipt: "Receipt", invoice: "Invoice", payment_proof: "Proof of payment", photo: "Photo", other: "File" };
 type Mark = { at?: string; by_name?: string } | null | undefined;
@@ -158,7 +170,7 @@ function Section({ title, tone, lines, children }: { title: string; tone: string
 
 /* The papers entered with the bill in Buildertrend (receipt, invoice, photos), as the check read them:
    what each says, whether its total is the bill's, and every line it lists. */
-function Papers({ papers, unread, gross }: { papers: Paper[]; unread: string[]; gross: number }) {
+function Papers({ papers, unread, gross, onZoom }: { papers: Paper[]; unread: string[]; gross: number; onZoom: (id: number) => void }) {
   const [open, setOpen] = React.useState<number | null>(null);
   if (!papers.length && !unread.length) return null;
   return (
@@ -173,6 +185,8 @@ function Papers({ papers, unread, gross }: { papers: Paper[]; unread: string[]; 
           const same = priced && Math.abs((p.total as number) - gross) < 0.02;
           const items = p.items || [];
           const word = PAPER_KIND[p.kind].toLowerCase();
+          const materials = items.filter((it) => it.seen && it.seen !== "not_a_material");
+          const tally = SEEN_ORDER.map((k) => ({ k, n: materials.filter((it) => it.seen === k).length })).filter((x) => x.n > 0);
           return (
             <li key={p.file_id} className="px-4 py-3">
               <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
@@ -188,18 +202,25 @@ function Papers({ papers, unread, gross }: { papers: Paper[]; unread: string[]; 
                 )}
               </div>
               <p className="mt-1.5 max-w-4xl text-[12.5px] leading-snug">{p.says}</p>
+              {materials.length > 0 && (
+                <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px]">
+                  <span className="font-semibold">The {materials.length} material{materials.length === 1 ? "" : "s"} on this {word}, looked for in the logs and photos:</span>
+                  {tally.map(({ k, n }) => <span key={k} className={cn("inline-flex items-center h-[20px] px-2 rounded-full text-[11px] font-semibold", SEEN[k].tone)}>{n} {SEEN[k].label.toLowerCase()}</span>)}
+                </div>
+              )}
               {items.length > 0 && (
                 <button type="button" onClick={() => setOpen(open === p.file_id ? null : p.file_id)} className="mt-1.5 text-[12px] font-medium text-accent hover:underline">
                   {open === p.file_id ? "Hide" : "Show"} the {items.length} line{items.length === 1 ? "" : "s"} of this {word}
                 </button>
               )}
               {open === p.file_id && (
-                <div className="mt-2 max-w-4xl overflow-x-auto rounded-lg border border-line">
+                <div className="mt-2 overflow-x-auto rounded-lg border border-line">
                   <table className="w-full text-[12px]">
                     <thead>
                       <tr className="bg-sunken/60 text-[9.5px] font-semibold uppercase tracking-[0.09em] text-faint">
                         <th className="px-3 py-1.5 text-left font-semibold">Item, as written on the {word}</th><th className="px-3 py-1.5 text-right font-semibold">Qty</th>
                         <th className="px-3 py-1.5 text-right font-semibold">Unit price</th><th className="px-3 py-1.5 text-right font-semibold">Amount</th>
+                        {materials.length > 0 && <th className="px-3 py-1.5 text-left font-semibold">On the property (logs and photos)</th>}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-line/70">
@@ -207,10 +228,26 @@ function Papers({ papers, unread, gross }: { papers: Paper[]; unread: string[]; 
                         <tr key={i}>
                           <td className="px-3 py-1.5">{it.item}</td><td className="px-3 py-1.5 text-right tnum">{it.qty ?? "—"}</td>
                           <td className="px-3 py-1.5 text-right tnum">{it.unit_price == null ? "—" : usd(it.unit_price)}</td><td className="px-3 py-1.5 text-right tnum">{it.amount == null ? "—" : usd(it.amount)}</td>
+                          {materials.length > 0 && (
+                            <td className="px-3 py-1.5 align-top min-w-[260px]">
+                              {it.seen && it.seen !== "not_a_material" && (
+                                <div className="flex flex-wrap items-start gap-x-2 gap-y-1">
+                                  <span className={cn("inline-flex items-center h-[19px] px-1.5 rounded text-[10.5px] font-semibold whitespace-nowrap", SEEN[it.seen].tone)}>{SEEN[it.seen].label}</span>
+                                  {(it.photo_ids || []).map((id) => (
+                                    <button key={id} type="button" onClick={() => onZoom(id)} title="Open the photo" className="h-9 w-9 overflow-hidden rounded border border-line hover:ring-2 hover:ring-accent/40">
+                                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                                      <img src={`/api/brain/site/photo/${id}`} alt="" loading="lazy" className="h-full w-full object-cover" />
+                                    </button>
+                                  ))}
+                                  {it.where && <span className="basis-full text-[11.5px] leading-snug text-muted">{it.where}</span>}
+                                </div>
+                              )}
+                            </td>
+                          )}
                         </tr>
                       ))}
                     </tbody>
-                    {p.total != null && !items.some((it) => /total/i.test(it.item) && it.amount === p.total) && <tfoot><tr className="border-t border-line bg-sunken/40 font-semibold"><td className="px-3 py-1.5" colSpan={3}>Total on the {word}</td><td className="px-3 py-1.5 text-right tnum">{usd(p.total)}</td></tr></tfoot>}
+                    {p.total != null && !items.some((it) => /total/i.test(it.item) && it.amount === p.total) && <tfoot><tr className="border-t border-line bg-sunken/40 font-semibold"><td className="px-3 py-1.5" colSpan={3}>Total on the {word}</td><td className="px-3 py-1.5 text-right tnum">{usd(p.total)}</td>{materials.length > 0 && <td />}</tr></tfoot>}
                   </table>
                 </div>
               )}
@@ -329,7 +366,7 @@ export function BillCheckPage({ billId }: { billId: string }) {
         </div>
       </Card>
 
-      <Papers papers={d.reading?.papers || []} unread={d.reading?.papers_unread || []} gross={d.gross} />
+      <Papers papers={d.reading?.papers || []} unread={d.reading?.papers_unread || []} gross={d.gross} onZoom={setZoom} />
 
       {/* ───────── line by line ───────── */}
       <Card className="mt-3 overflow-x-auto">
@@ -380,7 +417,7 @@ export function BillCheckPage({ billId }: { billId: string }) {
         </Card>
       </div>
       <p className="mt-3 text-[11px] text-faint leading-relaxed max-w-4xl">
-        The amounts are worked out from the proposal and the bills in Buildertrend. “What the record shows” is an AI reading of the papers attached to the bill and the contractor&apos;s own daily logs and photos. It is not an inspection, and it only suggests:
+        The amounts are worked out from the proposal and the bills in Buildertrend. “What the record shows” and “On the property” are an AI reading of the papers attached to the bill and the contractor&apos;s own daily logs and photos. It is not an inspection, and it only suggests:
         a person&apos;s OK or Hold on a line is what stands. The check is made by itself after every read of Buildertrend, for each bill not yet approved.
         Approving the bill ticks “Manju Sir approved” on the Bills page; no email is sent by it.
       </p>

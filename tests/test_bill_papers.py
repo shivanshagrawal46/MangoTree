@@ -153,11 +153,41 @@ def test_the_lines_of_a_receipt_are_kept_and_its_total_is_checked_against_the_bi
         {"item": "Drywall 1/2 in. x 4 ft. x 8 ft.", "qty": 70, "unit_price": 20.03, "amount": 1402.1}, {"item": "", "qty": 1, "unit_price": 1, "amount": 1},
         {"item": "Sales tax", "qty": None, "unit_price": None, "amount": "334.15"}]}]}
     p = clean_reading(raw, set(), set(), set(), {501: "HD receipt.pdf"})["papers"][0]
-    assert p["items"] == [{"item": "Drywall 1/2 in. x 4 ft. x 8 ft.", "qty": 70.0, "unit_price": 20.03, "amount": 1402.1},
-                          {"item": "Sales tax", "qty": None, "unit_price": None, "amount": None}]          # a row with no name is dropped; a figure that is not a number is not kept
+    assert [{k: i[k] for k in ("item", "qty", "unit_price", "amount")} for i in p["items"]] == [
+        {"item": "Drywall 1/2 in. x 4 ft. x 8 ft.", "qty": 70.0, "unit_price": 20.03, "amount": 1402.1},
+        {"item": "Sales tax", "qty": None, "unit_price": None, "amount": None}]                           # a row with no name is dropped; a figure that is not a number is not kept
     assert paper_check([p], 500.0) == {"key": "paper_total", "ok": True, "text": "The attached receipt comes to $500.00, the same as the bill."}
     assert paper_check([p], 650.0) == {"key": "paper_total", "ok": False, "text": "The attached receipt comes to $500.00; the bill asks $650.00."}
     inv = {"kind": "invoice", "total": 150.0, "title": "inv.pdf"}
     assert paper_check([p, inv], 650.0)["text"] == "The 2 attached papers add up to $650.00, the same as the bill."
     assert paper_check([{"kind": "photo", "total": None}], 650.0) is None and paper_check([], 650.0) is None
     assert paper_check([{"kind": "payment_proof", "total": 650.0}], 650.0) is None                     # a proof of payment is not what the bill is checked against
+
+
+def test_a_material_counts_as_seen_only_on_a_photo_that_was_shown():
+    """Item by item: where on the property is what the receipt lists. A claim rests on a photo, or it is 'not seen'."""
+    from mangotree.brain.billcheck import _item
+    shown = {11, 12}
+    faucet = _item({"item": "Delta Faryn Tub and Shower Faucet, Brushed Nickel", "qty": 1, "unit_price": 179, "amount": 179, "seen": "installed",
+                    "where": "Upstairs bathroom, tub wall, 20 Nov", "photo_ids": [11, 99]}, shown)
+    assert (faucet["seen"], faucet["where"], faucet["photo_ids"]) == ("installed", "Upstairs bathroom, tub wall, 20 Nov", [11])     # a photo never shown is dropped
+    toilet = _item({"item": "Glacier Bay toilet", "qty": 2, "unit_price": 94, "amount": 188, "seen": "installed", "where": "Hall bath", "photo_ids": [99]}, shown)
+    assert (toilet["seen"], toilet["photo_ids"]) == ("not_seen", [])                                                                   # no photo left behind it: not seen
+    studs = _item({"item": "2x4 stud", "qty": 180, "unit_price": 3.82, "amount": 687.6, "seen": "similar", "where": "Basement framing, 14 Nov; cannot be tied to this order", "photo_ids": [12]}, shown)
+    assert studs["seen"] == "similar" and studs["photo_ids"] == [12]
+    tax = _item({"item": "Sales Tax", "qty": None, "unit_price": None, "amount": 334.15, "seen": "not_a_material", "where": "", "photo_ids": [11]}, shown)
+    assert (tax["seen"], tax["photo_ids"]) == ("not_a_material", [])
+    waiting = _item({"item": "Shower pan", "qty": 1, "unit_price": 239, "amount": 239, "seen": "not_seen", "where": "Delivery set for 18 Nov; newest log 17 Nov; wire 435061476992", "photo_ids": []}, shown)
+    assert waiting["seen"] == "not_seen" and "[number removed]" in waiting["where"]
+    old = _item({"item": "From a reading made before this", "qty": 1, "unit_price": 1, "amount": 1}, shown)
+    assert (old["seen"], old["where"], old["photo_ids"]) == (None, "", [])
+
+
+def test_a_hidden_material_counts_as_used_only_with_a_photo_of_the_work_that_covers_it():
+    """Nails, thinset, tape: they vanish into the work. 'Likely used, now covered' rests on a photo of that work."""
+    from mangotree.brain.billcheck import SEEN_LABEL, _item
+    thinset = _item({"item": "VersaBond thinset mortar 50 lb", "qty": 10, "unit_price": 13.47, "amount": 134.7, "seen": "covered",
+                     "where": "Behind the tiled tub wall, upstairs bath, 20 Nov; covered, tile set over it", "photo_ids": [11]}, {11})
+    assert (thinset["seen"], thinset["photo_ids"]) == ("covered", [11]) and SEEN_LABEL["covered"] == "Likely used, now covered"
+    nails = _item({"item": "Framing nails 4000 per box", "qty": 1, "unit_price": 121, "amount": 121, "seen": "covered", "where": "In the basement framing", "photo_ids": [77]}, {11})
+    assert (nails["seen"], nails["photo_ids"]) == ("not_seen", [])          # no photo of the covering work was shown: not counted as used
