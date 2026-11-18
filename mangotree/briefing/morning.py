@@ -655,7 +655,7 @@ class Scheduler:
         try:
             # Monday's reading is the thorough one (against the emails word for word); the other days' is the short one.
             deep = self._now_local().weekday() == 0
-            sw = Sweep(self.mongo, store).run(deep=deep)
+            sw = Sweep(self.mongo, store).run(deep=deep, aside=False)      # the daily reading closes what is done; it puts nothing aside for being old
             out["sweep"] = {"deep": deep, "files": len(sw["files"]), "closed": sum(f.get("done", 0) + f.get("duplicate", 0) + f.get("put_aside", 0) for f in sw["files"].values()),
                             "cost_usd": sw["cost_usd"], "failed": len(sw["failed"])}
         except Exception as exc:   # the email still goes if the reading-over fails

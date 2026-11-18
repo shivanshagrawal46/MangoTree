@@ -244,8 +244,10 @@ class Sweep:
                                     summary="; ".join(f"{v['was'].get('title')} — {v['verdict'].replace('_', ' ')}: {v.get('why')}" for v in verdicts if v["verdict"] != "keep")[:1200])
         return n
 
-    def run(self, pids: Optional[Sequence[str]] = None, *, today: Optional[datetime] = None, emit=None, deep: bool = False) -> Dict[str, Any]:
-        """Every file, four at a time (each is its own reading)."""
+    def run(self, pids: Optional[Sequence[str]] = None, *, today: Optional[datetime] = None, emit=None, deep: bool = False, aside: bool = True) -> Dict[str, Any]:
+        """Every file, four at a time (each is its own reading). With ``aside`` off nothing is put aside
+        for being old — what is done is closed and what is said twice is merged, and that is all. The
+        daily run is made that way: putting old things aside was a one-time clean-up (admin, 2026-11-18)."""
         from concurrent.futures import ThreadPoolExecutor
         say = emit or (lambda *_: None)
         where = "trial" if type(self.store).__name__ == "TrialStore" else "live"
@@ -255,6 +257,8 @@ class Sweep:
         def one(pid):
             try:
                 r = self.review(pid, today=today, deep=deep)
+                if not aside:
+                    r["items"] = [{**v, "verdict": "keep", "was_verdict": "put_aside"} if v.get("verdict") == "put_aside" else v for v in r["items"]]
                 r["applied"] = self.apply(pid, r["items"], today=today)
                 r["applied"]["replies_marked"] = self.mark_replies(r.get("replies") or [], today=today)
                 return r

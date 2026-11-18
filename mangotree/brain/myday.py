@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import html as _html
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from mangotree.core import eastern
 from mangotree.core.logging import logger
@@ -378,38 +378,119 @@ class MyDay:
         return {"person": person, "cards": len(cards), "order": order, "doubts": doubts, "cost_usd": cost}
 
     # ------------------------------------------------------ the morning email
-    def morning_mail(self, person: str, *, today: Optional[datetime] = None, test: bool = False) -> Dict[str, Any]:
+    @staticmethod
+    def streams(cards: Sequence[Dict[str, Any]], today: datetime) -> Dict[str, List[Tuple[str, List[Dict[str, Any]]]]]:
+        """The same split the Today page shows: replies (Late / Today / Waiting longer), to-dos (Decide / Do),
+        and bills and site checks. Two kinds of work are never put in one list."""
+        day = eastern.to_et(today).date()
+
+        def due_today(c):                                             # a due date is a calendar day (kept at 00:00 UTC): never shift it by a time zone
+            return bool(c.get("due")) and c["due"].date() == day
+
+        def fresh(c):
+            got = c.get("received")
+            return due_today(c) or (got is not None and (today - got).days <= 1)
+
+        def urgent_first(rows):
+            far = datetime(2999, 1, 1, tzinfo=timezone.utc)
+            return [c for _, c in sorted(enumerate(rows), key=lambda x: (not x[1].get("overdue"), x[1].get("due") or far, x[0]))]
+        replies = [c for c in cards if c["type"] == "reply"]
+        todos = [c for c in cards if c["type"] == "todo"]
+        work = [c for c in cards if c["type"] in ("bill", "check")]
+        return {
+            "replies": [("Late", [c for c in replies if c.get("overdue")]), ("Today", [c for c in replies if not c.get("overdue") and fresh(c)]),
+                        ("Waiting longer", [c for c in replies if not c.get("overdue") and not fresh(c)])],
+            "todos": [("Decide", urgent_first([c for c in todos if c.get("kind") == "decision"])), ("Do", urgent_first([c for c in todos if c.get("kind") != "decision"]))],
+            "work": [("Bills", [c for c in work if c["type"] == "bill"]), ("Site checks", [c for c in work if c["type"] == "check"])],
+        }
+
+    def morning_mail(self, person: str, *, today: Optional[datetime] = None, test: bool = False, show: int = 5) -> Dict[str, Any]:
+        """The morning email, in the shape of the Today page: only the person's own work, the replies and
+        the to-dos in separate sections, the first few of each and how many more there are."""
         from mangotree.retrieve.config import PUBLIC_URL
         from .billmail import _h, _p, _wrap
         today = today or now()
         b = self.board(person, today=today)
         t = TEAM[person]
         et = eastern.to_et(today)
-        n = len(b["now"])
-        intro = (f"{t['first']}, good morning. " + (f"{n} thing{'s' if n != 1 else ''} to do first today" + (f", and {len(b['later'])} more after that." if b["later"] else ".")
-                                                     if n else "Nothing is waiting for you this morning."))
+        cards = b["now"] + b["later"]
+        st = self.streams(cards, today)
+        count = lambda key: sum(len(rows) for _, rows in st[key])                      # noqa: E731
+        n_reply, n_todo, n_work, n_late = count("replies"), count("todos"), count("work"), sum(1 for c in cards if c.get("overdue"))
+        n_decide = len(st["todos"][0][1])
+
+        def plural(n: int, one: str, many: str) -> str:
+            return f"{n} {one if n == 1 else many}"
+        counts = [x for x in (plural(n_reply, "reply to send", "replies to send") if n_reply else "",
+                              plural(n_work, "bill or site check", "bills and site checks") if n_work else "",
+                              plural(n_todo, "to-do", "to-dos") if n_todo else "") if x]
+        intro = f"{t['first']}, good morning. " + ("Your own work for today: " + ", ".join(counts) + (f". {plural(n_late, 'is', 'are')} late." if n_late else ".")
+                                                     if cards else "Nothing is waiting for you this morning.")
         parts, text = [_p(intro)], [intro, ""]
         if test:
             parts.insert(0, _p(TEST_NOTE))
             text[:0] = [TEST_NOTE, ""]
-        for k, c in enumerate(b["now"], 1):
-            late = " — LATE" if c.get("overdue") else ""
-            head = f"{k}. {c['title']}"
-            sub = f"{c['property']} · {c.get('why_now') or ''}{late}"
-            parts.append(f'<p style="margin:14px 0 2px;font-weight:600">{_html.escape(head)}</p><p style="margin:0;color:#555;font-size:13px">{_html.escape(sub)}</p>')
-            text += [head, f"   {sub}", ""]
+
+        def note_of(c: Dict[str, Any]) -> str:
+            bits = ["General" if c.get("property_id") == bc.GENERAL_ID else str(c.get("property") or "")]
+            if c.get("overdue"):
+                days = (et.date() - c["due"].date()).days if c.get("due") else 0
+                bits.append(f"{plural(days, 'day', 'days')} late" if days > 0 else "late")
+            elif c.get("due"):
+                bits.append("due today" if c["due"].date() == et.date() else f"due {c['due'].day} {c['due']:%b}")
+            if c["type"] == "reply":
+                waited = (today - c["received"]).days if c.get("received") else None
+                bits.append(f"waiting {plural(waited, 'day', 'days')}" if waited else "came in today")
+                if c.get("stale"):
+                    bits.append("changed since it was written: read again")
+            if c.get("amount") is not None:
+                bits.append(f"${c['amount']:,.2f}")
+            if c.get("assigned_by"):
+                bits.append(f"given by {c.get('assigned_by_name') or 'Rakesh Sir'}")
+            return " · ".join(x for x in bits if x)
+
+        def name_of_card(c: Dict[str, Any]) -> str:
+            if c["type"] == "reply":
+                return f"{c.get('from_name') or 'Reply'} — {c.get('subject') or c['title']}"
+            return str(c["title"])
+
+        def section(title: str, key: str) -> None:
+            total = count(key)
+            if not total:
+                return
+            parts.append(_h(f"{title} ({total})"))
+            text.extend([f"{title.upper()} ({total})", ""])
+            room = show
+            for label, rows in st[key]:
+                if not rows or room <= 0:
+                    continue
+                parts.append(f'<p style="margin:12px 0 4px;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#8a8578">{_html.escape(label)} · {len(rows)}</p>')
+                text.append(f"{label} ({len(rows)})")
+                for c in rows[:room]:
+                    head, sub = name_of_card(c), note_of(c)
+                    parts.append(f'<p style="margin:8px 0 1px;font-weight:600">{_html.escape(head)}</p><p style="margin:0;color:#555;font-size:13px">{_html.escape(sub)}</p>')
+                    text.extend([f"  - {head}", f"    {sub}"])
+                room -= len(rows[:room])
+                text.append("")
+            if total > show:
+                more = f"and {total - show} more on the site."
+                parts.append(f'<p style="margin:10px 0 0;color:#8a8578;font-size:13px">{more}</p>')
+                text.extend([more, ""])
+        section("Replies to send", "replies")
+        section("Bills and site checks", "work")
+        section("My to-dos", "todos")
         if person == "rakesh":
-            rows = self.team("rakesh")
-            parts.append(_h("The team"))
-            lines = [f"{r['name']}: {r['left']} left" + (f", {r['late']} late" if r["late"] else "") + (f", {r['done_today']} done today" if r["done_today"] else "") for r in rows]
-            parts.append("".join(_p(x) for x in lines))
-            text += ["THE TEAM"] + lines + [""]
+            line = "The team: " + " · ".join(f"{r['name']} {r['left']} left" + (f" ({r['late']} late)" if r["late"] else "") for r in self.team("rakesh")) + "."
+            parts.append(f'<p style="margin:18px 0 0;font-size:13px;color:#555">{_html.escape(line)} <a href="{_html.escape(PUBLIC_URL)}/team" style="color:#0b6b4f">Open the team page</a></p>')
+            text += [line, f"Team page: {PUBLIC_URL}/team", ""]
         link = f"{PUBLIC_URL}/"
-        foot = "Sent every morning at 4:30 am US Eastern. The list on the site is always the current one: what an email, a call or a tick has settled is already gone from it."
+        foot = ("Sent every morning at 4:30 am US Eastern. The list on the site is always the current one: what an email, a call or a tick has settled is already gone from it. "
+                "Each person marks their own work done.")
         parts += [f'<p style="margin:16px 0"><a href="{_html.escape(link)}" style="color:#0b6b4f">Open my day in MangoTree</a></p>', _p(foot, small=True)]
         text += [f"Open my day: {link}", "", foot]
-        subject = f"{'TEST — ' if test else ''}Your day, {et.day} {et:%b}: " + (f"{n} thing{'s' if n != 1 else ''} first" if n else "nothing waiting")
-        return {"to": (t["name"], t["email"]), "subject": subject, "html": _wrap(parts), "text": "\n".join(text), "now": n, "later": len(b["later"])}
+        subject = f"{'TEST — ' if test else ''}Your day, {et.day} {et:%b}: " + (", ".join(counts) + (f", {n_late} late" if n_late else "") if cards else "nothing waiting")
+        return {"to": (t["name"], t["email"]), "subject": subject[:180], "html": _wrap(parts), "text": "\n".join(text), "now": len(b["now"]), "later": len(b["later"]),
+                "replies": n_reply, "todos": n_todo, "work": n_work, "late": n_late, "decide": n_decide}
 
     def send_morning(self, *, people: Optional[Sequence[str]] = None, today: Optional[datetime] = None, test: bool = False, plan: bool = True) -> Dict[str, Any]:
         """Read each person's list over, then queue their morning email. One email per person per day."""

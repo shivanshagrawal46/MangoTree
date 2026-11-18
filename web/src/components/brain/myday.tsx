@@ -22,14 +22,20 @@ import { api } from "@/lib/api";
 import { Button, Card, Dialog, DialogContent, Input, Select, Skeleton, Textarea } from "@/components/ui";
 import { DraftCard } from "@/components/brain/draft";
 import type { Alerts } from "@/components/brain/followups";
-import { cn, fmtDate } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 import { errText, type DayBoard, type DayCard, type Draft, type TeamRow } from "@/lib/brain";
 
 const SHOW = 7;                                   // rows of a list before "more"
 const usd = (n: number) => n.toLocaleString("en-US", { style: "currency", currency: "USD" });
 const daysSince = (iso?: string | null) => (iso ? Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000)) : null);
 const dayWord = (n: number) => `${n} day${n === 1 ? "" : "s"}`;
-const dueToday = (c: DayCard) => !!c.due && new Date(c.due).toDateString() === new Date().toDateString();
+/* A due date is a calendar day (kept at 00:00 UTC). It is compared and shown as that day, on the firm's clock
+   (US Eastern) — never run through the browser's time zone, which would show it a day early in the US. */
+const dueDay = (c: DayCard) => (c.due ? String(c.due).slice(0, 10) : "");
+const todayET = () => new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+const dueToday = (c: DayCard) => !!c.due && dueDay(c) === todayET();
+const daysLate = (c: DayCard) => (c.due ? Math.round((Date.parse(todayET()) - Date.parse(dueDay(c))) / 86_400_000) : 0);
+const dueText = (c: DayCard) => (c.due ? `due ${Number(dueDay(c).slice(8, 10))} ${["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][Number(dueDay(c).slice(5, 7)) - 1]}` : "");
 
 function useActions(onOpenDraft: (id: string) => void) {
   const qc = useQueryClient();
@@ -84,8 +90,8 @@ const where = (c: DayCard) => ({ where: c.property_id === "_general" ? "General"
 
 function lateChip(c: DayCard) {
   if (!c.overdue) return dueToday(c) ? <Chip tone="late">due today</Chip> : null;
-  const n = c.due ? daysSince(c.due) : null;
-  return <Chip tone="late">{n ? `${dayWord(n)} late` : "late"}</Chip>;
+  const n = daysLate(c);
+  return <Chip tone="late">{n > 0 ? `${dayWord(n)} late` : "late"}</Chip>;
 }
 
 function ReplyRow({ c, a }: { c: DayCard; a: Actions }) {
@@ -100,7 +106,7 @@ function ReplyRow({ c, a }: { c: DayCard; a: Actions }) {
 }
 
 function TodoRow({ c, a }: { c: DayCard; a: Actions }) {
-  const due = c.due && !c.overdue && !dueToday(c) ? `due ${fmtDate(c.due, "d MMM")}` : "";
+  const due = c.due && !c.overdue && !dueToday(c) ? dueText(c) : "";
   const why = c.why_now && !/^(new|open for|waiting for your decision|due |was due)/i.test(c.why_now) ? c.why_now : "";
   return (
     <Row title={c.title} {...where(c)} note={[due, why].filter(Boolean).join(" · ") || undefined}
@@ -121,7 +127,9 @@ type Group = { label: string; cards: DayCard[] };
 function ListCard({ title, groups, empty, row, all }: { title: string; groups: Group[]; empty: string; row: (c: DayCard) => React.ReactNode; all?: { href: string; label: string } }) {
   const [open, setOpen] = React.useState(false);
   const total = groups.reduce((n, g) => n + g.cards.length, 0);
-  let room = open ? Infinity : SHOW;
+  // How many rows of each group show: the first SHOW rows of the whole list, group by group.
+  const before = groups.map((_, i) => groups.slice(0, i).reduce((n, g) => n + g.cards.length, 0));
+  const shown = groups.map((g, i) => (open ? g.cards : g.cards.slice(0, Math.max(0, SHOW - before[i]))));
   return (
     <Card className="overflow-hidden self-start">
       <div className="flex items-baseline justify-between px-4 pt-3 pb-2.5">
@@ -129,10 +137,9 @@ function ListCard({ title, groups, empty, row, all }: { title: string; groups: G
         {all && total > 0 && <Link href={all.href} className="text-[12.5px] font-semibold text-accent hover:underline">{all.label} →</Link>}
       </div>
       {total === 0 && <div className="border-t border-line px-4 py-6 text-[13px] text-muted">{empty}</div>}
-      {groups.map((g) => {
-        if (!g.cards.length || room <= 0) return null;
-        const rows = g.cards.slice(0, room);
-        room -= rows.length;
+      {groups.map((g, i) => {
+        const rows = shown[i];
+        if (!rows.length) return null;
         return (
           <React.Fragment key={g.label}>
             <div className="border-t border-line bg-sunken/70 px-4 py-1.5 text-[10.5px] font-semibold uppercase tracking-[0.09em] text-faint">{g.label} · {g.cards.length}</div>
@@ -151,7 +158,7 @@ function ListCard({ title, groups, empty, row, all }: { title: string; groups: G
 
 /* Late first, then by due date, then in the order the day was planned. */
 function byUrgency(cards: DayCard[]) {
-  const t = (c: DayCard) => (c.due ? new Date(c.due).getTime() : Number.MAX_SAFE_INTEGER);
+  const t = (c: DayCard) => (c.due ? Date.parse(dueDay(c)) : Number.MAX_SAFE_INTEGER);
   return cards.map((c, i) => ({ c, i })).sort((x, y) => Number(!!y.c.overdue) - Number(!!x.c.overdue) || t(x.c) - t(y.c) || x.i - y.i).map((x) => x.c);
 }
 
@@ -217,7 +224,7 @@ export function MyDay() {
   const s = split([...d.now, ...d.later]);
   const decide = s.todoGroups[0].cards, doing = s.todoGroups[1].cards;
   const late = [...s.replies, ...s.todos, ...s.work].filter((c) => c.overdue);
-  const soon = decide.filter((c) => c.due && (new Date(c.due).getTime() - Date.now()) / 86_400_000 <= 7).length;
+  const soon = decide.filter((c) => c.due && daysLate(c) >= -7).length;
   const changed = s.replies.filter((c) => c.stale).length;
   const lateBy = [[late.filter((c) => c.type === "reply").length, "reply", "replies"], [late.filter((c) => c.type === "todo").length, "to-do", "to-dos"],
     [late.filter((c) => c.type === "bill" || c.type === "check").length, "bill or check", "bills and checks"]] as const;
@@ -331,7 +338,7 @@ function PersonCard({ r, onGive, onRemind }: { r: TeamRow; onGive: () => void; o
       <ul>
         {rows.map((c) => (
           <Row key={c.key} title={c.title} {...where(c)} chips={lateChip(c)}
-            note={c.due && !c.overdue && !dueToday(c) ? `due ${fmtDate(c.due, "d MMM")}` : c.amount != null ? usd(c.amount) : undefined}
+            note={c.due && !c.overdue && !dueToday(c) ? dueText(c) : c.amount != null ? usd(c.amount) : undefined}
             right={<button type="button" onClick={() => onRemind(c)} className="text-[12px] font-semibold text-accent hover:underline">Remind</button>} />
         ))}
       </ul>

@@ -263,8 +263,29 @@ def test_a_test_email_says_test_in_its_subject():
     assert md._outbox.sent[0]["subject"].startswith("TEST — Task from Rakesh Sir")
     st.add_item("varnum", title="Review the bathroom bill", owner="shivansh", due="2026-11-18")
     mail = md.morning_mail("shivansh", today=NOW, test=True)
-    assert mail["subject"].startswith("TEST — Your day, 18 Nov: 2 things first") and mail["to"] == ("Shivansh", "shivansh@mtreh.com")
-    assert "1. Check the morning email" in mail["text"] and "Rakesh Sir asked you to do this" in mail["text"]
+    assert mail["subject"].startswith("TEST — Your day, 18 Nov: 2 to-dos") and mail["to"] == ("Shivansh", "shivansh@mtreh.com")
+    assert "- Check the morning email" in mail["text"] and "given by Rakesh Sir" in mail["text"] and mail["text"].startswith("THIS IS A TEST")
+
+
+def test_the_morning_email_keeps_replies_and_to_dos_apart_and_a_due_date_is_a_calendar_day():
+    m, st = _store()
+    md = _day(st)
+    st.save_file("durham_st", {"open_items": []})
+    st.add_item("varnum", title="Decide the maturity position", owner="rakesh", kind="decision", due="2026-11-19")      # tomorrow, on the firm's clock
+    st.add_item("varnum", title="Send the payoff letter", owner="rakesh", due="2026-11-18")                             # today
+    st.add_item("durham_st", title="Call the title company", owner="rakesh", due="2026-11-16")                          # two days late
+    st.drafts.insert_one({"draft_id": "d1", "status": "ready", "sender": "rakesh", "subject": "Re: Draw 5", "property_ids": ["durham_st"], "created_at": NOW,
+                          "to": [{"name": "Wes Stone", "email": "wes@roiblocks.com"}], "in_reply_to": {"from_name": "Wes Stone", "subject": "Draw 5", "date": NOW - timedelta(days=4)}})
+    mail = md.morning_mail("rakesh", today=NOW)
+    text = mail["text"]
+    assert mail["subject"] == "Your day, 18 Nov: 1 reply to send, 3 to-dos, 1 late"
+    assert text.index("REPLIES TO SEND (1)") < text.index("MY TO-DOS (3)")                       # two sections, never one mixed list
+    assert "- Wes Stone — Draw 5" in text and "waiting 4 days" in text and "Waiting longer (1)" in text
+    assert "Decide (1)" in text and "Do (2)" in text
+    assert "due 19 Nov" in text and "due today" in text and "2 days late" in text                # the day as written, not shifted by a time zone
+    assert text.index("Call the title company") < text.index("Send the payoff letter")           # late first
+    assert "The team:" in text and "/team" in text                                               # one line for Rakesh Sir, nothing more
+    assert "The team:" not in md.morning_mail("jp", today=NOW)["text"]
 
 
 def test_what_was_closed_today_counts_as_done_today():
@@ -485,3 +506,19 @@ def test_only_the_owner_marks_a_to_do_done_and_only_rakesh_sir_or_the_owner_move
     assert cannot_mark("wes", jp) is None and cannot_mark("kelly", rakesh) is None and cannot_mark("other", jp) is None   # nobody outside RKB signs in
     assert cannot_move("jp", "manjunath", rakesh) is None and cannot_move("jp", "manjunath", jp) is None
     assert cannot_move("manjunath", "jp", jp) is not None and cannot_move("jp", None, {"user_id": "shivansh"}) is None and cannot_move("jp", "jp", {"user_id": "shivansh"}) is None
+
+
+def test_the_daily_reading_over_puts_nothing_aside_for_being_old(monkeypatch):
+    """Putting old to-dos aside was a one-time clean-up; every morning only what is done is closed."""
+    m, store = _store()
+    store.save_file("varnum", {"open_items": []})
+    old = store.add_item("varnum", title="Decide the maturity position", owner="rakesh", due="2026-12-13")
+    done = store.add_item("varnum", title="Send the payoff letter", owner="jp")
+    sw = Sweep(m, store)
+    verdicts = [{"id": old["id"], "verdict": "put_aside", "why": "nothing on this in the last week", "was": {"title": old["title"]}},
+                {"id": done["id"], "verdict": "done", "why": "sent on 17 Nov", "was": {"title": done["title"]}}]
+    monkeypatch.setattr(Sweep, "review", lambda self, pid, **k: {"property_id": pid, "items": [dict(v) for v in verdicts], "replies": [], "open_before": 2, "cost_usd": 0.0})
+    out = sw.run(["varnum"], aside=False)
+    assert out["files"]["varnum"]["put_aside"] == 0 and out["files"]["varnum"]["done"] == 1
+    assert [i["title"] for i in BrainStore.open_items(store.get_file("varnum"))] == ["Decide the maturity position"]
+    assert sw.run(["varnum"])["files"]["varnum"]["put_aside"] == 1                       # only when asked for by hand
