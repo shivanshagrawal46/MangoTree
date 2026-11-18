@@ -77,7 +77,7 @@ function CallCard({ c, start }: { c: CallNote; start: boolean }) {
         <div className="min-w-0 flex-1">
           <div className="text-[14px] font-semibold tracking-tight leading-snug">{c.title}</div>
           <div className="mt-0.5 text-[12px] text-muted">{c.when}{named.length ? ` · ${named.join(", ")}` : ""}{c.separated === false ? " · the recorder did not separate the voices" : ""}</div>
-          <div className="mt-1.5 flex flex-wrap gap-1.5">{c.sections.map((s, i) => <Badge key={i}>{s.name}</Badge>)}</div>
+          <div className="mt-1.5 flex flex-wrap gap-1.5">{Array.from(new Set(c.sections.map((s) => s.name))).map((name) => <Badge key={name}>{name}</Badge>)}</div>
           {open && c.overall && <p className="mt-2.5 text-[13px] text-muted leading-relaxed">{c.overall}</p>}
         </div>
         <ChevronDown size={15} className={cn("mt-1 text-faint transition shrink-0", !open && "-rotate-90")} />
