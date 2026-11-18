@@ -247,6 +247,19 @@ nothing on that matter.
 Dates as YYYY-MM-DD. Report only what the call notes support."""
 
 
+HEADING_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["heading"], "properties": {"heading": {"type": "string"}}}
+HEADING = """YOUR JOB NOW: WRITE THE HEADING OF ONE CALL for RKB's Calls page.
+You are given what RKB's own reading of the transcript found: who spoke, which properties
+were talked about and on what. Granola's own title is NOT given to you on purpose: it is
+written by a machine from the sound and misspells names ("Warnum", "Baltimre", "West" for Wes).
+- One line, at most 14 words, in English, even when the call was in Hindi.
+- Say who the call was with (only people named under SPEAKERS or in the findings) and the
+  one to three matters that took most of it.
+- A property is named by its street, exactly as it is written in the findings ("Varnum",
+  "21st St", "Marmon", "Tower Road"); never an id, never a spelling of your own.
+- No date (the page shows it), no quotation marks, no full stop at the end."""
+
+
 def _registry_block() -> str:
     lines = ["PROPERTY IDS (use these ids; \"_general\" for anything else)"]
     for pid in active_property_ids():
@@ -411,7 +424,8 @@ class Calls:
         if call.get("reading") and not again:
             return call["reading"]
         turns = call.get("turns") or []
-        head = (f"CALL: {call.get('title')}\nBEGAN: {et_label(call.get('started_at'))}   ENDED: {et_label(call.get('ended_at'))}\n"
+        head = (f"GRANOLA'S OWN TITLE (written by a machine from the sound; it can misspell names — go by the transcript and the property list): "
+                f"{call.get('title')}\nBEGAN: {et_label(call.get('started_at'))}   ENDED: {et_label(call.get('ended_at'))}\n"
                 f"SPEAKERS AS RECORDED: {', '.join(f'{k} ({v} lines)' for k, v in (call.get('speakers') or {}).items())}\n"
                 + ("" if call.get("separated") else "The recorder did not separate the voices on this call: every turn is labelled "
                    f"\"{gr.NOT_SEPARATED}\".\n"))
@@ -450,6 +464,11 @@ class Calls:
         self._cost(note_id, "read", usage)
         self.coll.update_one({"note_id": note_id}, {"$set": {"reading": reading, "status": "read" if reading["about_our_work"] else "nothing_ours",
                                                              "property_ids": sorted({s["property_id"] for s in sections}), "updated_at": now()}})
+        if reading["about_our_work"]:
+            try:
+                self.heading(note_id, again=True)
+            except Exception:                                           # the reading stands without it; Granola's title shows until it is written
+                logger.exception("heading for call %s could not be written", note_id)
         return reading
 
     # ------------------------------------------------------- into the file
@@ -585,7 +604,7 @@ class Calls:
             stale += r.modified_count
         quotes = [{"by": p["by"], "at": p["at"], "quote": p["quote"], "text": p["text"], "kind": p["kind"]} for s in parts for p in s.get("points") or [] if p.get("quote")]
         st.add_activity(pid, at=at, kind="call", who=", ".join(k for k in (call.get("speakers") or {}) if k != gr.NOT_SEPARATED)[:120],
-                        title=data.get("title") or call.get("title") or "Call", summary=data.get("summary") or "", sha=sha,
+                        title=data.get("title") or call.get("heading") or call.get("title") or "Call", summary=data.get("summary") or "", sha=sha,
                         relevance=data.get("relevance") or "material",
                         extra={"changed": changed, "items_added": added, "items_closed": closed, "items_updated": updated, "drafts_outdated": stale,
                                "call": call["note_id"], "quotes": quotes[:12]})
@@ -654,12 +673,37 @@ class Calls:
                 steps[k] = round(steps.get(k, 0) + (c.get("usd") or 0), 4)
         return {"calls": len(rows), "pick_usd": round(pick, 4), "by_step": steps, "total_usd": round(pick + sum(steps.values()), 4)}
 
+    # ------------------------------------------------------------- the heading
+    def heading(self, note_id: str, *, again: bool = False, save: bool = True) -> str:
+        """The call's heading, written from OUR reading of the transcript — never from Granola's
+        title or summary, which misspell the properties. Stored as ``heading``."""
+        call = self.coll.find_one({"note_id": note_id}, {"turns": 0, "granola_summary": 0})
+        r = (call or {}).get("reading") or {}
+        if not r.get("sections"):
+            return ""
+        if call.get("heading") and not again:
+            return call["heading"]
+        by_pid: Dict[str, List[str]] = {}
+        for sec in r["sections"]:
+            by_pid.setdefault(sec["property_id"], []).append(str(sec.get("topic") or "").strip())
+        body = (f"WHEN: {et_label(call.get('started_at'))}\nSPEAKERS AS RECORDED: {', '.join((call.get('speakers') or {}).keys()) or 'not recorded'}\n\n"
+                f"WHAT THE READING FOUND, ON THE WHOLE:\n{r.get('overall') or ''}\n\nWHAT WAS TALKED ABOUT, BY PROPERTY:\n"
+                + "\n".join(f"- {name_of(pid) if pid != bc.GENERAL_ID else 'General matters'}: {'; '.join(x for x in topics if x)[:400]}" for pid, topics in by_pid.items()))
+        out = structured(system=system_blocks(prompts.CORE, HEADING), user=body, schema=HEADING_SCHEMA, effort=EFFORT, max_tokens=4000, label=f"call heading {note_id[:8]}")
+        text = " ".join(str(out["data"].get("heading") or "").split()).strip(" .\"“”")[:160]
+        if save and text:
+            self._cost(note_id, "heading", out["usage"])
+            self.coll.update_one({"note_id": note_id}, {"$set": {"heading": text, "heading_at": now()}})
+        return text
+
     # ------------------------------------------------------------- for the screens
     @staticmethod
     def public(call: Dict[str, Any], pid: Optional[str] = None) -> Dict[str, Any]:
         r = call.get("reading") or {}
         secs = [s for s in r.get("sections") or [] if not pid or s["property_id"] == pid]
-        return {"note_id": call["note_id"], "title": call.get("title"), "started_at": call.get("started_at"), "ended_at": call.get("ended_at"),
+        # The heading shown is ours; Granola's title is kept only as a reference to find the note in Granola.
+        return {"note_id": call["note_id"], "title": call.get("heading") or call.get("title"), "granola_title": call.get("title"),
+                "started_at": call.get("started_at"), "ended_at": call.get("ended_at"),
                 "when": et_label(call.get("started_at")), "speakers": list((call.get("speakers") or {}).keys()), "separated": call.get("separated"),
                 "picked_by": call.get("picked_by"), "overall": r.get("overall"), "status": call.get("status"), "web_url": call.get("web_url"),
                 "sections": [{**s, "name": name_of(s["property_id"])} for s in secs],
@@ -678,7 +722,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     import json
     from mangotree.storage.mongo import get_mongo
     ap = argparse.ArgumentParser(description="Granola calls: pull-past | pull-folder | run | apply-live | cost | status | seed-trial")
-    ap.add_argument("action", choices=["pull-past", "pull-folder", "run", "apply-live", "cost", "status", "seed-trial", "read-one"])
+    ap.add_argument("action", choices=["pull-past", "pull-folder", "run", "apply-live", "cost", "status", "seed-trial", "read-one", "headings"])
+    ap.add_argument("--dry", action="store_true", help="headings: show them without storing")
+    ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--trial", action="store_true", help="work on the trial copy of the property files")
     ap.add_argument("--note", default=None)
     args = ap.parse_args(argv)
@@ -694,6 +740,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         show(calls.pull_past())
     elif args.action == "pull-folder":
         show(calls.pull_folder())
+    elif args.action == "headings":
+        # Write our own heading for every call that was read and has none yet (the calls read before 2026-11-18).
+        rows = list(calls.coll.find({"take": True, "reading.about_our_work": True, **({} if args.dry else {"heading": {"$exists": False}})},
+                                    {"note_id": 1, "title": 1, "started_at": 1}).sort("started_at", -1))
+        for c in rows[:args.limit or None]:
+            h = calls.heading(c["note_id"], again=True, save=not args.dry)
+            print(f"{et_label(c.get('started_at')):<26} GRANOLA: {c.get('title')}\n{'':<26} OURS:    {h}", flush=True)
     elif args.action == "read-one":
         show({k: v for k, v in calls.read(args.note, again=True).items() if k != "usage"})
     elif args.action == "run":

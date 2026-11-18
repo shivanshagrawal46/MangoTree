@@ -425,3 +425,28 @@ def test_only_the_last_week_stays_open_by_the_date_of_what_raised_it():
     d = store.drafts.find_one({"draft_id": "d-old"})
     assert d["status"] == "dismissed" and "older than one week" in d["put_aside"]["why"] and store.drafts.find_one({"draft_id": "d-new"})["status"] == "ready"
     assert store.reopen_item("durham_st", "old-mail") and "old-mail" in {i["id"] for i in BrainStore.open_items(store.get_file("durham_st"))}   # nothing is lost
+
+
+def test_the_heading_of_a_call_is_ours_and_never_granolas(monkeypatch):
+    """Granola's title misspells the properties ("Warnum"); the heading is written from our own reading."""
+    from mangotree.brain import calls as cm
+    m, store = _store()
+    calls = Calls(m, store, client=object())
+    m.db["calls"].insert_one({"note_id": "n1", "take": True, "title": "Warnum budget with Manju", "started_at": datetime(2026, 11, 3, 15, 0, tzinfo=UTC),
+                              "speakers": {"Rakesh Sir": 40, "Manjunath Meharwade": 30}, "granola_summary": "Warnum Street budget...", "turns": [],
+                              "reading": {"about_our_work": True, "overall": "The Varnum budget was gone through.", "sections": [
+                                  {"property_id": "varnum", "topic": "Budget overrun", "summary": "", "points": []},
+                                  {"property_id": "_general", "topic": "Payment tracking", "summary": "", "points": []}]}})
+    seen = {}
+
+    def fake(**kw):
+        seen["user"] = kw["user"]
+        return {"data": {"heading": '"Rakesh Sir and Manjunath on the Varnum budget and payment tracking."'}, "usage": {}}
+    monkeypatch.setattr(cm, "structured", fake)
+    assert Calls.public(m.db["calls"].find_one({"note_id": "n1"}))["title"] == "Warnum budget with Manju"       # until ours is written, Granola's shows
+    assert calls.heading("n1", save=False) == "Rakesh Sir and Manjunath on the Varnum budget and payment tracking"
+    assert "heading" not in m.db["calls"].find_one({"note_id": "n1"})                                           # a trial stores nothing
+    assert "Warnum" not in seen["user"] and "1512 Varnum St NW: Budget overrun" in seen["user"] and "General matters: Payment tracking" in seen["user"]
+    calls.heading("n1")
+    p = Calls.public(m.db["calls"].find_one({"note_id": "n1"}))
+    assert p["title"] == "Rakesh Sir and Manjunath on the Varnum budget and payment tracking" and p["granola_title"] == "Warnum budget with Manju"
