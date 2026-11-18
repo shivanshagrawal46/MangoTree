@@ -116,7 +116,7 @@ export function SiteWorkTab({ pid }: { pid: string }) {
           <div className="px-4 py-3">
             <p className="text-[14px] font-semibold leading-snug">{a.headline || a.one_line}</p>
             <div className="mt-2.5 divide-y divide-line/70 border-y border-line/70">
-              <Verdict label="Overall" value={a.overall} reason={`${a.stats?.days_with_a_log} days with a log · longest gap ${a.stats?.longest_gap_days} days · last log ${a.stats?.days_since_last_log === 0 ? "today" : a.stats?.days_since_last_log === 1 ? "yesterday" : `${a.stats?.days_since_last_log} days ago`}`} />
+              <Verdict label="Overall" value={a.overall} reason={`Last log ${a.stats?.days_since_last_log === 0 ? "today" : a.stats?.days_since_last_log === 1 ? "yesterday" : `${a.stats?.days_since_last_log} days ago`}`} />
               <Verdict label="Workmanship" value={a.workmanship} reason={a.workmanship_short} />
               <Verdict label="Pace" value={a.pace} reason={a.pace_short} />
               <Verdict label="Their record" value={a.documentation} reason={a.record_short} />
