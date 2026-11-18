@@ -450,3 +450,38 @@ def test_the_heading_of_a_call_is_ours_and_never_granolas(monkeypatch):
     calls.heading("n1")
     p = Calls.public(m.db["calls"].find_one({"note_id": "n1"}))
     assert p["title"] == "Rakesh Sir and Manjunath on the Varnum budget and payment tracking" and p["granola_title"] == "Warnum budget with Manju"
+
+
+def test_a_reply_card_says_who_wrote_and_a_reminder_goes_once_a_day_and_changes_nothing():
+    m, store = _store()
+    today = datetime.now(UTC).replace(microsecond=0)        # the test database keeps milliseconds only
+    store.files.insert_one({"property_id": "durham_st", "built_at": today - timedelta(days=9), "open_items": [
+        {"id": "t1", "title": "Send Erin the vendor invoices", "detail": "", "owner": "jp", "kind": "action", "due": today + timedelta(days=2), "status": "open", "opened_at": today - timedelta(days=1)}]})
+    store.drafts.insert_one({"draft_id": "d1", "status": "ready", "sender": "rakesh", "subject": "Re: Draw 5", "property_ids": ["durham_st"], "created_at": today, "why": "Wes is waiting",
+                             "to": [{"name": "Wes Stone", "email": "wes@roiblocks.com"}], "stale": {"kind": "call", "why": "moved"},
+                             "in_reply_to": {"from_name": "Wes Stone", "subject": "Draw 5", "date": today - timedelta(days=3)}})
+    out = FakeOutbox()
+    md = MyDay(m, store, follow=lambda: [], outbox=out)
+    reply = [c for c in md.cards("rakesh") if c["type"] == "reply"][0]
+    assert (reply["from_name"], reply["subject"], reply["stale_kind"], reply["why"]) == ("Wes Stone", "Draw 5", "call", "Wes is waiting") and _same(reply["received"], today - timedelta(days=3))
+    r = md.remind({"user_id": "rakesh", "name": "Rakesh Sir"}, to="jp", key="todo:durham_st:t1")
+    sent = out.sent[-1]
+    assert sent["kind"] == "task_reminder" and sent["to"] == [("JP Sir", TEAM["jp"]["email"])] and sent["subject"] == "Reminder from Rakesh Sir: Send Erin the vendor invoices"
+    assert "is asking where this stands" in sent["text"] and r["to"] == TEAM["jp"]["email"]
+    assert len(BrainStore.open_items(store.get_file("durham_st"))) == 1                       # a reminder closes nothing
+    import pytest
+    with pytest.raises(ValueError):
+        md.remind({"user_id": "rakesh"}, to="jp", key="todo:durham_st:gone")
+    with pytest.raises(ValueError):
+        md.remind({"user_id": "rakesh"}, to="wes", key="todo:durham_st:t1")
+
+
+def test_only_the_owner_marks_a_to_do_done_and_only_rakesh_sir_or_the_owner_moves_it():
+    from mangotree.brain.myday import cannot_mark, cannot_move
+    rakesh, jp = {"user_id": "rakesh", "role": "ceo"}, {"user_id": "jp", "role": "accountant"}
+    assert cannot_mark("jp", jp) is None and cannot_mark("rakesh", rakesh) is None
+    assert cannot_mark("jp", rakesh) == "Only JP Sir can mark this done: it is on their list."          # not even Rakesh Sir
+    assert "Manjunath Sir" in cannot_mark("manjunath", jp) and "Shivansh" in cannot_mark("shivansh", rakesh)
+    assert cannot_mark("wes", jp) is None and cannot_mark("kelly", rakesh) is None and cannot_mark("other", jp) is None   # nobody outside RKB signs in
+    assert cannot_move("jp", "manjunath", rakesh) is None and cannot_move("jp", "manjunath", jp) is None
+    assert cannot_move("manjunath", "jp", jp) is not None and cannot_move("jp", None, {"user_id": "shivansh"}) is None and cannot_move("jp", "jp", {"user_id": "shivansh"}) is None

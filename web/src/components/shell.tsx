@@ -21,6 +21,8 @@ import type { PropertySummary } from "@/lib/types";
 const NAV = [
   { href: "/", label: "Today", icon: LayoutGrid },
   { href: "/replies", label: "To reply", icon: Reply },
+  { href: "/team", label: "Team", icon: Users },
+  { href: "/overview", label: "Properties", icon: Building2 },
   { href: "/bills", label: "Bills", icon: Receipt },
   { href: "/chase", label: "Follow-ups", icon: BellRing },
   { href: "/calls", label: "Calls", icon: Phone },
@@ -41,6 +43,7 @@ const OLDER_NAV = [
 const TEAM_NAV = [
   { href: "/", label: "Today", icon: LayoutGrid },
   { href: "/replies", label: "To reply", icon: Reply },
+  { href: "/overview", label: "Properties", icon: Building2 },
   { href: "/bills", label: "Bills", icon: Receipt },
   { href: "/chase", label: "Follow-ups", icon: BellRing },
   { href: "/calls", label: "Calls", icon: Phone },

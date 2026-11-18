@@ -31,12 +31,15 @@ function Section({ title, right, children, className }: { title: string; right?:
   );
 }
 
-export function ItemRow({ item, onDone, onDrop, showProperty }: { item: OpenItem; onDone: () => void; onDrop?: () => void; showProperty?: boolean }) {
+/* ``onDone`` is given only to the person the to-do belongs to: nobody marks another person's work done. */
+export function ItemRow({ item, onDone, onDrop, showProperty }: { item: OpenItem; onDone?: () => void; onDrop?: () => void; showProperty?: boolean }) {
   const evidence = useEvidence();
   const waiting = item.kind === "waiting";
   return (
     <li className="group flex items-start gap-3 py-2.5">
-      <div className="pt-0.5"><Checkbox checked={false} onCheckedChange={onDone} size={20} label={waiting ? "Mark received" : "Mark done"} /></div>
+      <div className="pt-0.5">{onDone
+        ? <Checkbox checked={false} onCheckedChange={onDone} size={20} label={waiting ? "Mark received" : "Mark done"} />
+        : <span className="block h-5 w-5 rounded-full border border-dashed border-line-strong" title={`Only ${OWNER_LABEL[item.owner] || item.owner} can mark this done`} />}</div>
       <div className="min-w-0 flex-1">
         <div className="text-[13.5px] leading-snug">{item.title}</div>
         {item.detail && <div className="text-[12.5px] text-muted mt-0.5 leading-relaxed whitespace-pre-line">{item.detail}</div>}
@@ -98,6 +101,8 @@ export function PropertyFilePanel({ pid }: { pid: string }) {
   if (q.isLoading || !q.data) return <div className="p-6 space-y-3"><Skeleton className="h-8 w-2/3" /><Skeleton className="h-28" /><Skeleton className="h-64" /></div>;
   const f = q.data;
 
+  // A to-do on someone's own list is theirs to mark done; what waits on people outside RKB can be closed by anyone here.
+  const canMark = (i: OpenItem) => !["rakesh", "jp", "manjunath", "shivansh"].includes(i.owner) || i.owner === user?.user_id;
   const close = async (item: OpenItem, status: "done" | "dropped") => {
     // Optimistic: the row leaves at once; the server follows.
     qc.setQueryData<PropertyFile>(key, (cur) => cur ? { ...cur, open_items: (cur.open_items || []).filter((i) => i.id !== item.id) } : cur);
@@ -162,17 +167,17 @@ export function PropertyFilePanel({ pid }: { pid: string }) {
           </div>
         )}
         {mine.length === 0 ? <div className="text-[13px] text-muted">Nothing is waiting on you here.</div>
-          : <ul className="divide-y divide-line">{mine.map((i) => <ItemRow key={i.id} item={i} onDone={() => close(i, "done")} onDrop={() => close(i, "dropped")} />)}</ul>}
+          : <ul className="divide-y divide-line">{mine.map((i) => <ItemRow key={i.id} item={i} onDone={canMark(i) ? () => close(i, "done") : undefined} onDrop={canMark(i) ? () => close(i, "dropped") : undefined} />)}</ul>}
       </Section>
 
       {team.length > 0 && (
         <Section title={`With the team · ${team.length}`}>
-          <ul className="divide-y divide-line">{team.map((i) => <ItemRow key={i.id} item={i} onDone={() => close(i, "done")} onDrop={() => close(i, "dropped")} />)}</ul>
+          <ul className="divide-y divide-line">{team.map((i) => <ItemRow key={i.id} item={i} onDone={canMark(i) ? () => close(i, "done") : undefined} onDrop={canMark(i) ? () => close(i, "dropped") : undefined} />)}</ul>
         </Section>
       )}
       {waiting.length > 0 && (
         <Section title={`Waiting on others · ${waiting.length}`}>
-          <ul className="divide-y divide-line">{waiting.map((i) => <ItemRow key={i.id} item={i} onDone={() => close(i, "done")} onDrop={() => close(i, "dropped")} />)}</ul>
+          <ul className="divide-y divide-line">{waiting.map((i) => <ItemRow key={i.id} item={i} onDone={canMark(i) ? () => close(i, "done") : undefined} onDrop={canMark(i) ? () => close(i, "dropped") : undefined} />)}</ul>
         </Section>
       )}
 

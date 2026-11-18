@@ -211,7 +211,9 @@ export function PropertyDetails({ pid, f, days, setDays, onTab }: { pid: string;
   const extra = f.numbers?.extra || {};
   const acts = f.activity || [];
   const bills = f.site?.in_buildertrend ? f.site.bills : undefined;
-  const list = (rows: OpenItem[]) => <ul className="divide-y divide-line -my-1">{rows.map((i) => <ItemRow key={i.id} item={i} onDone={() => close(i, "done")} onDrop={() => close(i, "dropped")} />)}</ul>;
+  // A to-do on someone's own list is theirs to mark done; what waits on people outside RKB can be closed by anyone here.
+  const canMark = (i: OpenItem) => !["rakesh", "jp", "manjunath", "shivansh"].includes(i.owner) || i.owner === me;
+  const list = (rows: OpenItem[]) => <ul className="divide-y divide-line -my-1">{rows.map((i) => <ItemRow key={i.id} item={i} onDone={canMark(i) ? () => close(i, "done") : undefined} onDrop={canMark(i) ? () => close(i, "dropped") : undefined} />)}</ul>;
 
   return (
     <div>

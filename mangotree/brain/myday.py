@@ -138,7 +138,7 @@ class MyDay:
                 if d:  # the reply is already written: the to-do is "send it"
                     used.add(d["draft_id"])
                     card.update({"type": "reply", "draft_id": d["draft_id"], "href": f"/drafts?open={d['draft_id']}", "stale": bool(d.get("stale")),
-                                 "urgency": d.get("urgency"), "to": [t.get("name") or t.get("email") for t in d.get("to") or []][:3]})
+                                 "urgency": d.get("urgency"), "to": [t.get("name") or t.get("email") for t in d.get("to") or []][:3], **self._letter(d)})
                 out.append(card)
         for d in mine_drafts:
             if d["draft_id"] in used:
@@ -148,7 +148,7 @@ class MyDay:
             out.append({"key": f"reply:{d['draft_id']}", "type": "reply", "kind": "reply", "title": f"Send the reply to {', '.join(x for x in to if x) or 'them'}: {d.get('subject') or ''}"[:160],
                         "detail": d.get("why") or "", "property_id": pids[0], "property": name_of(pids[0]), "due": None, "overdue": False,
                         "opened_at": _aware(d.get("created_at")), "draft_id": d["draft_id"], "href": f"/drafts?open={d['draft_id']}", "stale": bool(d.get("stale")),
-                        "urgency": d.get("urgency"), "to": to})
+                        "urgency": d.get("urgency"), "to": to, **self._letter(d)})
         fkey = (TEAM.get(person) or {}).get("follow")
         for i in follow:
             if not fkey or i.get("owner") != fkey:
@@ -161,6 +161,16 @@ class MyDay:
             c["score"] = self.score(c, today)
         out.sort(key=lambda c: (-c["score"], c.get("due") or datetime(2999, 1, 1, tzinfo=timezone.utc), c.get("opened_at") or today))
         return out
+
+    @staticmethod
+    def _letter(d: Dict[str, Any]) -> Dict[str, Any]:
+        """What the list of replies shows for one waiting reply: who wrote, about what, since when,
+        and why the written reply needs another look (if it does)."""
+        r = d.get("in_reply_to") or {}
+        to = (d.get("to") or [{}])[0]
+        return {"from_name": r.get("from_name") or to.get("name") or to.get("email") or "", "subject": r.get("subject") or d.get("subject") or "",
+                "received": _aware(r.get("date")), "stale_kind": (d.get("stale") or {}).get("kind") or ("partly" if d.get("stale") else None),
+                "why": d.get("why") or ""}
 
     @staticmethod
     def score(c: Dict[str, Any], today: datetime) -> int:
@@ -283,6 +293,31 @@ class MyDay:
             mail = {"to": TEAM[to]["email"], "subject": mail["subject"], **q}
         return {"item": {**item, "property_id": pid, "property": name_of(pid)}, "email": mail}
 
+    def remind(self, by: Dict[str, Any], *, to: str, key: str, test: bool = False) -> Dict[str, Any]:
+        """Rakesh Sir reminds someone of one thing on their list: an email from his mailbox, at most one a day per thing.
+        Nothing on the list changes: the owner still marks it done."""
+        if to not in TEAM:
+            raise ValueError(f"a reminder can go to: {', '.join(TEAM)}")
+        card = next((c for c in self.cards(to) if c["key"] == key), None)
+        if not card:
+            raise ValueError("that is no longer on their list")
+        from mangotree.retrieve.config import PUBLIC_URL
+        from .billmail import _p, _table, _text_rows, _wrap
+        who, person = by.get("name") or "Rakesh Sir", TEAM[to]
+        rows = [("What", card["title"]), ("Property", card.get("property") or "General")]
+        if card.get("due"):
+            rows.append(("Due", eastern.label(eastern.to_et(card["due"]), time=False) + (" (past due)" if card.get("overdue") else "")))
+        intro = f"{person['first']}, {who} is asking where this stands."
+        foot = "It is on your list in MangoTree. Mark it done there when it is finished, or tell Rakesh Sir what is holding it. All times are US Eastern."
+        head = [TEST_NOTE] if test else []
+        link = f"{PUBLIC_URL}/"
+        html = _wrap([_p(x) for x in head] + [_p(intro), _table(rows), f'<p style="margin:14px 0"><a href="{_html.escape(link)}" style="color:#0b6b4f">Open my day in MangoTree</a></p>', _p(foot, small=True)])
+        text = "\n".join(head + [intro, "", _text_rows(rows), "", f"Open my day: {link}", "", foot])
+        subject = f"{'TEST — ' if test else ''}Reminder from {who}: {card['title']}"[:180]
+        q = self.outbox().queue(kind="task_reminder", ref=f"{key}:{eastern.to_et(now()):%Y-%m-%d}{':test' if test else ''}", to=[(person["name"], person["email"])],
+                                subject=subject, html=html, text=text, meta={"key": key, "to": to, "by": by.get("user_id") or "rakesh", "test": test})
+        return {"to": person["email"], "name": person["name"], "subject": subject, **q}
+
     @staticmethod
     def task_mail(item: Dict[str, Any], pid: str, *, test: bool = False) -> Dict[str, Any]:
         from mangotree.retrieve.config import PUBLIC_URL
@@ -393,6 +428,23 @@ class MyDay:
                 logger.exception("morning email for %s failed", p)
                 out["failed"].append({"person": p, "error": f"{type(exc).__name__}: {exc}"[:300]})
         return out
+
+
+def cannot_mark(owner: Any, user: Dict[str, Any]) -> Optional[str]:
+    """Why this person may NOT mark a to-do done, not needed, or open again — or None when they may.
+    A to-do on someone's own list is theirs alone to mark (admin directive 2026-11-18: not even Rakesh Sir
+    marks another person's work done). What waits on someone outside RKB (Wes, Kelly, others) has no owner
+    who signs in, so anyone at RKB may close it."""
+    if owner in TEAM and owner != user.get("user_id"):
+        return f"Only {TEAM[owner]['name']} can mark this done: it is on their list."
+    return None
+
+
+def cannot_move(owner: Any, new_owner: Any, user: Dict[str, Any]) -> Optional[str]:
+    """Why this person may NOT give a to-do to someone else — or None when they may (Rakesh Sir, or its owner)."""
+    if new_owner is None or new_owner == owner or user.get("role") == "ceo" or owner == user.get("user_id"):
+        return None
+    return "Only Rakesh Sir, or the person it belongs to, can give a to-do to someone else."
 
 
 def due_morning(at: Optional[datetime] = None) -> bool:

@@ -127,6 +127,8 @@ export type DayCard = {
   property_id: string; property: string; due?: string | null; overdue?: boolean; opened_at?: string | null;
   item_id?: string; draft_id?: string; follow_key?: string; href: string; why_now?: string; stale?: boolean;
   assigned_by?: string | null; assigned_by_name?: string | null; amount?: number | null; days?: number | null; source_sha?: string | null;
+  /* a reply: who wrote, about what, when it came in, and why the written reply needs another look */
+  from_name?: string; subject?: string; received?: string | null; stale_kind?: string | null; why?: string;
 };
 export type DayDone = { title: string; property: string; property_id: string; closed_at: string; closed_by?: string; note?: string; assigned_by?: string | null };
 export type TeamRow = { person: string; name: string; left: number; late: number; done_today: number; given_open: number; now: DayCard[]; later: DayCard[]; done: DayDone[] };

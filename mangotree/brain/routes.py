@@ -113,6 +113,11 @@ class BillLineBody(BaseModel):
     note: Optional[str] = None
 
 
+class RemindBody(BaseModel):
+    to: str
+    key: str
+
+
 class TaskBody(BaseModel):
     to: str
     title: str
@@ -549,6 +554,16 @@ def install(app: FastAPI, mongo: Mongo, jobs) -> None:
         swr.clear()
         return data.clean(out)
 
+    @app.post("/brain/tasks/remind")
+    def brain_remind(body: RemindBody, user=CurrentUser):
+        """Rakesh Sir reminds someone of one thing on their list: an email, at most one a day per thing."""
+        if user.get("role") != "ceo":
+            raise HTTPException(403, "only Rakesh Sir sends reminders")
+        try:
+            return data.clean(myday.remind(user, to=body.to, key=body.key))
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+
     @app.get("/brain/calls")
     def brain_calls(property_id: Optional[str] = None, user=CurrentUser):
         """The calls that were read, newest first — for one property, or all of them."""
@@ -642,6 +657,16 @@ def install(app: FastAPI, mongo: Mongo, jobs) -> None:
     def brain_patch_item(pid: str, item_id: str, body: ItemPatch, user=CurrentUser):
         pid = _file_id(pid)
         ok = False
+        # A to-do is marked done (or not needed) by the person it belongs to, not by anyone else, Rakesh Sir
+        # included (admin directive 2026-11-18). What is waiting on someone outside RKB (Wes, Kelly, others) has
+        # no owner who can sign in, so anyone at RKB may close it. Only Rakesh Sir, or the owner, moves a to-do
+        # to another person.
+        item0 = next((i for i in (store.get_file(pid) or {}).get("open_items") or [] if i.get("id") == item_id), None)
+        if item0:
+            from .myday import cannot_mark, cannot_move
+            no = (cannot_mark(item0.get("owner"), user) if body.status in ("done", "dropped", "open") else None) or cannot_move(item0.get("owner"), body.owner, user)
+            if no:
+                raise HTTPException(403, no)
         if body.status in ("done", "dropped"):
             ok = store.close_item(pid, item_id, note=body.note or "", by=user["user_id"], status=body.status)
             if ok:

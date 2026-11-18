@@ -1,161 +1,255 @@
 "use client";
 
-/* My day — a few things to do now, not everything at once.
+/* My day — one person's own work, and nothing else (the layout agreed on 2026-11-18).
 
-   Each person sees the first five things waiting for them, the most pressing
-   first, each with the one action that finishes it. The rest wait under
-   "Later" and move up by themselves. Rakesh Sir also sees the team — what is
-   left and what is late for each person — and can give anyone a task: it lands
-   on their list and an email goes to them. */
+   Four numbers at the top. Then two lists side by side, never mixed:
+     · Replies to send  — grouped Late / Today / Waiting longer; one button, "Read and send".
+     · My to-dos        — grouped Decide / Do; one button, "Done".
+   (JP Sir and Manjunath Sir have "Bills and site checks" where Rakesh Sir has replies.)
+   About seven rows of each show; "more" opens the rest in place. One thin strip under
+   them says what came in from the sites.
+
+   The team is NOT here. It has its own page (TeamPage, Rakesh Sir only): he sees each
+   person's list, gives a task, sends a reminder — and cannot mark another person's work
+   done. Only the owner can; the server refuses anyone else. */
 
 import * as React from "react";
 import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { type LucideIcon, ArrowRight, CalendarClock, Check, CheckCircle2, ChevronDown, Clock, Plus, Receipt, Reply, Scale, Search, Send, UserRound, X } from "lucide-react";
+import { ArrowRight, Check, Plus, Send } from "lucide-react";
 import { api } from "@/lib/api";
-import { Badge, Button, Card, Dialog, DialogContent, Input, Select, Skeleton, Textarea } from "@/components/ui";
+import { Button, Card, Dialog, DialogContent, Input, Select, Skeleton, Textarea } from "@/components/ui";
 import { DraftCard } from "@/components/brain/draft";
+import type { Alerts } from "@/components/brain/followups";
 import { cn, fmtDate } from "@/lib/utils";
 import { errText, type DayBoard, type DayCard, type Draft, type TeamRow } from "@/lib/brain";
 
-const TYPE: Record<string, { label: string; icon: LucideIcon; cls: string }> = {
-  reply: { label: "Reply", icon: Reply, cls: "bg-accent-soft text-accent" },
-  decision: { label: "Decide", icon: Scale, cls: "bg-info-soft text-info" },
-  bill: { label: "Bill", icon: Receipt, cls: "bg-high-soft text-high" },
-  check: { label: "Check", icon: Search, cls: "bg-high-soft text-high" },
-  todo: { label: "To do", icon: Check, cls: "bg-sunken text-muted" },
-};
-
-function typeOf(c: DayCard) {
-  if (c.type === "todo" && c.kind === "decision") return TYPE.decision;
-  return TYPE[c.type] || TYPE.todo;
-}
+const SHOW = 7;                                   // rows of a list before "more"
+const usd = (n: number) => n.toLocaleString("en-US", { style: "currency", currency: "USD" });
+const daysSince = (iso?: string | null) => (iso ? Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000)) : null);
+const dayWord = (n: number) => `${n} day${n === 1 ? "" : "s"}`;
+const dueToday = (c: DayCard) => !!c.due && new Date(c.due).toDateString() === new Date().toDateString();
 
 function useActions(onOpenDraft: (id: string) => void) {
   const qc = useQueryClient();
   const refresh = () => qc.invalidateQueries({ queryKey: ["brain"] });
-  const close = async (c: DayCard, status: "done" | "dropped") => {
-    // The card leaves at once; the next one moves up when the list comes back.
+  const done = async (c: DayCard) => {
+    // The row leaves at once; the list comes back from the server right after.
     qc.setQueryData<DayBoard>(["brain", "myday"], (cur) => cur ? { ...cur, now: cur.now.filter((x) => x.key !== c.key), later: cur.later.filter((x) => x.key !== c.key) } : cur);
     try {
-      await api.patch(`/brain/properties/${c.property_id}/items/${c.item_id}`, { status });
-      toast.success(status === "done" ? "Done" : "Removed", { action: { label: "Undo", onClick: async () => { await api.patch(`/brain/properties/${c.property_id}/items/${c.item_id}`, { status: "open" }); refresh(); } } });
+      await api.patch(`/brain/properties/${c.property_id}/items/${c.item_id}`, { status: "done" });
+      toast.success("Done", { action: { label: "Undo", onClick: async () => { await api.patch(`/brain/properties/${c.property_id}/items/${c.item_id}`, { status: "open" }); refresh(); } } });
     } catch (e) { toast.error(errText(e)); }
     refresh();
   };
-  const later = async (c: DayCard) => {
-    try { await api.post("/brain/followups/mark", { key: c.follow_key, state: "later" }); toast.success("Put aside for three days"); } catch (e) { toast.error(errText(e)); }
-    refresh();
-  };
-  return { close, later, openDraft: onOpenDraft, refresh };
+  return { done, openDraft: onOpenDraft, refresh };
 }
+type Actions = ReturnType<typeof useActions>;
 
-function Action({ c, a, mine }: { c: DayCard; a: ReturnType<typeof useActions>; mine: boolean }) {
-  if (!mine) return <Link href={c.href} className="text-xs text-accent hover:underline whitespace-nowrap flex items-center gap-1">Open <ArrowRight size={12} /></Link>;
-  if (c.type === "reply" && c.draft_id) return <Button size="sm" variant="primary" onClick={() => a.openDraft(c.draft_id!)}><Send size={12} /> Read and send</Button>;
-  if (c.type === "bill") return <Link href={c.href}><Button size="sm" variant="primary"><Receipt size={12} /> Open the bill</Button></Link>;
-  if (c.type === "check") return (
-    <div className="flex items-center gap-1.5">
-      <Link href={c.href}><Button size="sm" variant="primary">Open</Button></Link>
-      <Button size="sm" variant="ghost" onClick={() => a.later(c)}>Later</Button>
-    </div>
-  );
+/* ───────────────────────── small pieces ───────────────────────── */
+
+function Tile({ label, value, hint, late }: { label: string; value: number; hint: string; late?: boolean }) {
   return (
-    <div className="flex items-center gap-1.5">
-      <Button size="sm" variant="primary" onClick={() => a.close(c, "done")}><Check size={12} /> Done</Button>
-      <Button size="sm" variant="ghost" onClick={() => a.close(c, "dropped")} title="Not needed any more"><X size={12} /></Button>
+    <div className="rounded-xl border border-line bg-elev px-4 py-3">
+      <div className="text-[10.5px] font-semibold uppercase tracking-[0.09em] text-faint">{label}</div>
+      <div className={cn("mt-0.5 text-[26px] font-semibold tracking-tight leading-tight tnum", late && value > 0 && "text-critical")}>{value}</div>
+      <div className="text-[12px] text-muted truncate">{hint}</div>
     </div>
   );
 }
 
-function Meta({ c }: { c: DayCard }) {
-  return (
-    <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11.5px] text-faint">
-      <Link href={`/property/${c.property_id}`} className="hover:text-accent">{c.property}</Link>
-      {c.assigned_by && <Badge tone="accent"><UserRound size={10} /> From {c.assigned_by_name || "Rakesh Sir"}</Badge>}
-      {c.due && !/due/i.test(c.why_now || "") && <Badge tone={c.overdue ? "critical" : "high"}><CalendarClock size={10} /> {c.overdue ? "Was due" : "Due"} {fmtDate(c.due, "MMM d")}</Badge>}
-      {c.due && /due/i.test(c.why_now || "") && <span className="tnum">{fmtDate(c.due, "EEE d MMM")}</span>}
-      {!c.due && c.overdue && <Badge tone="critical">Late</Badge>}
-      {c.amount != null && <span className="tnum text-muted">${c.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>}
-      {c.stale && <Badge tone="high">Reply needs a second look</Badge>}
-    </div>
-  );
+function Chip({ tone, children }: { tone: "late" | "warn" | "plain"; children: React.ReactNode }) {
+  return <span className={cn("ml-1.5 inline-block align-[1px] rounded px-1.5 py-px text-[10.5px] font-semibold whitespace-nowrap",
+    tone === "late" ? "bg-critical-soft text-critical" : tone === "warn" ? "bg-high-soft text-high" : "bg-sunken text-muted")}>{children}</span>;
 }
 
-/* One of the first five: number, what it is, why today, the one button. */
-function NowCard({ c, n, a, mine }: { c: DayCard; n: number; a: ReturnType<typeof useActions>; mine: boolean }) {
-  const t = typeOf(c);
-  const [more, setMore] = React.useState(false);
-  const long = (c.detail || "").length > 170;
+/* One row of any list: a bold line, a grey line under it, one thing on the right. */
+function Row({ title, chips, where, pid, note, right }: { title: string; chips?: React.ReactNode; where?: string; pid?: string; note?: React.ReactNode; right: React.ReactNode }) {
   return (
-    <li className={cn("relative flex gap-4 px-5 py-4", n === 1 && mine && "bg-accent-soft/40")}>
-      <div className={cn("h-8 w-8 shrink-0 rounded-full grid place-items-center text-[13px] font-semibold tnum", n === 1 && mine ? "bg-accent text-white" : "bg-sunken text-muted")}>{n}</div>
-      <div className="min-w-0 flex-1">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className={cn("inline-flex items-center gap-1 h-5 px-2 rounded-full text-[11px] font-medium", t.cls)}><t.icon size={11} /> {t.label}</span>
-          {c.why_now && <span className={cn("inline-flex items-center gap-1 text-[12px]", c.overdue ? "text-critical font-medium" : "text-muted")}><Clock size={11} /> {c.why_now}</span>}
+    <li className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-t border-line px-4 py-2.5">
+      <div className="min-w-0">
+        <div className="truncate text-[13.5px] font-semibold" title={title}>{title}{chips}</div>
+        <div className="truncate text-[12px] text-muted">
+          {where && (pid ? <Link href={`/property/${pid}`} className="font-semibold text-fg hover:text-accent">{where}</Link> : <span>{where}</span>)}
+          {where && note ? " · " : ""}{note}
         </div>
-        <div className="mt-1.5 text-[14.5px] font-medium leading-snug tracking-tight">{c.title}</div>
-        {c.detail && (
-          <div className="mt-1 text-[12.5px] text-muted leading-relaxed">
-            <span className={cn(!more && long && "line-clamp-2")}>{c.detail}</span>
-            {long && <button type="button" onClick={() => setMore((v) => !v)} className="ml-1 text-accent hover:underline">{more ? "less" : "more"}</button>}
-          </div>
+      </div>
+      <div className="shrink-0">{right}</div>
+    </li>
+  );
+}
+
+const where = (c: DayCard) => ({ where: c.property_id === "_general" ? "General" : c.property, pid: c.property_id === "_general" ? undefined : c.property_id });
+
+function lateChip(c: DayCard) {
+  if (!c.overdue) return dueToday(c) ? <Chip tone="late">due today</Chip> : null;
+  const n = c.due ? daysSince(c.due) : null;
+  return <Chip tone="late">{n ? `${dayWord(n)} late` : "late"}</Chip>;
+}
+
+function ReplyRow({ c, a }: { c: DayCard; a: Actions }) {
+  const waited = daysSince(c.received);
+  const said = c.why_now && !/^(new|open for|the reply is written)/i.test(c.why_now) ? c.why_now : "";
+  const note = [waited ? `waiting ${dayWord(waited)}` : "came in today", said].filter(Boolean).join(" · ");
+  return (
+    <Row title={`${c.from_name || "Reply"} — ${c.subject || c.title}`} {...where(c)} note={note}
+      chips={<>{lateChip(c)}{c.stale && <Chip tone="warn">changed — read again</Chip>}</>}
+      right={<Button size="sm" variant={c.stale ? "secondary" : "primary"} onClick={() => c.draft_id && a.openDraft(c.draft_id)}>{c.stale ? "Read again" : <><Send size={12} /> Read and send</>}</Button>} />
+  );
+}
+
+function TodoRow({ c, a }: { c: DayCard; a: Actions }) {
+  const due = c.due && !c.overdue && !dueToday(c) ? `due ${fmtDate(c.due, "d MMM")}` : "";
+  const why = c.why_now && !/^(new|open for|waiting for your decision|due |was due)/i.test(c.why_now) ? c.why_now : "";
+  return (
+    <Row title={c.title} {...where(c)} note={[due, why].filter(Boolean).join(" · ") || undefined}
+      chips={<>{lateChip(c)}{c.assigned_by && <Chip tone="plain">from {c.assigned_by_name || "Rakesh Sir"}</Chip>}</>}
+      right={<Button size="sm" variant="secondary" onClick={() => a.done(c)}><Check size={12} /> Done</Button>} />
+  );
+}
+
+function WorkRow({ c }: { c: DayCard }) {
+  const note = [c.amount != null ? usd(c.amount) : "", c.days ? `${dayWord(c.days)} old` : ""].filter(Boolean).join(" · ");
+  return <Row title={c.title} {...where(c)} note={note || undefined} chips={c.overdue ? <Chip tone="late">late</Chip> : null}
+    right={<Link href={c.href}><Button size="sm" variant="secondary">Open <ArrowRight size={12} /></Button></Link>} />;
+}
+
+type Group = { label: string; cards: DayCard[] };
+
+/* One list: its heading, its groups, about seven rows, then "more" in place. */
+function ListCard({ title, groups, empty, row, all }: { title: string; groups: Group[]; empty: string; row: (c: DayCard) => React.ReactNode; all?: { href: string; label: string } }) {
+  const [open, setOpen] = React.useState(false);
+  const total = groups.reduce((n, g) => n + g.cards.length, 0);
+  let room = open ? Infinity : SHOW;
+  return (
+    <Card className="overflow-hidden self-start">
+      <div className="flex items-baseline justify-between px-4 pt-3 pb-2.5">
+        <h2 className="text-[15px] font-semibold tracking-tight">{title} <span className="font-medium text-faint tnum">· {total}</span></h2>
+        {all && total > 0 && <Link href={all.href} className="text-[12.5px] font-semibold text-accent hover:underline">{all.label} →</Link>}
+      </div>
+      {total === 0 && <div className="border-t border-line px-4 py-6 text-[13px] text-muted">{empty}</div>}
+      {groups.map((g) => {
+        if (!g.cards.length || room <= 0) return null;
+        const rows = g.cards.slice(0, room);
+        room -= rows.length;
+        return (
+          <React.Fragment key={g.label}>
+            <div className="border-t border-line bg-sunken/70 px-4 py-1.5 text-[10.5px] font-semibold uppercase tracking-[0.09em] text-faint">{g.label} · {g.cards.length}</div>
+            <ul>{rows.map((c) => <React.Fragment key={c.key}>{row(c)}</React.Fragment>)}</ul>
+          </React.Fragment>
+        );
+      })}
+      {total > SHOW && (
+        <button type="button" onClick={() => setOpen((v) => !v)} className="w-full border-t border-line bg-sunken/30 px-4 py-2.5 text-center text-[12.5px] font-semibold text-accent hover:bg-sunken/70">
+          {open ? "Show fewer" : `${total - SHOW} more →`}
+        </button>
+      )}
+    </Card>
+  );
+}
+
+/* Late first, then by due date, then in the order the day was planned. */
+function byUrgency(cards: DayCard[]) {
+  const t = (c: DayCard) => (c.due ? new Date(c.due).getTime() : Number.MAX_SAFE_INTEGER);
+  return cards.map((c, i) => ({ c, i })).sort((x, y) => Number(!!y.c.overdue) - Number(!!x.c.overdue) || t(x.c) - t(y.c) || x.i - y.i).map((x) => x.c);
+}
+
+function split(cards: DayCard[]) {
+  const replies = cards.filter((c) => c.type === "reply");
+  const todos = cards.filter((c) => c.type === "todo");
+  const work = cards.filter((c) => c.type === "bill" || c.type === "check");
+  const fresh = (c: DayCard) => dueToday(c) || (daysSince(c.received) ?? 99) <= 1;
+  return {
+    replies, todos, work,
+    replyGroups: [
+      { label: "Late", cards: replies.filter((c) => c.overdue) },
+      { label: "Today", cards: replies.filter((c) => !c.overdue && fresh(c)) },
+      { label: "Waiting longer", cards: replies.filter((c) => !c.overdue && !fresh(c)) },
+    ],
+    todoGroups: [
+      { label: "Decide", cards: byUrgency(todos.filter((c) => c.kind === "decision")) },
+      { label: "Do", cards: byUrgency(todos.filter((c) => c.kind !== "decision")) },
+    ],
+    workGroups: [
+      { label: "Bills", cards: work.filter((c) => c.type === "bill") },
+      { label: "Site checks", cards: work.filter((c) => c.type === "check") },
+    ],
+  };
+}
+
+/* What came in from the sites: one thin strip, not a card of its own. */
+function SiteStrip() {
+  const q = useQuery({ queryKey: ["brain", "alerts"], queryFn: () => api.get<Alerts>("/brain/alerts"), staleTime: 60_000, refetchInterval: 180_000 });
+  const a = q.data;
+  if (!a || (a.new_logs.length === 0 && a.in_review.count === 0)) return null;
+  const logs = a.new_logs.reduce((n, l) => n + l.count, 0);
+  const fresh = a.in_review.bills.filter((b) => b.new);
+  return (
+    <Card className="mt-3.5 grid sm:grid-cols-[1fr_1fr_auto] overflow-hidden">
+      <div className="px-4 py-2.5 text-[13px] min-w-0">
+        <span className="block text-[10.5px] font-semibold uppercase tracking-[0.09em] text-faint">New from the sites</span>
+        {logs === 0 ? <span className="text-muted">No new daily log since Buildertrend was last read.</span> : (
+          <span className="block truncate">{a.new_logs.map((l, i) => <React.Fragment key={l.property_id}>{i > 0 && " · "}<Link href={`/property/${l.property_id}?tab=site`} className="font-semibold hover:text-accent">{l.property}</Link> {l.count} new log{l.count === 1 ? "" : "s"}</React.Fragment>)}</span>
         )}
-        <Meta c={c} />
       </div>
-      <div className="shrink-0 self-center"><Action c={c} a={a} mine={mine} /></div>
-    </li>
-  );
-}
-
-function LaterRow({ c, a, mine }: { c: DayCard; a: ReturnType<typeof useActions>; mine: boolean }) {
-  const t = typeOf(c);
-  return (
-    <li className="flex items-center gap-3 px-5 py-2.5">
-      <span className={cn("h-6 w-6 shrink-0 rounded-md grid place-items-center", t.cls)} title={t.label}><t.icon size={12} /></span>
-      <div className="min-w-0 flex-1">
-        <div className="text-[13px] leading-snug truncate" title={c.title}>{c.title}</div>
-        <div className="text-[11.5px] text-faint truncate">{c.property}{c.why_now ? ` · ${c.why_now}` : ""}</div>
+      <div className="px-4 py-2.5 text-[13px] min-w-0 sm:border-l border-line">
+        <span className="block text-[10.5px] font-semibold uppercase tracking-[0.09em] text-faint">Bills waiting</span>
+        {a.in_review.count === 0 ? <span className="text-muted">None.</span> : (
+          <span className="block truncate"><b className="font-semibold tnum">{a.in_review.count} bill{a.in_review.count === 1 ? "" : "s"} · {usd(a.in_review.amount)}</b>
+            {fresh.length > 0 && <> · {fresh.length} new: {fresh.map((b) => `${b.property.replace(/^\d+\s+/, "")} ${b.title.toLowerCase()}`).join(", ")}</>}</span>
+        )}
       </div>
-      <div className="shrink-0"><Action c={c} a={a} mine={mine} /></div>
-    </li>
+      <div className="px-4 py-2.5 self-center sm:border-l border-line"><Link href="/bills" className="text-[12.5px] font-semibold text-accent hover:underline whitespace-nowrap">Open bills →</Link></div>
+    </Card>
   );
 }
 
-/* What a list is made of, in words: "35 to-dos · 19 replies to send". */
-function madeOf(cards: DayCard[]) {
-  const n = (t: DayCard["type"]) => cards.filter((c) => c.type === t).length;
-  const part = (k: number, one: string, many: string) => (k ? `${k} ${k === 1 ? one : many}` : "");
-  return [part(n("todo"), "to-do", "to-dos"), part(n("reply"), "reply to send", "replies to send"), part(n("bill"), "bill", "bills"), part(n("check"), "site check", "site checks")].filter(Boolean).join(" · ");
-}
+/* ───────────────────────── Today: my own work ───────────────────────── */
 
-function Fold({ label, count, children, hint, open: start = false }: { label: string; count: number; children: React.ReactNode; hint?: string; open?: boolean }) {
-  const [open, setOpen] = React.useState(start);
-  if (!count) return null;
+export function MyDay() {
+  const q = useQuery({ queryKey: ["brain", "myday"], queryFn: () => api.get<DayBoard>("/brain/myday"), placeholderData: (prev) => prev, refetchInterval: 60_000 });
+  const [draft, setDraft] = React.useState<Draft | null>(null);
+  const openDraft = async (id: string) => { try { setDraft(await api.get<Draft>(`/brain/drafts/${id}`)); } catch (e) { toast.error(errText(e)); } };
+  const a = useActions(openDraft);
+  if (q.isLoading || !q.data) return <div className="mt-5 space-y-3.5"><Skeleton className="h-20" /><Skeleton className="h-96" /></div>;
+  const d = q.data;
+  const s = split([...d.now, ...d.later]);
+  const decide = s.todoGroups[0].cards, doing = s.todoGroups[1].cards;
+  const late = [...s.replies, ...s.todos, ...s.work].filter((c) => c.overdue);
+  const soon = decide.filter((c) => c.due && (new Date(c.due).getTime() - Date.now()) / 86_400_000 <= 7).length;
+  const changed = s.replies.filter((c) => c.stale).length;
+  const lateBy = [[late.filter((c) => c.type === "reply").length, "reply", "replies"], [late.filter((c) => c.type === "todo").length, "to-do", "to-dos"],
+    [late.filter((c) => c.type === "bill" || c.type === "check").length, "bill or check", "bills and checks"]] as const;
+  const lists = [s.replies.length > 0, s.work.length > 0, true].filter(Boolean).length;
   return (
-    <div className="border-t border-line">
-      <button type="button" onClick={() => setOpen((v) => !v)} className="w-full flex items-center gap-2 px-5 h-10 text-[12.5px] text-muted hover:bg-sunken/60">
-        <ChevronDown size={13} className={cn("transition", !open && "-rotate-90")} /> {label} <span className="tnum text-faint">· {count}</span>{hint && <span className="text-faint">— {hint}</span>}
-      </button>
-      {open && children}
-    </div>
+    <>
+      <div className={cn("mt-5 grid gap-3 grid-cols-2", s.replies.length > 0 && s.work.length > 0 ? "lg:grid-cols-5" : s.replies.length > 0 || s.work.length > 0 ? "lg:grid-cols-4" : "lg:grid-cols-3")}>
+        {s.replies.length > 0 && <Tile label="Replies to send" value={s.replies.length} hint={changed ? `${changed} changed since written — read again` : "all written and ready to read"} />}
+        {s.work.length > 0 && <Tile label="Bills and site checks" value={s.work.length} hint={`${s.workGroups[0].cards.length} bill${s.workGroups[0].cards.length === 1 ? "" : "s"} · ${s.workGroups[1].cards.length} site check${s.workGroups[1].cards.length === 1 ? "" : "s"}`} />}
+        <Tile label="Decisions waiting for you" value={decide.length} hint={soon ? `${soon} due this week` : "none due this week"} />
+        <Tile label="Things to do" value={doing.length} hint={`${d.done_today.length} done today`} />
+        <Tile label="Late" value={late.length} late hint={late.length ? lateBy.filter(([n]) => n > 0).map(([n, one, many]) => `${n} ${n === 1 ? one : many}`).join(" · ") : "nothing is late"} />
+      </div>
+
+      <div className={cn("mt-3.5 grid gap-3.5", lists > 1 && "lg:grid-cols-2")}>
+        {s.replies.length > 0 && <ListCard title="Replies to send" groups={s.replyGroups} empty="No reply is waiting to be sent." all={{ href: "/replies", label: "See all replies" }} row={(c) => <ReplyRow c={c} a={a} />} />}
+        {s.work.length > 0 && <ListCard title="Bills and site checks" groups={s.workGroups} empty="No bill or site check is waiting." all={{ href: "/chase", label: "See all follow-ups" }} row={(c) => <WorkRow c={c} />} />}
+        <ListCard title="My to-dos" groups={s.todoGroups} empty="Nothing is waiting for you. New things appear here as emails, calls and bills come in." row={(c) => <TodoRow c={c} a={a} />} />
+      </div>
+
+      <SiteStrip />
+
+      <Dialog open={!!draft} onOpenChange={(o) => !o && setDraft(null)}>
+        <DialogContent wide className="max-h-[90vh] overflow-y-auto" title="Reply">
+          {draft && <DraftCard draft={draft} onChange={(next) => { if (next.status !== "ready") { setDraft(null); a.refresh(); } }} />}
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
-function DoneList({ rows }: { rows: DayBoard["done_today"] }) {
-  return (
-    <ul className="px-5 pb-3 space-y-1.5">
-      {rows.map((d, i) => (
-        <li key={i} className="flex items-start gap-2 text-[12.5px] text-muted">
-          <CheckCircle2 size={14} className="mt-0.5 text-good shrink-0" />
-          <div className="min-w-0"><span className="line-through decoration-faint/60">{d.title}</span> <span className="text-faint">· {d.property}{d.closed_by === "call" ? " · settled on a call" : d.closed_by === "brain" ? " · settled by an email" : d.closed_by === "sweep" ? " · found done in the record" : ""}</span></div>
-        </li>
-      ))}
-    </ul>
-  );
-}
+/* ───────────────────────── Team: Rakesh Sir's view of the others ───────────────────────── */
 
 /* Rakesh Sir gives someone a task. */
 function GiveTask({ people, to, onClose }: { people: DayBoard["people"]; to: string | null; onClose: () => void }) {
@@ -217,82 +311,78 @@ function GiveTask({ people, to, onClose }: { people: DayBoard["people"]; to: str
   );
 }
 
-function TeamCard({ rows, a, onGive }: { rows: TeamRow[]; a: ReturnType<typeof useActions>; onGive: (person: string | null) => void }) {
-  const [open, setOpen] = React.useState<string | null>(null);
-  const row = rows.find((r) => r.person === open);
+function PersonCard({ r, onGive, onRemind }: { r: TeamRow; onGive: () => void; onRemind: (c: DayCard) => void }) {
+  const [open, setOpen] = React.useState(false);
+  const all = [...r.now, ...r.later];
+  const n = (t: DayCard["type"]) => all.filter((c) => c.type === t).length;
+  const parts = [[n("todo"), "to-do", "to-dos"], [n("bill"), "bill", "bills"], [n("check"), "site check", "site checks"], [n("reply"), "reply", "replies"]] as const;
+  const total = r.left + r.done_today;
+  const rows = byUrgency(all).slice(0, open ? all.length : 3);
   return (
-    <Card className="mt-6 overflow-hidden">
-      <div className="flex items-center justify-between px-5 pt-4 pb-3">
-        <div><div className="text-[14px] font-semibold tracking-tight">The team</div><div className="text-xs text-muted mt-0.5">What is left for each person today. Click a name to see their list.</div></div>
-        <Button size="sm" variant="soft" onClick={() => onGive(open)}><Plus size={13} /> Give a task</Button>
+    <Card className="overflow-hidden self-start">
+      <div className="flex items-baseline justify-between px-4 pt-3">
+        <h2 className="text-[15px] font-semibold tracking-tight">{r.name}</h2>
+        {r.late > 0 ? <Chip tone="late">{r.late} late</Chip> : <Chip tone="plain">{r.left === 0 ? "all clear" : "on time"}</Chip>}
       </div>
-      <div className="grid sm:grid-cols-3 gap-3 px-5 pb-4">
-        {rows.map((r) => {
-          const total = r.left + r.done_today;
-          return (
-            <button key={r.person} type="button" onClick={() => setOpen(open === r.person ? null : r.person)}
-              className={cn("text-left rounded-xl border p-3.5 transition", open === r.person ? "border-accent bg-accent-soft/40" : "border-line hover:border-line-strong")}>
-              <div className="flex items-center justify-between gap-2">
-                <div className="text-[13.5px] font-semibold tracking-tight">{r.name}</div>
-                {r.late > 0 ? <Badge tone="critical">{r.late} late</Badge> : r.left === 0 ? <Badge tone="good">All clear</Badge> : null}
-              </div>
-              <div className="mt-2 flex items-baseline gap-1.5"><span className="text-[22px] font-semibold tnum leading-none">{r.left}</span><span className="text-xs text-muted">left{r.done_today ? ` · ${r.done_today} done today` : ""}</span></div>
-              <div className="mt-2.5 h-1.5 rounded-full bg-sunken overflow-hidden"><div className="h-full bg-good rounded-full" style={{ width: `${total ? Math.round((100 * r.done_today) / total) : 0}%` }} /></div>
-              <div className="mt-2 text-[11.5px] text-faint truncate">{r.now[0] ? `First: ${r.now[0].title}` : "Nothing waiting"}</div>
-            </button>
-          );
-        })}
+      <div className="px-4 pt-0.5 text-[12px] text-muted">
+        <b className="text-[20px] font-semibold text-fg tnum">{r.left}</b> left · {parts.filter(([k]) => k > 0).map(([k, one, many]) => `${k} ${k === 1 ? one : many}`).join(" · ") || "nothing waiting"} · {r.done_today} done today
       </div>
-      {row && (
-        <div className="border-t border-line">
-          <div className="px-5 pt-3 pb-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-faint">{row.name} — first {row.now.length}</div>
-          {row.now.length === 0 ? <div className="px-5 pb-4 text-[13px] text-muted">Nothing is waiting for {row.name}.</div> : <ul className="divide-y divide-line">{row.now.map((c) => <LaterRow key={c.key} c={c} a={a} mine={false} />)}</ul>}
-          <Fold label="After that" count={row.later.length} hint={madeOf(row.later)}><ul className="divide-y divide-line">{row.later.map((c) => <LaterRow key={c.key} c={c} a={a} mine={false} />)}</ul></Fold>
-          <Fold label="Done today" count={row.done.length}><DoneList rows={row.done} /></Fold>
-        </div>
-      )}
+      <div className="mx-4 mt-2 mb-3 h-[5px] overflow-hidden rounded-full bg-sunken"><div className="h-full rounded-full bg-accent" style={{ width: `${total ? Math.round((100 * r.done_today) / total) : 0}%` }} /></div>
+      <ul>
+        {rows.map((c) => (
+          <Row key={c.key} title={c.title} {...where(c)} chips={lateChip(c)}
+            note={c.due && !c.overdue && !dueToday(c) ? `due ${fmtDate(c.due, "d MMM")}` : c.amount != null ? usd(c.amount) : undefined}
+            right={<button type="button" onClick={() => onRemind(c)} className="text-[12px] font-semibold text-accent hover:underline">Remind</button>} />
+        ))}
+      </ul>
+      <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 border-t border-line bg-sunken/30 px-4 py-2.5 text-[12.5px] font-semibold text-accent">
+        {all.length > 3 && <button type="button" onClick={() => setOpen((v) => !v)} className="hover:underline">{open ? "Show fewer" : `See all ${all.length} →`}</button>}
+        <button type="button" onClick={onGive} className="inline-flex items-center gap-1 hover:underline"><Plus size={12} /> Give a task</button>
+      </div>
+      <div className="border-t border-line px-4 py-2 text-center text-[11.5px] text-faint">Only {r.name} can mark these done.</div>
     </Card>
   );
 }
 
-export function MyDay() {
+export function TeamPage() {
   const q = useQuery({ queryKey: ["brain", "myday"], queryFn: () => api.get<DayBoard>("/brain/myday"), placeholderData: (prev) => prev, refetchInterval: 60_000 });
-  const [draft, setDraft] = React.useState<Draft | null>(null);
   const [give, setGive] = React.useState<{ to: string | null } | null>(null);
-  const openDraft = async (id: string) => { try { setDraft(await api.get<Draft>(`/brain/drafts/${id}`)); } catch (e) { toast.error(errText(e)); } };
-  const a = useActions(openDraft);
-  if (q.isLoading || !q.data) return <Skeleton className="h-72 mt-6" />;
+  const [remind, setRemind] = React.useState<{ r: TeamRow; c: DayCard } | null>(null);
+  const [busy, setBusy] = React.useState(false);
+  if (q.isLoading || !q.data) return <div className="mt-5 grid gap-3.5 lg:grid-cols-3"><Skeleton className="h-72" /><Skeleton className="h-72" /><Skeleton className="h-72" /></div>;
   const d = q.data;
-  const done = d.done_today.length;
-  const total = d.left + done;
+  if (!d.team) return <div className="mt-6 text-[13.5px] text-muted">The team page is for Rakesh Sir. Your own work is on <Link href="/" className="text-accent hover:underline">Today</Link>.</div>;
+  const send = async () => {
+    if (!remind) return;
+    setBusy(true);
+    try {
+      const out = await api.post<{ status?: string }>("/brain/tasks/remind", { to: remind.r.person, key: remind.c.key });
+      toast.success(out.status === "duplicate" ? `${remind.r.name} was already reminded of this today.` : `Reminder sent to ${remind.r.name}.`);
+      setRemind(null);
+    } catch (e) { toast.error(errText(e)); }
+    setBusy(false);
+  };
   return (
     <>
-      <Card className="mt-6 overflow-hidden">
-        <div className="flex flex-wrap items-center justify-between gap-3 px-5 pt-4 pb-3">
-          <div>
-            <div className="text-[15px] font-semibold tracking-tight">{d.now.length ? `Do these ${d.now.length === 1 ? "one" : d.now.length} first` : "Nothing is waiting for you"}</div>
-            <div className="text-xs text-muted mt-0.5">{d.now.length ? "Start at number 1. When one is finished, the next moves up by itself." : "New things appear here as emails, calls and bills come in."}</div>
-          </div>
-          <div className="flex items-center gap-3">
-            <div className="text-right"><div className="text-[12px] text-muted"><span className="font-semibold text-fg tnum">{done}</span> done today · <span className="tnum">{d.left}</span> left</div>
-              <div className="mt-1.5 h-1.5 w-40 rounded-full bg-sunken overflow-hidden"><div className="h-full bg-good rounded-full transition-all" style={{ width: `${total ? Math.round((100 * done) / total) : 0}%` }} /></div></div>
-          </div>
-        </div>
-        {d.now.length > 0 && <ol className="divide-y divide-line border-t border-line">{d.now.map((c, i) => <NowCard key={c.key} c={c} n={i + 1} a={a} mine />)}</ol>}
-        <Fold label="Later" count={d.later.length} hint={madeOf(d.later)}><ul className="divide-y divide-line">{d.later.map((c) => <LaterRow key={c.key} c={c} a={a} mine />)}</ul></Fold>
-        <Fold label="Done today" count={done}><DoneList rows={d.done_today} /></Fold>
-      </Card>
-
-      {d.team && <TeamCard rows={d.team} a={a} onGive={(to) => setGive({ to })} />}
-
-      <Dialog open={!!draft} onOpenChange={(o) => !o && setDraft(null)}>
-        <DialogContent wide className="max-h-[90vh] overflow-y-auto" title="Reply">
-          {draft && <DraftCard draft={draft} onChange={(next) => { if (next.status !== "ready") { setDraft(null); a.refresh(); } }} />}
-        </DialogContent>
-      </Dialog>
+      <div className="mt-5 grid gap-3.5 lg:grid-cols-3">
+        {d.team.map((r) => <PersonCard key={r.person} r={r} onGive={() => setGive({ to: r.person })} onRemind={(c) => setRemind({ r, c })} />)}
+      </div>
       <Dialog open={!!give} onOpenChange={(o) => !o && setGive(null)}>
         <DialogContent title="Give a task" description="It lands on their list, and they get an email from you.">
           {give && <GiveTask people={d.people} to={give.to} onClose={() => setGive(null)} />}
+        </DialogContent>
+      </Dialog>
+      <Dialog open={!!remind} onOpenChange={(o) => !o && setRemind(null)}>
+        <DialogContent title={`Remind ${remind?.r.name || ""}`} description="An email goes to them from your mailbox, asking where this stands. Nothing on their list changes.">
+          {remind && (
+            <div className="space-y-4">
+              <div className="rounded-xl border border-line bg-sunken/50 px-3.5 py-3 text-[13.5px]"><div className="font-semibold">{remind.c.title}</div><div className="mt-0.5 text-[12px] text-muted">{remind.c.property}</div></div>
+              <div className="flex justify-end gap-2">
+                <Button variant="ghost" onClick={() => setRemind(null)}>Cancel</Button>
+                <Button variant="primary" onClick={send} disabled={busy}><Send size={13} /> {busy ? "Sending…" : "Send reminder"}</Button>
+              </div>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </>
