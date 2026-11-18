@@ -3,7 +3,7 @@
 /* Today — the one page to open in the morning, and only the person's own work is on it:
    four numbers, then replies to send and to-dos side by side, then one line on what came
    in from the sites (see components/brain/myday.tsx). The team has its own page (/team),
-   and what changed and every property are on /overview. */
+   and what changed and every property are on /overview (off the menu since 2026-11-18; the page is still there by its address). */
 
 import * as React from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";

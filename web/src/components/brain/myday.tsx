@@ -6,8 +6,9 @@
      · Replies to send  — grouped Late / Today / Waiting longer; one button, "Read and send".
      · My to-dos        — grouped Decide / Do; one button, "Done".
    (JP Sir and Manjunath Sir have "Bills and site checks" where Rakesh Sir has replies.)
-   About seven rows of each show; "more" opens the rest in place. One thin strip under
-   them says what came in from the sites.
+   About seven rows of each show; "more" opens the rest in place. A click on a row's words
+   opens that row in place: the whole line, its detail, and the email or call it came from.
+   One thin strip under them says what came in from the sites.
 
    The team is NOT here. It has its own page (TeamPage, Rakesh Sir only): he sees each
    person's list, gives a task, sends a reminder — and cannot mark another person's work
@@ -17,8 +18,9 @@ import * as React from "react";
 import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { ArrowRight, Check, Plus, Send } from "lucide-react";
+import { ArrowRight, Check, ChevronDown, Plus, Send } from "lucide-react";
 import { api } from "@/lib/api";
+import { useEvidence } from "@/components/evidence";
 import { Button, Card, Dialog, DialogContent, Input, Select, Skeleton, Textarea } from "@/components/ui";
 import { DraftCard } from "@/components/brain/draft";
 import type { Alerts } from "@/components/brain/followups";
@@ -70,18 +72,54 @@ function Chip({ tone, children }: { tone: "late" | "warn" | "plain"; children: R
     tone === "late" ? "bg-critical-soft text-critical" : tone === "warn" ? "bg-high-soft text-high" : "bg-sunken text-muted")}>{children}</span>;
 }
 
-/* One row of any list: a bold line, a grey line under it, one thing on the right. */
-function Row({ title, chips, where, pid, note, right }: { title: string; chips?: React.ReactNode; where?: string; pid?: string; note?: React.ReactNode; right: React.ReactNode }) {
+/* What a row shows when it is opened: the detail written with it, its dates, and the email or call it came from. */
+function More({ c, shown }: { c: DayCard; shown: string }) {
+  const evidence = useEvidence();
+  const facts = [
+    c.due ? (c.overdue ? `was ${dueText(c)}` : dueText(c)) : "",
+    c.assigned_by ? `given by ${c.assigned_by_name || "Rakesh Sir"}` : "",
+    c.amount != null ? usd(c.amount) : "",
+  ].filter(Boolean);
+  const sha = c.source_sha || "";
+  const nothing = !c.detail && c.title === shown && !(c.stale && c.why);
   return (
-    <li className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-t border-line px-4 py-2.5">
-      <div className="min-w-0">
-        <div className="truncate text-[13.5px] font-semibold" title={title}>{title}{chips}</div>
-        <div className="truncate text-[12px] text-muted">
-          {where && (pid ? <Link href={`/property/${pid}`} className="font-semibold text-fg hover:text-accent">{where}</Link> : <span>{where}</span>)}
-          {where && note ? " · " : ""}{note}
+    <div className="mx-4 mb-3 rounded-lg bg-sunken/60 px-3.5 py-2.5 text-[13px] leading-relaxed">
+      {c.title !== shown && <div className="font-semibold">{c.title}</div>}
+      {c.detail && <div className="whitespace-pre-line text-fg/85">{c.detail}</div>}
+      {c.stale && c.why && <div className="mt-1 text-high"><b className="font-semibold">Why read it again:</b> {c.why}</div>}
+      {nothing && <div className="text-muted">Nothing more was written with this one.</div>}
+      {(facts.length > 0 || sha) && (
+        <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-muted">
+          {facts.length > 0 && <span>{facts.join(" · ")}</span>}
+          {sha && (sha.startsWith("granola-")
+            ? <Link href={`/calls?open=${sha.slice(8)}`} className="font-semibold text-accent hover:underline">Open the call it came from →</Link>
+            : <button type="button" className="font-semibold text-accent hover:underline" onClick={() => evidence.open({ sha })}>Open the email it came from →</button>)}
         </div>
+      )}
+    </div>
+  );
+}
+
+/* One row of any list: a bold line, a grey line under it, one thing on the right.
+   A click on the words opens the row in place: the whole line, and under it what ``More`` shows. */
+function Row({ title, chips, where, pid, note, right, c }: { title: string; chips?: React.ReactNode; where?: string; pid?: string; note?: React.ReactNode; right: React.ReactNode; c?: DayCard }) {
+  const [open, setOpen] = React.useState(false);
+  return (
+    <li className="border-t border-line">
+      <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-4 py-2.5">
+        <div className="min-w-0 cursor-pointer" onClick={() => setOpen((v) => !v)}>
+          <button type="button" aria-expanded={open} title={open ? "Close" : "Click to read it in full"} className="flex w-full cursor-pointer items-start gap-1.5 text-left">
+            <span className={cn("min-w-0 flex-1 text-[13.5px] font-semibold", open ? "leading-snug" : "truncate")}>{title}{chips}</span>
+            <ChevronDown size={14} className={cn("mt-[3px] shrink-0 text-faint transition-transform", open && "rotate-180")} />
+          </button>
+          <div className={cn("text-[12px] text-muted", open ? "mt-0.5 leading-snug" : "truncate")}>
+            {where && (pid ? <Link href={`/property/${pid}`} onClick={(e) => e.stopPropagation()} className="font-semibold text-fg hover:text-accent">{where}</Link> : <span>{where}</span>)}
+            {where && note ? " · " : ""}{note}
+          </div>
+        </div>
+        <div className="shrink-0">{right}</div>
       </div>
-      <div className="shrink-0">{right}</div>
+      {open && c && <More c={c} shown={title} />}
     </li>
   );
 }
@@ -99,7 +137,7 @@ function ReplyRow({ c, a }: { c: DayCard; a: Actions }) {
   const said = c.why_now && !/^(new|open for|the reply is written)/i.test(c.why_now) ? c.why_now : "";
   const note = [waited ? `waiting ${dayWord(waited)}` : "came in today", said].filter(Boolean).join(" · ");
   return (
-    <Row title={`${c.from_name || "Reply"} — ${c.subject || c.title}`} {...where(c)} note={note}
+    <Row c={c} title={`${c.from_name || "Reply"} — ${c.subject || c.title}`} {...where(c)} note={note}
       chips={<>{lateChip(c)}{c.stale && <Chip tone="warn">changed — read again</Chip>}</>}
       right={<Button size="sm" variant={c.stale ? "secondary" : "primary"} onClick={() => c.draft_id && a.openDraft(c.draft_id)}>{c.stale ? "Read again" : <><Send size={12} /> Read and send</>}</Button>} />
   );
@@ -109,7 +147,7 @@ function TodoRow({ c, a }: { c: DayCard; a: Actions }) {
   const due = c.due && !c.overdue && !dueToday(c) ? dueText(c) : "";
   const why = c.why_now && !/^(new|open for|waiting for your decision|due |was due)/i.test(c.why_now) ? c.why_now : "";
   return (
-    <Row title={c.title} {...where(c)} note={[due, why].filter(Boolean).join(" · ") || undefined}
+    <Row c={c} title={c.title} {...where(c)} note={[due, why].filter(Boolean).join(" · ") || undefined}
       chips={<>{lateChip(c)}{c.assigned_by && <Chip tone="plain">from {c.assigned_by_name || "Rakesh Sir"}</Chip>}</>}
       right={<Button size="sm" variant="secondary" onClick={() => a.done(c)}><Check size={12} /> Done</Button>} />
   );
@@ -117,7 +155,7 @@ function TodoRow({ c, a }: { c: DayCard; a: Actions }) {
 
 function WorkRow({ c }: { c: DayCard }) {
   const note = [c.amount != null ? usd(c.amount) : "", c.days ? `${dayWord(c.days)} old` : ""].filter(Boolean).join(" · ");
-  return <Row title={c.title} {...where(c)} note={note || undefined} chips={c.overdue ? <Chip tone="late">late</Chip> : null}
+  return <Row c={c} title={c.title} {...where(c)} note={note || undefined} chips={c.overdue ? <Chip tone="late">late</Chip> : null}
     right={<Link href={c.href}><Button size="sm" variant="secondary">Open <ArrowRight size={12} /></Button></Link>} />;
 }
 
@@ -337,7 +375,7 @@ function PersonCard({ r, onGive, onRemind }: { r: TeamRow; onGive: () => void; o
       <div className="mx-4 mt-2 mb-3 h-[5px] overflow-hidden rounded-full bg-sunken"><div className="h-full rounded-full bg-accent" style={{ width: `${total ? Math.round((100 * r.done_today) / total) : 0}%` }} /></div>
       <ul>
         {rows.map((c) => (
-          <Row key={c.key} title={c.title} {...where(c)} chips={lateChip(c)}
+          <Row key={c.key} c={c} title={c.title} {...where(c)} chips={lateChip(c)}
             note={c.due && !c.overdue && !dueToday(c) ? dueText(c) : c.amount != null ? usd(c.amount) : undefined}
             right={<button type="button" onClick={() => onRemind(c)} className="text-[12px] font-semibold text-accent hover:underline">Remind</button>} />
         ))}
