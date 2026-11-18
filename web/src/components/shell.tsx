@@ -68,14 +68,20 @@ function contractorMayOpen(user: { side?: string; tools?: string[] } | null | un
 
 /* The side panel's lists. Until the stage of each deal has loaded the properties are
    shown as one plain list, so nothing jumps between headings. */
-function propertyGroups(props: { property_id: string; address: string }[], groups?: Record<string, string>) {
+function propertyGroups(props: { property_id: string; address: string }[], groups?: Record<string, string>, recent?: Record<string, string>) {
   const rows = props.map((p) => ({ id: p.property_id, label: p.address }));
+  // Construction and On market: a property something happened on in the last two days goes to the top
+  // of its list, the newest first; the others keep their usual order under them.
+  const fresh = <T extends { id: string }>(list: T[]) => {
+    const t = (r: T) => (recent?.[r.id] ? Date.parse(recent[r.id]) : 0);
+    return [...list.filter((r) => t(r) > 0).sort((a, b) => t(b) - t(a)), ...list.filter((r) => t(r) === 0)];
+  };
   const general = { key: "general", label: "Portfolio", icon: Building2, rows: [{ id: "_general", label: "General & portfolio" }] };
   if (!groups) return [{ key: "all", label: "Properties", icon: Building2, rows }, general];
   const of = (k: string) => rows.filter((r) => (groups[r.id] || "construction") === k);
   return [
-    { key: "construction", label: "Construction", icon: HardHat, rows: of("construction") },
-    { key: "market", label: "On market", icon: Tag, rows: of("market") },
+    { key: "construction", label: "Construction", icon: HardHat, rows: fresh(of("construction")) },
+    { key: "market", label: "On market", icon: Tag, rows: fresh(of("market")) },
     { key: "nonperforming", label: "Non-performing", icon: Gavel, rows: of("nonperforming") },
     { key: "sold", label: "Sold", icon: Archive, rows: of("sold") },
     general,
@@ -118,6 +124,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const rkb = !!user && user.side !== "contractor";
   const contractorHere = contractorMayOpen(user, path);
   const props = useQuery({ queryKey: ["properties"], queryFn: () => api.get<PropertySummary[]>("/properties"), enabled: rkb, staleTime: 5 * 60_000 });
+  // What happened lately: puts those properties first in their list, with a green mark until this person opens them.
+  const recent = useQuery({ queryKey: ["brain", "recent"], queryFn: () => api.get<{ recent: Record<string, string>; unseen: string[] }>("/brain/recent"), enabled: rkb, staleTime: 30_000, refetchInterval: 60_000 });
   // The frame only needs the review badge and the degrade banner — a 200-byte call, not the whole dashboard.
   const dash = useQuery({ queryKey: ["shell"], queryFn: () => api.get<{ unplaced: number; degrades: string[]; answering?: { property_id: string | null; question: string; job_id: string }[] }>("/shell"), enabled: rkb, staleTime: 5 * 60_000,
     // Poll while any answer is running so the sidebar spinner clears on its own.
@@ -165,7 +173,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           {nav.map(({ href, label, icon: Icon }) => {
             const active = href === "/" ? path === "/" : path.startsWith(href);
             return (
-              <Link key={href} href={href} className={cn("flex items-center gap-2.5 h-8 px-2.5 rounded-lg text-[12.5px] transition", active ? "bg-accent-soft text-accent font-medium" : "text-muted hover:bg-sunken hover:text-fg")}>
+              <Link key={href} href={href} className={cn("flex items-center gap-2.5 h-8 px-2.5 rounded-lg text-[12.5px] transition", active ? "bg-accent-soft text-accent font-medium" : "text-fg/80 hover:bg-sunken hover:text-fg")}>
                 <Icon size={14} /> <span className="flex-1">{label}</span>
                 {href === "/replies" && (counts.data?.drafts || 0) > 0 && <span className="text-[10px] font-semibold bg-accent text-white rounded-full px-1.5 h-4 min-w-4 grid place-items-center">{counts.data!.drafts}</span>}
                 {href === "/chase" && (counts.data?.followups || 0) > 0 && <span title="Follow-ups waiting for you" className={cn("text-[10px] font-semibold rounded-full px-1.5 h-4 min-w-4 grid place-items-center", (counts.data?.followups_high || 0) > 0 ? "bg-critical text-white" : "bg-sunken text-muted")}>{counts.data!.followups}</span>}
@@ -178,9 +186,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             on the market (with the days since it was listed), and non-performing — the ones
             RKB is collecting through lawyers or the courts. The sorting comes from the same
             reading that draws the progress bar on the property's page. */}
-        {rkb && propertyGroups(props.data || [], counts.data?.groups).map((g) => (
+        {rkb && propertyGroups(props.data || [], counts.data?.groups, recent.data?.recent).map((g) => (
           <React.Fragment key={g.key}>
-            <div className={cn("px-4 pt-4 pb-1 text-[10px] uppercase tracking-wider flex items-center gap-1.5", g.key === "nonperforming" ? "text-critical/80" : "text-faint")}>
+            <div className={cn("px-4 pt-4 pb-1 text-[10px] uppercase tracking-wider flex items-center gap-1.5",
+              g.key === "nonperforming" ? "text-critical/80" : g.key === "construction" || g.key === "market" ? "text-accent font-bold" : "text-muted font-medium")}>
               <g.icon size={11} /> <span className="flex-1">{g.label}</span> <span className="tnum normal-case tracking-normal">{g.rows.length}</span>
             </div>
             <div className="px-2 space-y-0.5">
@@ -188,8 +197,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 const active = path === `/property/${p.id}` || path.startsWith(`/property/${p.id}/`);
                 const n = counts.data?.open?.[p.id] || 0;
                 const days = g.key === "market" ? counts.data?.market_days?.[p.id] : undefined;
+                // Something happened here in the last two days and this person has not opened the property since: a green mark until they do.
+                const fresh = (g.key === "construction" || g.key === "market") && !!recent.data?.unseen?.includes(p.id);
                 return (
-                  <Link key={p.id} href={`/property/${p.id}`} className={cn("flex items-center gap-2 h-7 px-2.5 rounded-md text-[12px] transition", active ? "bg-sunken text-fg font-medium" : "text-muted hover:bg-sunken hover:text-fg")}>
+                  <Link key={p.id} href={`/property/${p.id}`} className={cn("flex items-center gap-2 h-7 px-2.5 rounded-md text-[12px] transition", active ? "bg-sunken text-fg font-medium" : fresh ? "text-fg font-medium hover:bg-sunken" : "text-fg/80 hover:bg-sunken hover:text-fg")}>
+                    {fresh && <span title="New since you last opened it" className="h-2 w-2 shrink-0 rounded-full bg-good" />}
                     <span className="truncate flex-1">{p.label}</span>
                     {days != null && <span title={`${days} day${days === 1 ? "" : "s"} on the market`} className="text-[10px] text-faint tnum shrink-0">{days}d</span>}
                     {n > 0 && <span title={`${n} item${n === 1 ? "" : "s"} need you`} className="text-[10px] font-semibold text-high bg-high-soft rounded-full px-1.5 h-4 min-w-4 grid place-items-center">{n}</span>}

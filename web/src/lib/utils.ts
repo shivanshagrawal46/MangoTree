@@ -11,6 +11,13 @@ export function fmtDate(v?: string | null, f = "MMM d, yyyy") {
   try { return format(parseISO(v), f); } catch { return String(v).slice(0, 10); }
 }
 
+/** A calendar day (a due date is kept at 00:00 UTC): shown as that day whatever the viewer's time zone.
+ *  ``fmtDate`` would show it a day early in the US. */
+export function fmtDay(v?: string | null, f = "MMM d") {
+  if (!v) return "—";
+  try { return format(parseISO(String(v).slice(0, 10)), f); } catch { return String(v).slice(0, 10); }
+}
+
 export function ago(v?: string | null) {
   if (!v) return "";
   try { return formatDistanceToNowStrict(parseISO(v), { addSuffix: true }); } catch { return ""; }

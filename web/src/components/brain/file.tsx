@@ -14,7 +14,7 @@ import { Badge, Button, Checkbox, Input, Select, Skeleton } from "@/components/u
 import { useEvidence } from "@/components/evidence";
 import { useUser } from "@/components/providers";
 import { DraftCard } from "@/components/brain/draft";
-import { ago, cn, fmtDate } from "@/lib/utils";
+import { ago, cn, fmtDate, fmtDay } from "@/lib/utils";
 import { KIND_LABEL, OWNER_LABEL, errText, type Activity, type OpenItem, type PropertyFile } from "@/lib/brain";
 
 const KIND_ICON: Record<string, LucideIcon> = { email_in: ArrowDownLeft, email_out: ArrowUpRight, call: Phone, document: FileText, said_in_chat: MessageSquareText, sweep: CheckCheck, task_given: UserRoundCheck };
@@ -47,7 +47,7 @@ export function ItemRow({ item, onDone, onDrop, showProperty }: { item: OpenItem
           {showProperty && <Badge>{item.property}</Badge>}
           <Badge tone={item.owner === "rakesh" ? "accent" : "neutral"}>{waiting ? `Waiting on ${OWNER_LABEL[item.owner] || item.owner}` : OWNER_LABEL[item.owner] || item.owner}</Badge>
           {item.kind === "decision" && <Badge tone="info">Decision</Badge>}
-          {item.due && <Badge tone={item.overdue ? "critical" : "high"}><CalendarClock size={10} /> {item.overdue ? "Was due" : "Due"} {fmtDate(item.due, "MMM d")}</Badge>}
+          {item.due && <Badge tone={item.overdue ? "critical" : "high"}><CalendarClock size={10} /> {item.overdue ? "Was due" : "Due"} {fmtDay(item.due, "MMM d")}</Badge>}
           {item.opened_at && <span>open {ago(item.opened_at).replace(" ago", "")}</span>}
           {item.source_sha && (item.source_sha.startsWith("granola-")
             ? <Link href={`/calls?open=${item.source_sha.slice(8)}`} className="text-accent hover:underline">from a call</Link>

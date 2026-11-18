@@ -244,6 +244,46 @@ def install(app: FastAPI, mongo: Mongo, jobs) -> None:
                 "market_days": {r["property_id"]: snapshot.days_on_market(r["stage"]) for r in staged if snapshot.group_of(r["stage"]) == "market"},
                 "open": {r["property_id"]: sum(1 for i in r.get("open_items") or [] if i.get("status") == "open" and i.get("owner") == user.get("user_id")) for r in rows}}
 
+    # ---------------------------------------------------------- what is new in the side panel
+    RECENT_DAYS = 2
+    #: A reading-over of the lists and a correction are the system's own housekeeping, not something that happened on the deal.
+    NOT_NEWS = ("sweep", "correction")
+
+    def _latest_by_property(since: datetime) -> Dict[str, datetime]:
+        """The newest thing that happened on each property since ``since``: an email in or out, a call,
+        a reply sent, a to-do done, a daily log from the site, a bill entered."""
+        latest: Dict[str, datetime] = {}
+
+        def take(pid: Any, at: Any) -> None:
+            if pid and isinstance(at, datetime):
+                at = at.replace(tzinfo=at.tzinfo or timezone.utc)
+                if at >= since and at <= now() and (pid not in latest or at > latest[pid]):
+                    latest[pid] = at
+        for a in store.activity.find({"at": {"$gte": since}, "kind": {"$nin": list(NOT_NEWS)}}, {"_id": 0, "property_id": 1, "at": 1}):
+            take(a.get("property_id"), a.get("at"))
+        for l in mongo.db["bt_daily_logs"].find({"date": {"$gte": since}}, {"_id": 0, "property_id": 1, "date": 1}):
+            take(l.get("property_id"), l.get("date"))
+        for b in mongo.db["bt_bills"].find({"created": {"$gte": since}}, {"_id": 0, "property_id": 1, "created": 1}):
+            take(b.get("property_id"), b.get("created"))
+        return latest
+
+    @app.get("/brain/recent")
+    def brain_recent(user=CurrentUser):
+        """For the side panel: the properties something happened on in the last two days (newest first),
+        and which of them this person has not opened since."""
+        latest = _latest_by_property(now() - timedelta(days=RECENT_DAYS))
+        seen = {s["property_id"]: s["at"].replace(tzinfo=s["at"].tzinfo or timezone.utc)
+                for s in mongo.db["property_seen"].find({"user_id": user["user_id"], "property_id": {"$in": list(latest)}}, {"_id": 0, "property_id": 1, "at": 1})}
+        return data.clean({"days": RECENT_DAYS, "recent": dict(sorted(latest.items(), key=lambda kv: kv[1], reverse=True)),
+                           "unseen": [pid for pid, at in latest.items() if pid not in seen or seen[pid] < at]})
+
+    @app.post("/brain/properties/{pid}/seen")
+    def brain_property_seen(pid: str, user=CurrentUser):
+        """This person has the property open now: its green mark in the side panel goes."""
+        pid = _file_id(pid)
+        mongo.db["property_seen"].update_one({"user_id": user["user_id"], "property_id": pid}, {"$set": {"at": now()}}, upsert=True)
+        return {"ok": True}
+
     # ---------------------------------------------------------- properties
     bt = Buildertrend(mongo)
     sitework = SiteWork(mongo, store)

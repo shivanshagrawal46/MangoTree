@@ -34,6 +34,10 @@ export default function PropertyPage() {
   // The other tabs are fetched quietly once the page is up, so opening one does not wait.
   const qc = useQueryClient();
   const general = pid === "_general";
+  // Opening a property is "seeing" it: its green mark in the side panel goes.
+  React.useEffect(() => {
+    api.post(`/brain/properties/${pid}/seen`).then(() => qc.invalidateQueries({ queryKey: ["brain", "recent"] })).catch(() => {});
+  }, [pid, qc]);
   React.useEffect(() => {
     if (general) return;
     const t = setTimeout(() => {
