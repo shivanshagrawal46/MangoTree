@@ -1,7 +1,8 @@
 """Buildertrend's Change Orders list: that each change order is stored with its approval as
 Buildertrend words it, that a bill line is tied to its change order by Buildertrend's own line id
 and never by its name, that an approved one is shown as a fact and not as a warning, and that a
-change order that is not approved (or that Buildertrend does not name) makes a person look."""
+change order that is not approved is not taken into account at all: it is not listed, nothing is
+tied to it, and a line billed under it keeps the warning."""
 from datetime import datetime, timedelta, timezone
 
 import mongomock
@@ -60,7 +61,7 @@ def test_the_list_is_stored_with_buildertrends_own_words_and_the_tie_to_bill_lin
     roof = m.db["bt_change_orders"].find_one({"co_id": 1})
     assert (roof["property_id"], roof["approved"], roof["status_text"], roof["approved_by"], roof["po_line_ids"]) == ("durham_st", True, "Approved by Wes Stone on Oct 14, 2026", "Wes Stone", [7001])
     assert m.db["bt_change_orders"].find_one({"co_id": 2})["approved"] is False
-    assert set(bc.bt.change_order_by_po_line("durham_st")) == {7001, 7002}
+    assert set(bc.bt.change_order_by_po_line("durham_st")) == {7001}                    # only an approved one is tied to anything
 
 
 def test_a_change_order_deleted_in_buildertrend_is_removed_here(monkeypatch):
@@ -80,13 +81,15 @@ def test_an_approved_change_order_is_a_fact_on_the_bill_line_not_a_warning(monke
     assert "hange order" not in bc.draw(7)["message_for_wes"]
 
 
-def test_a_change_order_that_is_not_approved_makes_a_person_look(monkeypatch):
+def test_a_pending_change_order_is_not_taken_into_account(monkeypatch):
     bc, m = _setup(monkeypatch)
     bc.bt.import_change_orders(PULL)
     _bill(m, 8, [_line("New HVAC system", 10850.0, 7002, 5000.0)])
     line = bc.draw(8)["lines"][0]
-    assert [f["kind"] for f in line["flags"]] == ["co_not_approved"] and "Pending since Nov 18, 2026" in line["flags"][0]["text"]
-    assert line["state"] == "check"
+    assert line["change_order"] is None                                    # as if Buildertrend named none: the line keeps its warning
+    assert [f["kind"] for f in line["flags"]] == ["change_order"] and "no approved change order" in line["flags"][0]["text"]
+    assert [c["number"] for c in bc.bt.change_orders_of("durham_st")] == ["0001"]
+    assert m.db["bt_change_orders"].count_documents({"property_id": "durham_st"}) == 2      # still kept as read, for the day it is approved
 
 
 def test_a_change_order_line_buildertrend_names_no_change_order_for_keeps_its_warning(monkeypatch):
@@ -103,7 +106,7 @@ def test_the_money_sheet_lists_every_change_order_with_what_is_billed_under_it(m
     _bill(m, 7, [_line("Roof Framing", 3600.0, 7001, 1800.0)])
     _bill(m, 8, [_line("Roof Framing", 3600.0, 7001, 600.0)])
     s = bc.sheet.build("durham_st")
-    assert [(c["number"], c["status"], c["billed"]) for c in s["change_orders"]] == [("0001", "Approved", 2400.0), ("0002", "Pending", 0.0)]
+    assert [(c["number"], c["status"], c["billed"]) for c in s["change_orders"]] == [("0001", "Approved", 2400.0)]      # the pending one is not listed
     row = next(r for r in s["rows"] if r["kind"] == "change_order")
     assert row["change_order"]["number"] == "0001"
 
@@ -123,5 +126,4 @@ def test_the_follow_up_for_a_change_order_goes_when_buildertrend_shows_it_approv
     bc.bt.import_change_orders(PULL)
     after = {i["title"].split(" — ")[0]: i for i in fu.build(today=today) if i["kind"] == "change_order"}
     assert set(after) == {"Change order: New HVAC system", "Change order: Extra door"}      # the approved Roof one is gone
-    assert "not approved: Pending since Nov 18, 2026" in after["Change order: New HVAC system"]["detail"]
-    assert "signed by the homeowner" in after["Change order: Extra door"]["detail"]
+    assert all("signed by the homeowner" in i["detail"] for i in after.values())           # a pending one counts as none

@@ -372,14 +372,13 @@ class BillCheck:
             elif a["kind"] == "other":
                 line["flags"].append({"kind": "outside", "text": "Not a line of the proposal. Say what it is: a contingency, a payment to the homeowner, or which line."})
             elif a["kind"] == "change_order":
-                # What Buildertrend's Change Orders list says of it. Approved: the fact is shown, with the name
-                # Buildertrend gives (the client, or the contractor's own staff). Not approved: a person looks.
+                # Approved in Buildertrend's Change Orders list: the fact is shown, with the name Buildertrend gives
+                # (the client, or the contractor's own staff). Only approved ones are taken into account, so a line
+                # whose change order is pending, declined or missing has none, and keeps the warning.
                 co = self.sheet.change_order_for(a, tie)
                 line["change_order"] = co
                 if co is None:
-                    line["flags"].append({"kind": "change_order", "text": "A change order. Buildertrend's Change Orders list names none for this line. Check that RKB agreed to it and to this price."})
-                elif not co["approved"]:
-                    line["flags"].append({"kind": "co_not_approved", "text": f"Change order {co['number']} is not approved in Buildertrend: {co['status_text']}."})
+                    line["flags"].append({"kind": "change_order", "text": "A change order. Buildertrend shows no approved change order for this line. Check that RKB agreed to it and to this price."})
             if a["kind"] != "other" and prev + this > budget + 0.01:
                 line["flags"].append({"kind": "over", "text": f"Over this line's budget by {usd(prev + this - budget)}."})
             out.append(line)
@@ -421,7 +420,7 @@ class BillCheck:
     @staticmethod
     def _state(line: Dict[str, Any], ev: Optional[Dict[str, Any]], mine: Optional[Dict[str, Any]]) -> Tuple[Optional[str], Optional[str]]:
         """(what the system suggests, what stands). A person's mark always stands over the suggestion."""
-        if any(f["kind"] in ("over", "outside", "co_not_approved") for f in line["flags"]):
+        if any(f["kind"] in ("over", "outside") for f in line["flags"]):
             suggest: Optional[str] = "check"
         elif not ev:
             suggest = None

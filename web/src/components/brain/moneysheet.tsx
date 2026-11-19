@@ -31,12 +31,12 @@ type Row = {
   includes?: { key: string; title: string; amount: number }[];      // bills a person put on this line
   change_order?: ChangeOrder | null;                                // what Buildertrend's Change Orders list says of it
 };
-/* A change order as Buildertrend's Change Orders list holds it. status_text is Buildertrend's own sentence ("Approved by … on …"). */
+/* An approved change order as Buildertrend's Change Orders list holds it (only approved ones are taken into account).
+   status_text is Buildertrend's own sentence ("Approved by … on …"). */
 type ChangeOrder = {
   co_id: number; number: string; title: string; status: string; approved: boolean; status_text: string; approved_by?: string | null;
   builder_cost: number | null; owner_price: number | null; added?: string | null; billed?: number | null; on_bills?: boolean;
 };
-const CO_TONE: Record<string, string> = { Approved: "bg-good-soft text-good", Pending: "bg-high-soft text-high", Declined: "bg-critical-soft text-critical", Expired: "bg-critical-soft text-critical" };
 type Outside = {
   key: string; source: "buildertrend" | "entry"; title: string; detail?: string; category: string | null; amount: number; approved: number; paid: number;
   in_review: number; date?: string | null; note?: string; by_name?: string | null; is_approved?: boolean; is_paid?: boolean;
@@ -255,7 +255,6 @@ export function MoneySheetTab({ pid }: { pid: string }) {
   const outList = outView === "todo" && unnamed.length > 0 ? unnamed : s.outside;
   const outShown = outAll ? outList : outList.slice(0, 12);
   const cos = s.change_orders || [];
-  const coCount = ["Approved", "Pending", "Declined", "Expired", "Recalled", "Draft"].map((k) => [k, cos.filter((c) => c.status === k).length] as const).filter(([, n]) => n > 0);
   const lineGroups: { name: string; rows: Row[] }[] = [];
   lines.forEach((r) => { const g = lineGroups[lineGroups.length - 1]; if (g && g.name === r.group) g.rows.push(r); else lineGroups.push({ name: r.group, rows: [r] }); });
 
@@ -349,7 +348,7 @@ export function MoneySheetTab({ pid }: { pid: string }) {
                           <div className="text-[11px] text-faint truncate">{r.cost_code}{r.in_review > 0 && <span className="text-sky-600"> · {amt(r.in_review)} in review</span>}{r.to_pay > 0 && <span className="text-high"> · {amt(r.to_pay)} to pay</span>}</div>
                           {r.kind === "change_order" && (r.change_order
                             ? <div className={cn("text-[11px] truncate", r.change_order.approved ? "text-good" : "text-critical")} title={`Buildertrend, change order ${r.change_order.number}: ${r.change_order.status_text}`}>{r.change_order.number} · {r.change_order.status_text}</div>
-                            : <div className="text-[11px] text-high truncate">Not in Buildertrend&apos;s Change Orders list</div>)}
+                            : <div className="text-[11px] text-high truncate">No approved change order in Buildertrend</div>)}
                           {(r.includes || []).length > 0 && (
                             <div className="mt-0.5 flex flex-wrap gap-1">
                               {r.includes!.map((x) => (
@@ -384,20 +383,20 @@ export function MoneySheetTab({ pid }: { pid: string }) {
         </div>
       </Card>
 
-      {/* ───────── the change orders, as Buildertrend lists them ───────── */}
+      {/* ───────── the approved change orders, as Buildertrend lists them ───────── */}
       {cos.length > 0 && (
         <Card className="overflow-hidden" id="change-orders">
           <div className="px-4 py-2.5 border-b border-line">
             <div className="text-[14px] font-semibold tracking-tight">Change orders</div>
             <div className="text-[11.5px] text-muted">
-              From Buildertrend&apos;s Change Orders list{s.change_orders_pulled_at ? ` · read ${ago(s.change_orders_pulled_at)}` : ""} · {coCount.map(([k, n]) => `${n} ${k.toLowerCase()}`).join(" · ")}. The name is the person Buildertrend records.
+              The approved ones in Buildertrend&apos;s Change Orders list{s.change_orders_pulled_at ? ` · read ${ago(s.change_orders_pulled_at)}` : ""}. The name is the person Buildertrend records.
             </div>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-[12.5px]">
               <thead><tr className="text-[10px] uppercase tracking-[0.08em] text-faint border-b border-line text-left">
                 <th className="pl-4 pr-2 py-2 font-semibold">No.</th><th className="px-2.5 py-2 font-semibold">Change order</th><th className={TH}>Builder cost</th>
-                <th className={TH} title="Billed so far on the lines Buildertrend ties to this change order">Billed</th><th className="px-2.5 py-2 font-semibold">Status</th><th className="px-2.5 py-2 font-semibold">In Buildertrend</th>
+                <th className={TH} title="Billed so far on the lines Buildertrend ties to this change order">Billed</th><th className="px-2.5 py-2 font-semibold">Approved</th>
               </tr></thead>
               <tbody>
                 {cos.map((c) => (
@@ -406,14 +405,14 @@ export function MoneySheetTab({ pid }: { pid: string }) {
                     <td className="px-2.5 py-1.5 max-w-[340px]"><div className="truncate font-medium" title={c.title}>{c.title || "No title"}</div></td>
                     <td className={cn(TD, "tnum", (c.builder_cost || 0) < 0 && "text-good")}>{amt(c.builder_cost)}</td>
                     <td className={cn(TD, "tnum text-muted")}>{c.billed == null ? "—" : amt(c.billed)}</td>
-                    <td className="px-2.5 py-1.5"><span className={cn("inline-flex items-center h-[19px] px-1.5 rounded text-[10.5px] font-semibold", CO_TONE[c.status] || "bg-sunken text-muted")}>{c.status}</span></td>
-                    <td className={cn("px-2.5 py-1.5 whitespace-nowrap", c.approved ? "text-fg/90" : "text-muted")}>{c.status_text}</td>
+                    <td className="px-2.5 py-1.5 whitespace-nowrap text-good">{c.status_text}</td>
                   </tr>
                 ))}
               </tbody>
               <tfoot><tr className="border-t border-line bg-sunken/50 text-[12.5px] font-semibold">
-                <td className="pl-4 pr-2 py-2" colSpan={2}>Approved · {cos.filter((c) => c.approved).length} of {cos.length}</td>
-                <td className={cn(TD, "tnum")}>{amt(cos.filter((c) => c.approved).reduce((n, c) => n + (c.builder_cost || 0), 0))}</td><td /><td /><td />
+                <td className="pl-4 pr-2 py-2" colSpan={2}>{cos.length} approved change order{cos.length === 1 ? "" : "s"}</td>
+                <td className={cn(TD, "tnum")}>{amt(cos.reduce((n, c) => n + (c.builder_cost || 0), 0))}</td>
+                <td className={cn(TD, "tnum")}>{amt(cos.reduce((n, c) => n + (c.billed || 0), 0))}</td><td />
               </tr></tfoot>
             </table>
           </div>

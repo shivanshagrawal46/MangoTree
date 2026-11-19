@@ -144,15 +144,11 @@ class FollowUps:
 
         # 5. Change orders: money outside the proposal needs its paper.
         # One that Buildertrend's Change Orders list shows approved has its paper there: no line for it
-        # (admin directive 2026-11-19). One that is not approved, or that Buildertrend names none for, stays.
+        # (admin directive 2026-11-19). Only approved ones are taken into account, so every other one stays.
         for r in s["rows"]:
-            if r["kind"] == "change_order":
-                co = r.get("change_order")
-                if co and co.get("approved"):
-                    continue
-                why = (f"Buildertrend shows change order {co['number']} as not approved: {co['status_text']}. Check before more is paid on it, then mark this done."
-                       if co else "Check that a change order signed by the homeowner is on file, then mark this done.")
-                add("change_order", "jp", f"Change order: {r['title']} — {_usd(r['change_orders'])}", why, ident=r["key"], amount=r["change_orders"], tab="sheet")
+            if r["kind"] == "change_order" and not r.get("change_order"):
+                add("change_order", "jp", f"Change order: {r['title']} — {_usd(r['change_orders'])}",
+                    "Check that a change order signed by the homeowner is on file, then mark this done.", ident=r["key"], amount=r["change_orders"], tab="sheet")
 
         # 6. The figures the interest depends on.
         figs = s["figures"]

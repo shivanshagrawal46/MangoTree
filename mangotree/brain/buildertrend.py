@@ -379,13 +379,16 @@ class Buildertrend:
         return out
 
     def change_orders_of(self, pid: str) -> List[Dict[str, Any]]:
-        """A property's change orders as Buildertrend lists them, newest first."""
-        return list(self.change_orders.find({"property_id": pid}, {"_id": 0}).sort("added", -1))
+        """A property's APPROVED change orders as Buildertrend lists them, newest first.
+        Only an approved change order is taken into account (admin directive 2026-11-19): one that
+        is pending, declined, a draft, recalled or expired is kept as it was read, so that it shows
+        the day it is approved, but no screen lists it and nothing is counted or tied to it."""
+        return list(self.change_orders.find({"property_id": pid, "approved": True}, {"_id": 0}).sort("added", -1))
 
     def change_order_by_po_line(self, pid: str) -> Dict[int, Dict[str, Any]]:
-        """purchase-order line id -> the change order Buildertrend names on that line."""
+        """purchase-order line id -> the approved change order Buildertrend names on that line."""
         out: Dict[int, Dict[str, Any]] = {}
-        for c in self.change_orders.find({"property_id": pid, "po_line_ids.0": {"$exists": True}}, {"_id": 0, "lines": 0, "description": 0, "notes": 0}):
+        for c in self.change_orders.find({"property_id": pid, "approved": True, "po_line_ids.0": {"$exists": True}}, {"_id": 0, "lines": 0, "description": 0, "notes": 0}):
             for i in c["po_line_ids"]:
                 out[int(i)] = c
         return out

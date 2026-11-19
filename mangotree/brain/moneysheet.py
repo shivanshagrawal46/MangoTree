@@ -381,7 +381,7 @@ class MoneySheet:
                 r["category"] = mine.get("category") or _guess_category(r["title"])
                 if r["category"]:
                     r["suggest"] = None
-        # Change orders: what Buildertrend's Change Orders list says about each one's approval.
+        # Change orders: the approved ones of Buildertrend's Change Orders list (only approved ones are taken into account).
         held_cos = self.bt.change_orders_of(pid)
         tie = {int(i): c for c in held_cos for i in c.get("po_line_ids") or []}
         for r in rows:
