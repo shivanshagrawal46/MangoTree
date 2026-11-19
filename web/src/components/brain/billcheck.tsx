@@ -30,6 +30,8 @@ type Line = {
   key: string; kind: "proposal" | "change_order" | "other"; group: string; title: string; cost_code: string;
   budget: number; before: number; this: number; after: number; left: number; percent_after: number | null; held: number; pay_now: number;
   flags: { kind: string; text: string }[]; evidence: Evidence | null; decision: Decision | null; suggest: "ok" | "check" | null; state: "ok" | "check" | "hold" | null;
+  /* What Buildertrend's Change Orders list says of the change order this line is billed under. */
+  change_order?: { number: string; title: string; status: string; approved: boolean; status_text: string; builder_cost: number | null } | null;
 };
 type Sum = { count: number; amount: number };
 type Seen = "installed" | "on_site" | "covered" | "similar" | "log_only" | "not_seen" | "not_a_material";
@@ -115,6 +117,7 @@ function LineRow({ l, can, onDecide, onZoom }: { l: Line; can: boolean; onDecide
         <LineBar l={l} />
       </div>
       <div className="min-w-0">
+        {l.change_order?.approved && <div className="mb-1 text-[12px] text-good leading-snug">Change order {l.change_order.number} · {l.change_order.status_text} (Buildertrend) · builder cost {usd(l.change_order.builder_cost)}</div>}
         {l.flags.map((f) => <div key={f.kind} className="mb-1 text-[12px] text-critical leading-snug">{f.text}</div>)}
         {ev ? (
           <>

@@ -212,6 +212,9 @@ class MoneySheet:
                                            "description": li.get("description") or "", "proposal": 0.0, "price": 0.0,
                                            "change_orders": (li.get("unit_cost") or 0.0) if is_co else 0.0,
                                            "billed": 0.0, "in_review": 0.0, "paid": 0.0, "held_back": 0.0, "bills": 0}
+                    # Buildertrend's own tie to its Change Orders list: the purchase-order line(s) this row is billed through.
+                    if row["kind"] == "change_order" and li.get("po_line_id") and li["po_line_id"] not in row.setdefault("po_line_ids", []):
+                        row["po_line_ids"].append(li["po_line_id"])
                 if not amount:
                     continue
                 self._put(row, amount, b, paid_here)
@@ -220,6 +223,22 @@ class MoneySheet:
             r.pop("_unit", None)
             self._derive(r)
         return rows, notes
+
+    @staticmethod
+    def change_order_brief(c: Dict[str, Any]) -> Dict[str, Any]:
+        """What the screens say about a change order: Buildertrend's own words on its approval."""
+        return {"co_id": c["co_id"], "number": c.get("number") or "", "title": c.get("title") or "", "status": c.get("status") or "",
+                "approved": bool(c.get("approved")), "status_text": c.get("status_text") or c.get("status") or "", "approved_by": c.get("approved_by"),
+                "builder_cost": c.get("builder_cost"), "owner_price": c.get("owner_price"), "added": c.get("added")}
+
+    @classmethod
+    def change_order_for(cls, row: Dict[str, Any], tie: Dict[int, Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """The change order in Buildertrend's list that a change-order row is billed under, by
+        Buildertrend's own line id. None when Buildertrend names none: the name is never used."""
+        for i in row.get("po_line_ids") or []:
+            if tie.get(i):
+                return cls.change_order_brief(tie[i])
+        return None
 
     @staticmethod
     def _derive(r: Dict[str, Any]) -> None:
@@ -362,6 +381,21 @@ class MoneySheet:
                 r["category"] = mine.get("category") or _guess_category(r["title"])
                 if r["category"]:
                     r["suggest"] = None
+        # Change orders: what Buildertrend's Change Orders list says about each one's approval.
+        held_cos = self.bt.change_orders_of(pid)
+        tie = {int(i): c for c in held_cos for i in c.get("po_line_ids") or []}
+        for r in rows:
+            if r["kind"] == "change_order":
+                r["change_order"] = self.change_order_for(r, tie)
+        # Billed so far under each change order: every bill line taken from one of its purchase-order lines
+        # (by id, across all the property's bills). None when Buildertrend ties no line to it.
+        billed_on: Dict[int, float] = {c["co_id"]: 0.0 for c in held_cos if c.get("po_line_ids")}
+        for b in bills:
+            for li in b.get("line_items") or []:
+                c = tie.get(li.get("po_line_id")) if li.get("po_line_id") else None
+                if c and li.get("amount"):
+                    billed_on[c["co_id"]] = round(billed_on[c["co_id"]] + li["amount"], 2)
+        change_orders = [{**self.change_order_brief(c), "billed": billed_on.get(c["co_id"])} for c in sorted(held_cos, key=lambda c: c.get("number") or "")]
         funding, outside = self._funding(rows, saved)
         cols = ("proposal", "price", "change_orders", "revised", "billed", "in_review", "to_pay", "paid", "held_back", "left")
         totals = {c: round(sum(r[c] for r in rows), 2) for c in cols}
@@ -395,6 +429,7 @@ class MoneySheet:
         return {
             "property_id": pid, "address": file.get("address"), "rows": rows, "totals": totals, "notes": notes, "figures": figs, "payments": payments,
             "funding": funding, "outside": outside, "categories": CATEGORIES,
+            "change_orders": change_orders, "change_orders_pulled_at": max((c.get("pulled_at") for c in held_cos if c.get("pulled_at")), default=None),
             "deal": self._deal(figs, estimate, today), "bills": bill_rows,
             "estimate": None if not estimate else {k: estimate.get(k) for k in ("locked", "locked_by", "locked_at", "pulled_at", "totals", "sent_to_budget")},
             "bills_pulled_at": max((b.get("pulled_at") for b in bills if b.get("pulled_at")), default=None),

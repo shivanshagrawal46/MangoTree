@@ -151,6 +151,11 @@ def handle(name, kind, data):
         r = bt.import_estimates(json.loads(data))
         return say("proposals: %d loaded, %d lines; with no lines: %s; job not matched: %s" % (
             r["estimates"], r["lines"], ", ".join(r["empty"]) or "none", ", ".join(str(j) for j in r["unmatched"]) or "none"))
+    if name == "changeorders.json":
+        # Buildertrend's Change Orders list with each one's approval, and the purchase-order lines that name it.
+        r = bt.import_change_orders(json.loads(data))
+        return say("change orders: %d loaded, %d approved, %d tied to bill lines by id, %d removed; job not matched: %s" % (
+            r["change_orders"], r["approved"], r["tied_to_bill_lines"], r["removed"], ", ".join(str(j) for j in r["unmatched_jobs"]) or "none"))
     if name == "details.json":
         # The lines of bills already on file, read again from each bill's own page (with the purchase-order line ids).
         r = bt.import_bill_details(json.loads(data))

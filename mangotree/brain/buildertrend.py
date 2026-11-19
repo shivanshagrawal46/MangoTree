@@ -124,8 +124,12 @@ class Buildertrend:
         self.jobs, self.logs, self.bills, self.photos, self.pulls = db["bt_jobs"], db["bt_daily_logs"], db["bt_bills"], db["bt_photos"], db["bt_pulls"]
         self.estimates = db["bt_estimates"]
         self.bill_files = db["bt_bill_files"]      # the papers attached to a bill (receipt, invoice, photos), kept on the server
+        self.change_orders = db["bt_change_orders"]  # Buildertrend's Change Orders list: each one with its approval status
 
     def ensure_indexes(self) -> None:
+        self.change_orders.create_index("co_id")
+        self.change_orders.create_index("property_id")
+        self.change_orders.create_index("po_line_ids")
         self.bill_files.create_index("file_id")
         self.bill_files.create_index("bill_id")
         self.logs.create_index([("property_id", 1), ("date", -1)])
@@ -319,6 +323,71 @@ class Buildertrend:
         if ops:
             self.estimates.bulk_write(ops, ordered=False)
         self.__dict__.pop("_views", None)
+        return out
+
+    def import_change_orders(self, d: Dict[str, Any]) -> Dict[str, Any]:
+        """Buildertrend's Change Orders list (Project Management), one record per change order,
+        replaced whole on each pull: its number, title, money, and above all its approval —
+        the status Buildertrend shows (Approved, Pending, Declined, Draft, Recalled, Expired),
+        the sentence it prints ("Approved by ... on ..."), who and when.
+
+        ``po_line_ids`` is the tie to the bills: a change order's work is billed through
+        purchase-order lines, and Buildertrend names the change order on each of those lines.
+        A bill line carries the same purchase-order line id (``po_line_id``), so a bill line is
+        tied to its change order by id, never by its name. A change order of a job in
+        ``job_ids`` that is no longer in the list was deleted in Buildertrend and is removed here."""
+        job_pid = self._job_pid()
+        at = _dt(d.get("pulled_at")) or now()
+        by_co: Dict[int, List[int]] = {}
+        for pl in d.get("po_lines") or []:
+            if pl.get("coId") and pl.get("poLineId"):
+                by_co.setdefault(int(pl["coId"]), []).append(int(pl["poLineId"]))
+        out, sent = {"change_orders": 0, "approved": 0, "tied_to_bill_lines": 0, "unmatched_jobs": [], "removed": 0}, {}
+        for c in d.get("change_orders") or []:
+            job = int(c["jobId"])
+            pid = job_pid.get(job)
+            if not pid:
+                if job not in out["unmatched_jobs"]:
+                    out["unmatched_jobs"].append(job)
+                continue
+            status = str(c.get("status") or "").strip()
+            doc = {
+                "co_id": int(c["id"]), "job_id": job, "property_id": pid, "pulled_at": at,
+                "number": str(c.get("number") or "").strip(), "title": str(c.get("title") or "").strip(),
+                "status": status, "raw_status": c.get("rawStatus"), "approved": status.lower() == "approved",
+                "status_text": str(c.get("statusText") or "").strip(), "status_at": _dt(c.get("statusAt")), "status_by": c.get("statusBy"),
+                "approved_by": c.get("approvedBy") or None, "approved_at": _dt(c.get("dateApproved")),
+                "added": _dt(c.get("added")), "created_by": c.get("createdBy"), "deadline": _dt(c.get("deadline")),
+                "client": c.get("client"), "client_viewed": _dt(c.get("clientViewed")),
+                "builder_cost": _money(c.get("builderCost")), "owner_price": _money(c.get("ownerPrice")),
+                "description": str(c.get("description") or "").strip()[:4000], "notes": str(c.get("notes") or "").strip()[:2000],
+                "po_ids": [int(x) for x in c.get("poIds") or []], "po_line_ids": sorted(set(by_co.get(int(c["id"]), []))),
+                "files": int(c.get("files") or 0),
+                "lines": [{"line_id": li.get("id"), "title": str(li.get("title") or "").strip(), "description": str(li.get("description") or "").strip()[:1500],
+                           "cost_code": str(li.get("costCode") or "").strip(), "unit_cost": _money(li.get("unitCost")), "quantity": li.get("quantity"),
+                           "builder_cost": _money((li.get("unitCost") or 0) * (li.get("quantity") or 0)) if li.get("unitCost") is not None else None,
+                           "owner_price": _money(li.get("ownerPrice"))} for li in c.get("lines") or []],
+            }
+            self.change_orders.update_one({"co_id": doc["co_id"]}, {"$set": doc}, upsert=True)
+            sent.setdefault(job, []).append(doc["co_id"])
+            out["change_orders"] += 1
+            out["approved"] += 1 if doc["approved"] else 0
+            out["tied_to_bill_lines"] += 1 if doc["po_line_ids"] else 0
+        for job in d.get("job_ids") or []:
+            if int(job) in job_pid:
+                out["removed"] += self.change_orders.delete_many({"job_id": int(job), "co_id": {"$nin": sent.get(int(job), [])}}).deleted_count
+        return out
+
+    def change_orders_of(self, pid: str) -> List[Dict[str, Any]]:
+        """A property's change orders as Buildertrend lists them, newest first."""
+        return list(self.change_orders.find({"property_id": pid}, {"_id": 0}).sort("added", -1))
+
+    def change_order_by_po_line(self, pid: str) -> Dict[int, Dict[str, Any]]:
+        """purchase-order line id -> the change order Buildertrend names on that line."""
+        out: Dict[int, Dict[str, Any]] = {}
+        for c in self.change_orders.find({"property_id": pid, "po_line_ids.0": {"$exists": True}}, {"_id": 0, "lines": 0, "description": 0, "notes": 0}):
+            for i in c["po_line_ids"]:
+                out[int(i)] = c
         return out
 
     def estimate_of(self, pid: str) -> Optional[Dict[str, Any]]:

@@ -352,6 +352,7 @@ class BillCheck:
             return self.sheet._place(r, saved)
         was = {r["key"]: r for r in rows(before)}
         after = rows(before + mine)
+        tie = self.bt.change_order_by_po_line(pid)
         out: List[Dict[str, Any]] = []
         for a in after:
             b0 = was.get(a["key"]) or {}
@@ -371,7 +372,14 @@ class BillCheck:
             elif a["kind"] == "other":
                 line["flags"].append({"kind": "outside", "text": "Not a line of the proposal. Say what it is: a contingency, a payment to the homeowner, or which line."})
             elif a["kind"] == "change_order":
-                line["flags"].append({"kind": "change_order", "text": "A change order. Check that RKB agreed to it and to this price."})
+                # What Buildertrend's Change Orders list says of it. Approved: the fact is shown, with the name
+                # Buildertrend gives (the client, or the contractor's own staff). Not approved: a person looks.
+                co = self.sheet.change_order_for(a, tie)
+                line["change_order"] = co
+                if co is None:
+                    line["flags"].append({"kind": "change_order", "text": "A change order. Buildertrend's Change Orders list names none for this line. Check that RKB agreed to it and to this price."})
+                elif not co["approved"]:
+                    line["flags"].append({"kind": "co_not_approved", "text": f"Change order {co['number']} is not approved in Buildertrend: {co['status_text']}."})
             if a["kind"] != "other" and prev + this > budget + 0.01:
                 line["flags"].append({"kind": "over", "text": f"Over this line's budget by {usd(prev + this - budget)}."})
             out.append(line)
@@ -413,7 +421,7 @@ class BillCheck:
     @staticmethod
     def _state(line: Dict[str, Any], ev: Optional[Dict[str, Any]], mine: Optional[Dict[str, Any]]) -> Tuple[Optional[str], Optional[str]]:
         """(what the system suggests, what stands). A person's mark always stands over the suggestion."""
-        if any(f["kind"] in ("over", "outside") for f in line["flags"]):
+        if any(f["kind"] in ("over", "outside", "co_not_approved") for f in line["flags"]):
             suggest: Optional[str] = "check"
         elif not ev:
             suggest = None
