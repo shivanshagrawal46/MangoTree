@@ -106,3 +106,22 @@ def test_the_money_sheet_lists_every_change_order_with_what_is_billed_under_it(m
     assert [(c["number"], c["status"], c["billed"]) for c in s["change_orders"]] == [("0001", "Approved", 2400.0), ("0002", "Pending", 0.0)]
     row = next(r for r in s["rows"] if r["kind"] == "change_order")
     assert row["change_order"]["number"] == "0001"
+
+
+def test_the_follow_up_for_a_change_order_goes_when_buildertrend_shows_it_approved(monkeypatch):
+    from mangotree.brain import followlist
+    bc, m = _setup(monkeypatch)
+    monkeypatch.setattr(followlist, "name_of", lambda pid: pid)
+    m.db["property_files"].insert_one({"property_id": "durham_st", "stage": {"stage": "construction", "recovery": False}})
+    for bill_id, line in ((7, _line("Roof Framing", 3600.0, 7001, 1800.0)), (8, _line("New HVAC system", 10850.0, 7002, 5000.0)), (9, _line("Extra door", 400.0, 7999, 400.0))):
+        m.db["bt_bills"].insert_one({"bill_id": bill_id, "job_id": 45, "property_id": "durham_st", "title": "Draw %d" % bill_id, "amount": line["amount"], "status": "Paid",
+                                     "holdback": False, "invoice_date": datetime(2026, 11, 2), "line_items": [line]})
+    fu = followlist.FollowUps(m, BrainStore(m))
+    today = datetime(2026, 11, 19, 12, tzinfo=timezone.utc)
+    before = [i for i in fu.build(today=today) if i["kind"] == "change_order"]
+    assert len(before) == 3                                                # nothing read from Buildertrend's list yet: every one asks for its paper
+    bc.bt.import_change_orders(PULL)
+    after = {i["title"].split(" — ")[0]: i for i in fu.build(today=today) if i["kind"] == "change_order"}
+    assert set(after) == {"Change order: New HVAC system", "Change order: Extra door"}      # the approved Roof one is gone
+    assert "not approved: Pending since Nov 18, 2026" in after["Change order: New HVAC system"]["detail"]
+    assert "signed by the homeowner" in after["Change order: Extra door"]["detail"]
