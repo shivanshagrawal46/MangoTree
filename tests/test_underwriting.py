@@ -169,24 +169,40 @@ def test_foreclosure_test_finished_and_closing_day():
     fc = E.assess(E21)["foreclosure"]
     assert fc["finished"]["after_selling"] == pytest.approx(235000 * 0.85 * 0.92)
     assert fc["finished"]["foreclosure_cost"] == 7500 and fc["finished"]["months"] == 5
-    assert fc["finished"]["passed"] and fc["closing_day"]["checked"] and fc["closing_day"]["passed"]
-    assert fc["closing_day"]["rkb_out"] == pytest.approx(7444.64 + 1205.0, abs=0.01)       # ROI Blocks' quarter and the recording tax
+    assert fc["finished"]["passed"] and fc["passed"]
     assert fc["finished"]["rkb_out"] == pytest.approx(89596.63, abs=0.02)                   # RKB's money in the deal, not the note and not the full builder's cost
 
 
-def test_foreclosure_test_fails_when_closing_day_money_is_not_covered_by_the_house_as_it_stands():
+def test_on_a_plain_first_lien_the_value_today_is_the_owners_risk_and_is_not_asked():
+    # RKB is first in line and pays nothing at closing but ROI Blocks' commission (rule of 2026-11-20).
+    no_value = {k: v for k, v in E21.items() if k != "as_is_value"}
+    a = E.assess(no_value)
+    cd = a["foreclosure"]["closing_day"]
+    assert cd["applies"] is False and cd["checked"] is False and cd["passed"] is None and "first in line" in cd["why"]
+    assert a["verdict"] == E.FITS and E.details_missing(no_value) == []
+    # even a house worth almost nothing today does not move the answer
+    assert E.assess(dict(E21, as_is_value=1000))["verdict"] == E.FITS
+
+
+def test_with_a_mortgage_or_cash_to_the_owner_the_value_today_is_asked_and_a_shortfall_is_rakesh_sirs_decision():
     # Paying off a $107,000 mortgage on a house worth $100,000 today: covered once finished, not on closing day.
-    f = {"state": "MD", "county": "Baltimore City", "arv": 330000, "as_is_value": 100000, "owner_kind": "individual", "builder_cost": 60000, "contingency": 6000,
-         "liens": [{"holder": "Lakeview", "balance": 107000, "status": "foreclosure", "payoff_at_closing": True}]}
+    f = dict(E21, arv=330000, as_is_value=100000, owner_kind="individual", builder_cost=60000, contingency=6000, contract_price=200000, scope="moderate",
+             has_mortgage=True, liens=[{"holder": "Lakeview", "balance": 107000, "status": "current", "payoff_at_closing": True}])
     a = E.assess(f)
-    assert a["rule_65"]["passed"] and a["foreclosure"]["finished"]["passed"]
-    assert a["foreclosure"]["closing_day"]["passed"] is False and a["verdict"] == E.DOES_NOT_FIT
-    assert any("closing day" in r for r in a["reasons"])
-
-
-def test_no_as_is_value_is_said_not_passed_silently():
-    fc = E.assess({k: v for k, v in E21.items() if k != "as_is_value"})["foreclosure"]
-    assert fc["closing_day"]["checked"] is False and fc["closing_day"]["passed"] is None and fc["passed"]
+    cd = a["foreclosure"]["closing_day"]
+    assert a["rule_65"]["passed"] and a["foreclosure"]["passed"] and cd["applies"] and cd["checked"] and cd["passed"] is False
+    assert a["verdict"] == E.EXCEPTION and "Rakesh Sir's decision" in a["headline"] and "closing day" in a["headline"]      # not a rejection
+    assert a["notices"][0].startswith("Closing day:") and not a["reasons"]
+    assert any(i["key"] == "exception" for i in C.build(f, a))                 # the line only Rakesh Sir can answer
+    # covered on closing day: no exception
+    assert E.assess(dict(f, as_is_value=260000))["verdict"] == E.FITS
+    # the value is compulsory on page 1 for such a deal, and for a mortgage that stays, and for cash to the owner
+    no_value = {k: v for k, v in f.items() if k != "as_is_value"}
+    assert any(x.startswith("Value as it stands today") for x in E.details_missing(no_value))
+    assert E.assess(no_value)["foreclosure"]["closing_day"]["checked"] is False
+    stays = dict(no_value, liens=[{"holder": "Senior Bank", "balance": 60000, "status": "current", "monthly_payment": 500}])
+    assert any(x.startswith("Value as it stands today") for x in E.details_missing(stays))
+    assert any(x.startswith("Value as it stands today") for x in E.details_missing(dict({k: v for k, v in E21.items() if k != "as_is_value"}, cash_to_owner=5000)))
 
 
 def test_senior_mortgage_grows_while_the_foreclosure_runs():

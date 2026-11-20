@@ -18,7 +18,7 @@ export type Facts = {
 };
 export type MoneyLine = { key: string; label: string; amount: number; note?: string | null };
 export type ForcedSale = { value: number; marked_down: number; after_selling: number; mortgage_ahead: number; mortgage_growth: number; holding: number; foreclosure_cost: number; months: number;
-  left_for_rkb: number; rkb_out: number; passed: boolean | null; cover: number | null; checked?: boolean; why?: string };
+  left_for_rkb: number; rkb_out: number; passed: boolean | null; cover: number | null; checked?: boolean; applies?: boolean; why?: string };
 export type Assessment = {
   verdict: "fits" | "exception" | "does_not_fit" | "incomplete"; headline: string; reasons: string[]; notices: string[]; missing: string[];
   kind: string; kind_label: string; lien_position: "first" | "second"; state: string | null; state_name: string | null; new_state?: boolean; rejected_second_mortgage?: boolean;
