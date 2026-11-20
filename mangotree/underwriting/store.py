@@ -47,8 +47,19 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+#: A contractor login that has been given the underwriting tool (Wes, ROI Blocks) works in it as an RKB
+#: login does: every file, RKB confirm (still behind RKB's password), sending a line back, editing a
+#: document, deleting a file, having a new state written. Asked for on 2026-11-20: "show him the RKB
+#: confirm as well ... give him everything that we are giving to Rakesh sir in underwriting".
+#: Two things stay with Rakesh Sir alone, for every login: the tick on a document and the signature
+#: (SIGNER). Set this to False to go back to the limited view: own files only, no confirm, no delete,
+#: no document editing.
+CONTRACTOR_FULL_ACCESS = True
+
+
 def is_contractor(user: Dict[str, Any]) -> bool:
-    return user.get("side") == "contractor"
+    """A contractor login that is LIMITED in underwriting. With CONTRACTOR_FULL_ACCESS nobody is."""
+    return user.get("side") == "contractor" and not CONTRACTOR_FULL_ACCESS
 
 
 def clean_facts(raw: Dict[str, Any]) -> Dict[str, Any]:
@@ -120,7 +131,7 @@ def log(doc: Dict[str, Any], user: Dict[str, Any], what: str, **extra: Any) -> N
 def delete(doc: Dict[str, Any], user: Dict[str, Any]) -> Dict[str, Any]:
     """Take a file off the list (RKB only). Nothing is erased: the record, its papers and
     its history stay in the database, marked with who deleted it and when."""
-    if user.get("side") == "contractor":
+    if is_contractor(user):
         raise Refused("Only RKB can delete a file.")
     doc["closed"] = True
     doc["deleted"] = {"at": _now(), "by": user.get("user_id"), "by_name": user.get("name")}

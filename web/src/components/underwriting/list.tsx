@@ -10,7 +10,6 @@ import { useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Trash2 } from "lucide-react";
-import { useUser } from "@/components/providers";
 import { Button, Dialog, DialogContent, Skeleton } from "@/components/ui";
 import { cn } from "@/lib/utils";
 import { day, errText, pct, usd, uw, type UwRow } from "@/lib/uw";
@@ -35,8 +34,7 @@ export function UnderwritingList() {
   const [address, setAddress] = React.useState("");
   const [busy, setBusy] = React.useState(false);
   const rows = q.data?.items || [];
-  const { user } = useUser();
-  const canDelete = !!user && user.side !== "contractor";      // RKB only; the server checks it again
+  const canDelete = !!q.data?.can_delete;      // the server says who may; it checks again on the delete itself
   const [asking, setAsking] = React.useState<string | null>(null);
   const [deleting, setDeleting] = React.useState(false);
   const remove = async (r: UwRow) => {

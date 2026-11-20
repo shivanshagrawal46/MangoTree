@@ -313,7 +313,29 @@ def test_optional_lines_never_hold_the_file():
     assert doc["gates"]["step"] == 4
 
 
-def test_roi_blocks_fills_and_uploads_but_never_confirms_approves_or_signs():
+def test_a_contractor_given_underwriting_works_as_rkb_does_except_the_tick_and_the_signature():
+    # "show him the RKB confirm as well ... give him everything that we are giving to Rakesh sir in underwriting" (2026-11-20)
+    assert st.CONTRACTOR_FULL_ACCESS is True and not st.is_contractor(WES)
+    s, doc = _file()
+    key = next(i["key"] for i in doc["items"] if i["status"] != C.OK and i["needs_file"] and not i["fields"] and i["key"] not in C.ONLY)
+    st.confirm(doc, key, WES, "seen at the title company")                      # the route asks for RKB's password before this
+    assert st.item_of(doc, key)["status"] == C.OK and st.item_of(doc, key)["confirmed"]["by"] == "wes"
+    st.mark(doc, key, "rejected", WES, "wrong paper")                           # he can send a line back
+    st.make_documents(doc, WES)
+    st.edit_document(doc, doc["documents"][0]["key"], doc["documents"][0]["blocks"] + [{"t": "p", "text": "Added by Wes."}], WES)
+    assert doc["documents"][0]["edited"]
+    with pytest.raises(st.Refused):
+        st.approve_document(doc, doc["documents"][0]["key"], WES)               # the tick is Rakesh Sir's alone
+    with pytest.raises(st.Refused):
+        st.sign(doc, WES)                                                       # so is the signature
+    with pytest.raises(st.Refused):
+        st.sign(doc, SHIV)                                                      # for every login, RKB's own included
+    assert st.delete(doc, WES)["deleted"]["by"] == "wes"
+    assert doc["created_side"] == "contractor"                                  # the history still says who he is
+
+
+def test_roi_blocks_fills_and_uploads_but_never_confirms_approves_or_signs(monkeypatch):
+    monkeypatch.setattr(st, "CONTRACTOR_FULL_ACCESS", False)                    # the limited view, kept behind one switch
     s, doc = _file()
     st.fill(doc, "owner_contact", {"mailing_address": "1 Main St", "phone": "555", "email": "a@b.c", "junk": "x"}, WES)
     assert st.item_of(doc, "owner_contact")["status"] == C.OK and "junk" not in st.item_of(doc, "owner_contact")["values"]
@@ -498,7 +520,8 @@ def test_facts_from_an_arv_file():
     assert f["county"] == "Baltimore City" and f["arv"] == 350000 and f["as_is_value"] == 200000 and f["sqft_above"] == 1701 and f["owner_lives_there"] is True
 
 
-def test_only_rkb_deletes_a_file_and_nothing_is_erased():
+def test_only_rkb_deletes_a_file_and_nothing_is_erased(monkeypatch):
+    monkeypatch.setattr(st, "CONTRACTOR_FULL_ACCESS", False)                    # in the limited view a contractor cannot delete
     s, doc = _file()
     s.save(doc)
     with pytest.raises(st.Refused):

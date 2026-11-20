@@ -14,7 +14,14 @@ from fastapi import File, HTTPException, Response, UploadFile
 from pydantic import BaseModel
 
 from mangotree.api import data
-from mangotree.api.auth import CurrentUwUser, is_contractor
+from mangotree.api.auth import CurrentUwUser
+
+
+def is_contractor(user: Dict[str, Any]) -> bool:
+    """A contractor login that is LIMITED in underwriting (see ``store.CONTRACTOR_FULL_ACCESS``).
+    Only a contractor that was given the underwriting tool reaches these routes at all."""
+    from . import store
+    return store.is_contractor(user)
 
 
 class FactsBody(BaseModel):
@@ -150,7 +157,7 @@ def install(app, mongo, jobs) -> None:
 
     @app.get("/uw/files")
     def uw_files(user=CurrentUwUser):
-        return data.clean({"items": store.list(created_by=user["user_id"] if is_contractor(user) else None)})
+        return data.clean({"items": store.list(created_by=user["user_id"] if is_contractor(user) else None), "can_delete": not is_contractor(user)})
 
     @app.get("/uw/arv-files")
     def uw_arv_files(user=CurrentUwUser):

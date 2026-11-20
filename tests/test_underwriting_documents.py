@@ -161,7 +161,8 @@ def test_documents_are_written_once_the_quick_check_passes_and_follow_the_file()
     assert st.document_of(doc, "note")["version"] == 2
 
 
-def test_a_correction_by_hand_is_kept_until_it_is_taken_back():
+def test_a_correction_by_hand_is_kept_until_it_is_taken_back(monkeypatch):
+    monkeypatch.setattr(st, "CONTRACTOR_FULL_ACCESS", False)                    # this test also covers the limited contractor view
     s, doc = _file()
     st.make_documents(doc, WES)
     blocks = list(st.document_of(doc, "occupancy")["blocks"])

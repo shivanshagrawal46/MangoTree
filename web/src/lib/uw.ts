@@ -72,7 +72,7 @@ export type ArvChoice = { analysis_id: string; address: string; state?: string; 
 
 export const uw = {
   config: () => api.get<UwConfig>("/uw/config"),
-  list: () => api.get<{ items: UwRow[] }>("/uw/files"),
+  list: () => api.get<{ items: UwRow[]; can_delete?: boolean }>("/uw/files"),
   arvFiles: () => api.get<{ items: ArvChoice[] }>("/uw/arv-files"),
   create: (facts: Facts, arv_analysis_id?: string) => api.post<UwFile>("/uw/files", { facts, arv_analysis_id }),
   get: (id: string) => api.get<UwFile>(`/uw/files/${id}`),

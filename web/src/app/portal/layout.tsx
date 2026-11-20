@@ -9,7 +9,7 @@ import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
-import { Calculator, LogOut } from "lucide-react";
+import { Calculator, FileCheck, LogOut } from "lucide-react";
 import { api } from "@/lib/api";
 import { useUser } from "@/components/providers";
 
@@ -35,6 +35,10 @@ export default function PortalLayout({ children }: { children: React.ReactNode }
           {/* An RKB system opened to this account (admin directive 2026-10-27: ARV for Wes). Rendered only when granted. */}
           {(user.tools || []).includes("arv") && (
             <Link href="/arv" className="h-8 px-3 rounded-lg text-xs text-muted hover:bg-sunken flex items-center gap-1.5" title="ARV & underwriting"><Calculator size={14} /> ARV & underwriting</Link>
+          )}
+          {/* Underwriting, opened to Wes on 2026-11-20. Rendered only when granted. */}
+          {(user.tools || []).includes("underwriting") && (
+            <Link href="/underwriting" className="h-8 px-3 rounded-lg text-xs text-muted hover:bg-sunken flex items-center gap-1.5" title="Underwriting"><FileCheck size={14} /> Underwriting</Link>
           )}
           <button onClick={async () => { await api.post("/auth/logout").catch(() => {}); qc.clear(); window.location.assign("/login"); }} className="h-8 px-2.5 rounded-lg text-xs text-muted hover:bg-sunken flex items-center gap-1.5" title="Sign out">
             <LogOut size={14} /> Sign out
