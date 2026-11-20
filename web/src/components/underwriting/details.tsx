@@ -26,9 +26,8 @@ function sections(cfg: UwConfig | undefined, f: Facts): { key: string; title: st
       { key: "state", label: "State (two letters)", kind: "text", required: true, list: (cfg?.states || []).map((s) => s.code) },
       { key: "county", label: "County or city", kind: "text", required: f.state === "MD", list: f.state === "MD" ? cfg?.md_counties : undefined },
       { key: "arv", label: "Value after repair (ARV)", kind: "money", required: true },
-      /* Needed only when the value today is RKB's risk: a mortgage on the house, or cash to the owner (the server decides the same way). */
-      { key: "as_is_value", label: "Value as it stands today", kind: "money", required: (f.liens || []).some((l) => Number(l.balance) > 0) || Number(f.cash_to_owner) > 0,
-        hint: "only needed with a mortgage or cash to the owner" },
+      /* Kept for the record only: no rule uses it (the foreclosure test is run at the after-repair value). */
+      { key: "as_is_value", label: "Value as it stands today", kind: "money", hint: "not needed" },
       { key: "sqft_above", label: "Square feet above grade", kind: "number", required: true, unit: "sq ft" },
       { key: "sqft_below", label: "Square feet below grade", kind: "number", required: true, unit: "sq ft", hint: "0 if none" },
       { key: "measured", label: "Has the area been measured, with a sketch?", kind: "yesno", required: true },

@@ -30,7 +30,8 @@ export type Assessment = {
     commission: { known: boolean; note: number; beside: number; retail: number; builder_cost: number; points: number; interest: number; margin: number; at_closing: number; at_sale: number; to_roi: number } };
   rule_65: { passed: boolean; ratio: number | null; limit: number; exposure: number; limit_amount: number; room: number; rkb_money: number; parts: { label: string; amount: number }[];
     rate: number; points: number; term_months: number; interest_free_months: number };
-  foreclosure: { passed: boolean; finished: ForcedSale; closing_day: ForcedSale; state_route: string; estimate: boolean; worst_case?: boolean };
+  /* One case only, at the after-repair value. The house's value today is not used. */
+  foreclosure: { passed: boolean; finished: ForcedSale; state_route: string; estimate: boolean; worst_case?: boolean };
   budget: { passed: boolean; looks: string[]; per_sqft: number | null; range: [number, number] | null; area: number; scope: string | null; contingency_share: number | null };
 };
 export type Field = { key: string; label: string; type: string };

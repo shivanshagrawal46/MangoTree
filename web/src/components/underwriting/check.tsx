@@ -28,19 +28,12 @@ function Rule({ tone, word, name, line, figure, under, working }: { tone: Tone; 
 export function CheckPage({ f, go }: PageProps) {
   const a = f.assessment, r = a.rule_65, fc = a.foreclosure, b = a.budget, m = a.money;
   const good = a.verdict === "fits", exc = a.verdict === "exception";
-  /* Closing day is asked only when the value today is RKB's risk (a mortgage on the house, or cash to the owner).
-     A shortfall there does not fail the test: it goes to Rakesh Sir. */
-  const cd = fc.closing_day, dayShort = cd.passed === false;
-  const dayLine = cd.checked
-    ? `On closing day, before any work, ${usd(Math.max(0, cd.left_for_rkb))} would be left against ${usd(cd.rkb_out)} RKB pays out${dayShort ? ": short, so Rakesh Sir decides" : ""}.`
-    : cd.applies === false ? "Closing day is not checked: RKB is first in line, so the value of the house today is the owner's risk."
-      : "Closing day is not checked yet: the value of the house as it stands is missing on page 1.";
   const rules = [
     { order: r.passed ? 2 : 0, el: <Rule key="r" tone={r.passed ? "pass" : "fail"} word={r.passed ? "Pass" : "Fail"} name="65% rule"
       line={`${usd(r.exposure)} stands against the house. The limit is ${usd(r.limit_amount)}.`} figure={pct(r.ratio)} under="of ARV, limit 65%"
       working={<>{r.parts.filter((p) => p.amount > 0).map((p) => `${p.label}: ${usd(p.amount, true)}`).join(" · ")}. The note ({usd(m.principal, true)}) is the owner&apos;s number and is not counted here.</>} /> },
-    { order: !fc.passed ? 0 : dayShort ? 1 : 2, el: <Rule key="f" tone={!fc.passed ? "fail" : dayShort ? "look" : "pass"} word={!fc.passed ? "Fail" : dayShort ? "For Rakesh Sir" : "Pass"} name="Foreclosure test"
-      line={`If it never sells, ${usd(fc.finished.left_for_rkb)} is left for RKB against ${usd(fc.finished.rkb_out)} of RKB's money in the deal. ${dayLine}`}
+    { order: fc.passed ? 2 : 0, el: <Rule key="f" tone={fc.passed ? "pass" : "fail"} word={fc.passed ? "Pass" : "Fail"} name="Foreclosure test"
+      line={`If the house never sells and is sold in a foreclosure at its after-repair value, ${usd(fc.finished.left_for_rkb)} is left for RKB against ${usd(fc.finished.rkb_out)} of RKB's money in the deal.`}
       figure={fc.finished.cover !== null ? `${fc.finished.cover.toFixed(1)}×` : ""} under="covered"
       working={<>Finished house {usd(fc.finished.value)}, less 15% = {usd(fc.finished.marked_down)}, less 8% selling cost = {usd(fc.finished.after_selling)}
         {fc.finished.mortgage_ahead > 0 && <>, less the mortgage ahead {usd(fc.finished.mortgage_ahead)} and its growth {usd(fc.finished.mortgage_growth)}</>}, less a foreclosure of about {fc.finished.months} months ({usd(fc.finished.foreclosure_cost)}).

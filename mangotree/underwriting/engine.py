@@ -7,14 +7,14 @@ The rules, as decided on 2026-11-20:
   Every mortgage that stays on the house, plus RKB's own money in the deal, may not
   pass 65% of the after-repair value. RKB's money is: 90% of the builder's cost (what
   RKB funds), 2 points on that, 14% interest on that for six months, and what RKB
-  pays ROI Blocks at closing; and, on a deal that has them, a mortgage RKB pays off,
-  missed payments it brings up to date, and cash to the owner. The NOTE is not used
+  pays ROI Blocks at closing. Those four parts and nothing else. The NOTE is not used
   here. The same 65% applies in first and in second position.
 * **The foreclosure test.** If the house never sells: the value marked down 15%,
   less 8% selling cost, less the mortgage ahead of RKB and what it grows by while
   the foreclosure runs, less that state's foreclosure cost and holding cost, must
   still cover RKB's money in the deal (the same figure as in the 65% rule). It is
-  asked twice: once for the finished house, once for closing day, before any work.
+  asked once, at the after-repair value. The case before any work is done is left
+  out: RKB has funded almost nothing then.
 * **The note** is the homeowner's number. It is what the documents and the file
   carry, and nothing else. The builder's cost is between RKB and ROI Blocks only.
 * **ROI Blocks' commission.** (the note, less the builder's cost, less RKB's 2 points
@@ -157,7 +157,11 @@ def money(facts: Dict[str, Any]) -> Dict[str, Any]:
     cash_out = round(sum(l["amount"] for l in lines), 2)
     day_one = round(roi + closing + tax["amount"] + payoffs + arrears + cash_owner, 2)
     # RKB's money in the deal: the figure the 65% rule and the foreclosure test use. Not the note.
-    at_risk = round(funded + rkb_points + rkb_interest + roi + beside, 2)
+    # Exactly four parts (2026-11-20, said three times): "90% of the builder's costs plus roi comission
+    # plus 2% points plus 14% interest for 6 months". Money RKB may pay at closing for something else
+    # (a mortgage paid off, missed payments, cash to the owner) is NOT in it: it is shown beside the
+    # tests as a notice, for Rakesh Sir to see.
+    at_risk = round(funded + rkb_points + rkb_interest + roi, 2)
     return {"lines": lines, "cash_out": cash_out, "day_one": day_one, "principal": round(principal, 2), "principal_is_contract": contract > 0,
             "staying": round(staying, 2), "liens": liens, "work": work, "contingency": contingency, "tax_sure": tax["sure"],
             "funded": round(funded, 2), "rkb_points": round(rkb_points, 2), "rkb_interest": round(rkb_interest, 2), "roi_at_closing": roi,
@@ -184,10 +188,7 @@ def rule_65(facts: Dict[str, Any], m: Dict[str, Any]) -> Dict[str, Any]:
                       {"label": "90% of the builder's cost, funded by RKB", "amount": m["funded"]},
                       {"label": "RKB's %.2g points on that" % COST_POINTS, "amount": m["rkb_points"]},
                       {"label": "Interest at %.4g%% for %d months on that" % (COST_RATE, COST_MONTHS), "amount": m["rkb_interest"]},
-                      {"label": "Paid to ROI Blocks at closing", "amount": m["roi_at_closing"]},
-                      {"label": "Mortgage paid off at closing by RKB", "amount": m["payoffs"]},
-                      {"label": "Missed mortgage payments brought up to date by RKB", "amount": m["arrears"]},
-                      {"label": "Cash to the owner", "amount": m["cash_owner"]}],
+                      {"label": "Paid to ROI Blocks at closing", "amount": m["roi_at_closing"]}],
             "rate": rate, "points": points, "term_months": term, "interest_free_months": free}
 
 
@@ -213,40 +214,19 @@ def _forced_sale(value: float, m: Dict[str, Any], st: Optional[Dict[str, Any]], 
             "mortgage_growth_guessed": guessed, "holding": round(holding, 2), "foreclosure_cost": cost, "months": months, "left_for_rkb": round(left, 2)}
 
 
-def closing_day_matters(m: Dict[str, Any]) -> bool:
-    """Is the value of the house as it stands today RKB's risk? Only when another mortgage is
-    paid before RKB, or RKB pays out more than the renovation at closing (a mortgage paid off,
-    missed payments brought up to date, cash to the owner). On a plain first lien it is not:
-    the lender is paid first and the owner takes what is left."""
-    return m["staying"] > 0 or (m["payoffs"] + m["arrears"] + m["cash_owner"]) > 0
-
-
 def foreclosure_test(facts: Dict[str, Any], m: Dict[str, Any]) -> Dict[str, Any]:
+    """One case only, at the after-repair value (2026-11-20: "foreclosure test will be in two states,
+    one without any work done, then the RKB funded is nearly zero so leave that case; take only the
+    case when construction is complete or mid way, at ARV"). The value of the house as it stands
+    today is not used."""
     st = S.state_of(facts.get("state"))
     arv = _n(facts.get("arv"))
     occupied = bool(facts.get("anyone_lives_there") or facts.get("owner_lives_there"))
     done = _forced_sale(arv, m, st, facts, occupied=occupied)
     done.update({"rkb_out": m["at_risk"], "passed": done["left_for_rkb"] >= m["at_risk"] - 0.005,
                  "cover": (done["left_for_rkb"] / m["at_risk"]) if m["at_risk"] > 0 else None})
-    as_is = _n(facts.get("as_is_value"))
-    applies = closing_day_matters(m)
-    if not applies:
-        # RKB is first in line and pays nothing at closing but ROI Blocks' commission: in a foreclosure RKB is
-        # paid before anyone, so what the house is worth today is the owner's risk, not RKB's (2026-11-20).
-        day = {"applies": False, "checked": False, "passed": None, "rkb_out": m["day_one"],
-               "why": "Not needed: RKB is first in line and pays nothing at closing beyond ROI Blocks' commission."}
-    elif as_is > 0:
-        day = _forced_sale(as_is, m, st, facts, occupied=occupied)
-        day.update({"applies": True, "rkb_out": m["day_one"], "passed": day["left_for_rkb"] >= m["day_one"] - 0.005, "checked": True,
-                    "cover": (day["left_for_rkb"] / m["day_one"]) if m["day_one"] > 0 else None})
-    else:
-        day = {"applies": True, "checked": False, "passed": None, "rkb_out": m["day_one"],
-               "why": "No value for the house as it stands today. Enter it on page 1 and this is checked."}
-    # The test itself is the finished house. A closing-day shortfall does not reject the deal:
-    # it goes to Rakesh Sir (see assess).
-    passed = done["passed"]
     fc = (st or {}).get("foreclosure") or S.WORST_CASE
-    return {"passed": bool(passed), "finished": done, "closing_day": day, "state_route": fc.get("route"), "estimate": bool(fc.get("estimate")),
+    return {"passed": bool(done["passed"]), "finished": done, "state_route": fc.get("route"), "estimate": bool(fc.get("estimate")),
             "worst_case": st is None}
 
 
@@ -328,12 +308,6 @@ def assess(facts: Dict[str, Any]) -> Dict[str, Any]:
             reasons.append("Foreclosure test: if the finished house had to be sold in a foreclosure, %s would be left for RKB against %s of RKB's money in the deal."
                            % (_money(fc["finished"]["left_for_rkb"]), _money(fc["finished"]["rkb_out"])))
         reasons.extend(pricing)
-    # Closing day: not a rejection. It is Rakesh Sir's decision, with the numbers in front of him.
-    day_short: List[str] = []
-    if not missing and fc["closing_day"].get("passed") is False:
-        cd = fc["closing_day"]
-        day_short.append("Closing day: if the deal stopped before any work, a forced sale of the house as it stands (%s) would leave %s for RKB after the mortgage ahead of it, "
-                         "against %s RKB pays out at closing." % (_money(cd["value"]), _money(max(0.0, cd["left_for_rkb"])), _money(cd["rkb_out"])))
     reasons = stops + reasons
 
     notices: List[str] = []
@@ -347,6 +321,12 @@ def assess(facts: Dict[str, Any]) -> Dict[str, Any]:
     if len(m["liens"]) >= 2 and not rejected_second:
         gone = [l["holder"] for l in m["liens"] if l["payoff_at_closing"]]
         notices.append("The house has more than one mortgage today. %s must be paid off and released at closing, so that RKB stands behind one mortgage only." % " and ".join(gone))
+    beside = m["payoffs"] + m["arrears"] + m["cash_owner"]
+    if beside > 0 and not missing:
+        parts = [("a mortgage paid off", m["payoffs"]), ("missed mortgage payments", m["arrears"]), ("cash to the owner", m["cash_owner"])]
+        notices.append("As entered, %s is also paid at closing for %s. By RKB's rule this is not counted in the 65%% rule or the foreclosure test. "
+                       "If RKB pays it, RKB's money in this deal is %s, not %s."
+                       % (_money(beside), ", ".join("%s (%s)" % (n, _money(v)) for n, v in parts if v > 0), _money(m["at_risk"] + beside), _money(m["at_risk"])))
     if m["commission"]["known"] and m["commission"]["margin"] <= 0 and not missing:
         notices.append("The note leaves no margin after the builder's cost and RKB's points and interest (%s short), so nothing is paid to ROI Blocks."
                        % _money(-m["commission"]["margin"]))
@@ -359,18 +339,16 @@ def assess(facts: Dict[str, Any]) -> Dict[str, Any]:
         verdict = INCOMPLETE
     elif reasons:
         verdict = DOES_NOT_FIT
-    elif kind == KIND_D or cured or day_short:
+    elif kind == KIND_D or cured:
         verdict = EXCEPTION
     else:
         verdict = FITS
-    notices = day_short + cured + notices
+    notices = cured + notices
     why = []
     if kind == KIND_D:
         why.append("money to the owner or a promised price is never standard")
     if cured:
         why.append("the mortgage ahead of RKB is more than 30 days late and is brought up to date at closing")
-    if day_short:
-        why.append("the house as it stands would not cover what RKB pays out on closing day")
     headline = {
         INCOMPLETE: "Still needed: " + ", ".join(missing) + ".",
         DOES_NOT_FIT: "Rejected: the house has a second mortgage." if rejected_second else "Does not fit RKB's rules as entered.",
@@ -417,9 +395,6 @@ def details_missing(facts: Dict[str, Any]) -> List[str]:
     if (f.get("state") or "").upper() == "MD":
         want(bool((f.get("county") or "").strip()), "County (Maryland recording tax is by county)")
     want(_n(f.get("arv")) > 0, "Value after repair (ARV)")
-    if closing_day_matters(money(f)):
-        # asked only when the value today is RKB's risk: a mortgage on the house, or cash to the owner
-        want(_n(f.get("as_is_value")) > 0, "Value as it stands today (needed because of the mortgage or the cash to the owner)")
     want(_n(f.get("sqft_above")) > 0, "Square feet above grade")
     want(f.get("sqft_below") not in (None, ""), "Square feet below grade (0 if none)")
     want(f.get("measured") in (True, False), "Whether the area has been measured")
