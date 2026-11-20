@@ -100,7 +100,7 @@ def install(app, mongo, jobs) -> None:
 
     def _get(fid: str, user: Dict[str, Any]) -> Dict[str, Any]:
         doc = store.get(fid)
-        if not doc or not _own(user, doc):
+        if not doc or doc.get("deleted") or not _own(user, doc):
             raise HTTPException(404, "no such file")
         return doc
 
@@ -180,6 +180,14 @@ def install(app, mongo, jobs) -> None:
     @app.get("/uw/files/{fid}")
     def uw_file(fid: str, user=CurrentUwUser):
         return _out(st.refresh(_get(fid, user)), user)
+
+    @app.delete("/uw/files/{fid}")
+    def uw_delete(fid: str, user=CurrentUwUser):
+        """Take a file off the list. RKB only. The record stays in the database, marked deleted."""
+        if is_contractor(user):
+            raise HTTPException(403, "Only RKB can delete a file.")
+        doc = store.save(_do(st.delete, _get(fid, user), user))
+        return {"ok": True, "file_id": doc["file_id"]}
 
     @app.patch("/uw/files/{fid}")
     def uw_patch(fid: str, body: FactsBody, user=CurrentUwUser):

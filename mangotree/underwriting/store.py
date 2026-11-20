@@ -117,6 +117,17 @@ def log(doc: Dict[str, Any], user: Dict[str, Any], what: str, **extra: Any) -> N
     doc["events"] = doc["events"][-400:]
 
 
+def delete(doc: Dict[str, Any], user: Dict[str, Any]) -> Dict[str, Any]:
+    """Take a file off the list (RKB only). Nothing is erased: the record, its papers and
+    its history stay in the database, marked with who deleted it and when."""
+    if user.get("side") == "contractor":
+        raise Refused("Only RKB can delete a file.")
+    doc["closed"] = True
+    doc["deleted"] = {"at": _now(), "by": user.get("user_id"), "by_name": user.get("name")}
+    log(doc, user, "Deleted the file")
+    return doc
+
+
 def refresh(doc: Dict[str, Any]) -> Dict[str, Any]:
     """Rebuild everything derived: the assessment, the list, the locks."""
     facts = doc.get("facts") or {}

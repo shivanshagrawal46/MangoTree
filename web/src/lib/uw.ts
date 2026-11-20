@@ -70,6 +70,7 @@ export const uw = {
   arvFiles: () => api.get<{ items: ArvChoice[] }>("/uw/arv-files"),
   create: (facts: Facts, arv_analysis_id?: string) => api.post<UwFile>("/uw/files", { facts, arv_analysis_id }),
   get: (id: string) => api.get<UwFile>(`/uw/files/${id}`),
+  remove: (id: string) => api.del<{ ok: boolean }>(`/uw/files/${id}`),
   setFacts: (id: string, facts: Facts) => api.patch<UwFile>(`/uw/files/${id}`, { facts }),
   fill: (id: string, key: string, values: Record<string, string | boolean>) => api.patch<UwFile>(`/uw/files/${id}/items/${key}`, { values }),
   sendBack: (id: string, key: string, reason: string) => api.patch<UwFile>(`/uw/files/${id}/items/${key}`, { status: "rejected", reason }),

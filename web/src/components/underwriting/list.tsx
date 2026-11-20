@@ -7,8 +7,10 @@
 import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { Trash2 } from "lucide-react";
+import { useUser } from "@/components/providers";
 import { Button, Dialog, DialogContent, Skeleton } from "@/components/ui";
 import { cn } from "@/lib/utils";
 import { day, errText, pct, usd, uw, type UwRow } from "@/lib/uw";
@@ -26,12 +28,22 @@ function verdict(r: UwRow): { tone: Tone; word: string } {
 
 export function UnderwritingList() {
   const router = useRouter();
+  const qc = useQueryClient();
   const q = useQuery({ queryKey: ["uw", "list"], queryFn: uw.list, staleTime: 15_000 });
   const [open, setOpen] = React.useState(false);
   const arv = useQuery({ queryKey: ["uw", "arv-files"], queryFn: uw.arvFiles, enabled: open, staleTime: 60_000 });
   const [address, setAddress] = React.useState("");
   const [busy, setBusy] = React.useState(false);
   const rows = q.data?.items || [];
+  const { user } = useUser();
+  const canDelete = !!user && user.side !== "contractor";      // RKB only; the server checks it again
+  const [asking, setAsking] = React.useState<string | null>(null);
+  const [deleting, setDeleting] = React.useState(false);
+  const remove = async (r: UwRow) => {
+    setDeleting(true);
+    try { await uw.remove(r.file_id); toast.success(`Deleted: ${r.facts.address || "the file"}`); await qc.invalidateQueries({ queryKey: ["uw", "list"] }); } catch (e) { toast.error(errText(e)); }
+    setDeleting(false); setAsking(null);
+  };
   const start = async (facts: { address?: string }, arvId?: string) => {
     setBusy(true);
     try { const f = await uw.create(facts, arvId); router.push(`/underwriting/${f.file_id}`); } catch (e) { toast.error(errText(e)); setBusy(false); }
@@ -45,10 +57,10 @@ export function UnderwritingList() {
       </div>
       <Panel className="overflow-x-auto">
         <table className="w-full border-collapse min-w-[820px]">
-          <thead><tr><th className={th}>Property</th><th className={th}>Deal</th><th className={th}>Quick check</th><th className={th}>Note</th><th className={th}>Stands on</th><th className={th}>Started by</th><th className={th}>Last change</th></tr></thead>
+          <thead><tr><th className={th}>Property</th><th className={th}>Deal</th><th className={th}>Quick check</th><th className={th}>Note</th><th className={th}>Stands on</th><th className={th}>Started by</th><th className={th}>Last change</th>{canDelete && <th className={th}><span className="sr-only">Delete</span></th>}</tr></thead>
           <tbody>
-            {q.isLoading && <tr><td colSpan={7} className="p-3"><Skeleton className="h-24" /></td></tr>}
-            {!q.isLoading && !rows.length && <tr><td colSpan={7} className="px-3 py-8 text-muted">No file yet. Start one from an ARV file with “New file”.</td></tr>}
+            {q.isLoading && <tr><td colSpan={8} className="p-3"><Skeleton className="h-24" /></td></tr>}
+            {!q.isLoading && !rows.length && <tr><td colSpan={8} className="px-3 py-8 text-muted">No file yet. Start one from an ARV file with “New file”.</td></tr>}
             {rows.map((r) => {
               const v = verdict(r), g = r.gates, s = g?.steps.find((x) => x.n === g.step);
               return (
@@ -60,6 +72,20 @@ export function UnderwritingList() {
                   <td className={td}>{g ? (g.steps[5].done ? <Status tone="done">Closed and complete</Status> : <span>{g.step} · {s?.name}</span>) : ""}</td>
                   <td className={cn(td, "text-muted")}>{r.created_by_name}{r.created_side === "contractor" ? " · ROI Blocks" : ""}</td>
                   <td className={cn(td, "text-muted whitespace-nowrap")}>{day(r.updated_at)}</td>
+                  {canDelete && (
+                    <td className={cn(td, "text-right whitespace-nowrap w-px")} onClick={(e) => e.stopPropagation()}>
+                      {asking === r.file_id ? (
+                        <span className="inline-flex items-center gap-1.5">
+                          <span className="text-critical font-medium">{r.signed?.at ? "Signed file. Delete it?" : "Delete this file?"}</span>
+                          <Button size="sm" variant="danger" className="h-7" disabled={deleting} onClick={() => remove(r)}>{deleting ? "Deleting…" : "Delete"}</Button>
+                          <Button size="sm" className="h-7" disabled={deleting} onClick={() => setAsking(null)}>Cancel</Button>
+                        </span>
+                      ) : (
+                        <button type="button" aria-label={`Delete ${r.facts.address || "this file"}`} title="Delete this file" onClick={() => setAsking(r.file_id)}
+                          className="h-7 w-7 inline-grid place-items-center rounded-md text-faint hover:text-critical hover:bg-critical-soft"><Trash2 size={14} /></button>
+                      )}
+                    </td>
+                  )}
                 </tr>
               );
             })}

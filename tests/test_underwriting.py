@@ -466,3 +466,15 @@ def test_facts_from_an_arv_file():
            "valuation": {"arv": 340700}, "rehab": {"scope": "moderate"}}
     f = st.facts_from_arv(arv)
     assert f["county"] == "Baltimore City" and f["arv"] == 350000 and f["as_is_value"] == 200000 and f["sqft_above"] == 1701 and f["owner_lives_there"] is True
+
+
+def test_only_rkb_deletes_a_file_and_nothing_is_erased():
+    s, doc = _file()
+    s.save(doc)
+    with pytest.raises(st.Refused):
+        st.delete(doc, WES)
+    assert [r["file_id"] for r in s.list()] == [doc["file_id"]]
+    s.save(st.delete(doc, SHIV))
+    assert s.list() == []                                                 # off the list
+    kept = s.get(doc["file_id"])                                          # still in the database, with who and when
+    assert kept["deleted"]["by"] == "shivansh" and kept["facts"]["address"] == E21["address"] and kept["items"] and kept["events"][-1]["what"] == "Deleted the file"
