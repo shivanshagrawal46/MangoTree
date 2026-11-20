@@ -130,7 +130,7 @@ def public_user(doc: Dict[str, Any]) -> Dict[str, Any]:
 
 #: Systems a contractor account may be granted, one by one. Nothing else is
 #: ever reachable from a contractor session, whatever the browser asks for.
-CONTRACTOR_TOOLS = ("arv",)
+CONTRACTOR_TOOLS = ("arv", "underwriting")
 
 
 def ensure_contractor(mongo: Mongo, *, user_id: str, login_name: str, name: str, full_name: str, org: str, org_name: str,
@@ -234,6 +234,16 @@ def current_arv_user(request: Request) -> Dict[str, Any]:
     return user
 
 
+def current_uw_user(request: Request) -> Dict[str, Any]:
+    """An RKB user, or a contractor account that has been granted the underwriting
+    tool (2026-11-20). The underwriting routes scope a contractor to the files it
+    started, and never let it mark an item done, waive one or sign."""
+    user = current_session(request)
+    if is_contractor(user) and "underwriting" not in (user.get("tools") or []):
+        raise HTTPException(403, "underwriting has not been opened to this account")
+    return user
+
+
 def change_password(mongo: Mongo, user_id: str, old: str, new: str) -> None:
     doc = mongo.db["users"].find_one({"user_id": user_id})
     if not doc or not verify_password(old, doc.get("password_hash", "")):
@@ -248,3 +258,4 @@ CurrentUser = Depends(current_user)
 AnySession = Depends(current_session)
 CurrentContractor = Depends(current_contractor)
 CurrentArvUser = Depends(current_arv_user)
+CurrentUwUser = Depends(current_uw_user)

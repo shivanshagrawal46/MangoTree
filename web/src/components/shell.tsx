@@ -6,7 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Command } from "cmdk";
 import { motion } from "framer-motion";
-import { Gavel, Tag, LayoutGrid, Building2, CheckSquare, Inbox, Users, MessageSquare, Search, LogOut, Moon, Sun, AlertTriangle, ChevronRight, HardHat, ClipboardList, BellRing, FileBadge, Calculator, Archive, ChevronDown, Reply, Receipt, Handshake, Phone } from "lucide-react";
+import { Gavel, Tag, LayoutGrid, Building2, CheckSquare, Inbox, Users, MessageSquare, Search, LogOut, Moon, Sun, AlertTriangle, ChevronRight, HardHat, ClipboardList, BellRing, FileBadge, Calculator, Archive, ChevronDown, Reply, Receipt, Handshake, Phone, FileCheck } from "lucide-react";
 import { api } from "@/lib/api";
 import { useUser } from "@/components/providers";
 import { Kbd } from "@/components/ui";
@@ -28,6 +28,7 @@ const NAV = [
   { href: "/brokers", label: "Brokers", icon: Handshake },
   { href: "/ask", label: "Ask", icon: MessageSquare },
   { href: "/arv", label: "ARV & underwriting", icon: Calculator },
+  { href: "/underwriting", label: "Underwriting", icon: FileCheck },
   { href: "/sold", label: "Sold deals", icon: Archive },
 ];
 const OLDER_NAV = [
@@ -53,7 +54,7 @@ const TEAM_OLDER_NAV = [
 
 /** The tools a contractor account may be let into, and the one path each opens.
  *  A contractor session anywhere else under the RKB shell is sent to /portal. */
-const CONTRACTOR_TOOL_PATHS: Record<string, string> = { arv: "/arv" };
+const CONTRACTOR_TOOL_PATHS: Record<string, string> = { arv: "/arv", underwriting: "/underwriting" };
 
 function contractorMayOpen(user: { side?: string; tools?: string[] } | null | undefined, path: string): boolean {
   if (!user || user.side !== "contractor") return false;
@@ -89,7 +90,7 @@ function propertyGroups(props: { property_id: string; address: string }[], group
 function ContractorFrame({ children, path }: { children: React.ReactNode; path: string }) {
   const { user } = useUser();
   const qc = useQueryClient();
-  const tabs = [{ href: "/portal", label: "Next steps" }, ...(user?.tools || []).filter((t) => CONTRACTOR_TOOL_PATHS[t]).map((t) => ({ href: CONTRACTOR_TOOL_PATHS[t], label: t === "arv" ? "ARV & underwriting" : t }))];
+  const tabs = [{ href: "/portal", label: "Next steps" }, ...(user?.tools || []).filter((t) => CONTRACTOR_TOOL_PATHS[t]).map((t) => ({ href: CONTRACTOR_TOOL_PATHS[t], label: t === "arv" ? "ARV & underwriting" : t === "underwriting" ? "Underwriting" : t }))];
   return (
     <div className="min-h-screen bg-bg">
       <header className="sticky top-0 z-20 border-b border-line bg-elev/90 backdrop-blur">
