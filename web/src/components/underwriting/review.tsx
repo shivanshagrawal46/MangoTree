@@ -36,13 +36,14 @@ export function ReviewPage({ f, go, run }: PageProps) {
           <KV k="Property">{f.facts.address}</KV>
           <KV k="Borrower">{f.facts.owner_name}{f.facts.owner_kind === "llc" && f.facts.guarantor_name ? `, guaranteed by ${f.facts.guarantor_name}` : ""}</KV>
           <KV k="Note to RKB (the contract price)">{usd(a.money.principal, true)}</KV>
-          <KV k="RKB pays out in all">{usd(a.money.cash_out, true)}</KV>
-          <KV k="Rate, points, term">{r.rate}% · {r.points} points · {r.term_months} months{r.interest_free_months ? ` · ${r.interest_free_months} interest-free` : ""}</KV>
+          <KV k="RKB's own money in the deal">{usd(a.money.at_risk, true)}<span className="font-normal text-muted">90% of the builder&apos;s cost, RKB&apos;s points and six months&apos; interest on it, ROI Blocks at closing</span></KV>
+          <KV k="ROI Blocks is paid">{usd(a.money.commission.at_closing, true)} at closing<span className="font-normal text-muted">and {usd(a.money.commission.at_sale, true)} at the sale</span></KV>
+          <KV k="The note's rate, points, term">{r.rate}% · {r.points} points · {r.term_months} months{r.interest_free_months ? ` · ${r.interest_free_months} interest-free` : ""}</KV>
           <KV k="Security">{a.lien_position === "second" ? "Second lien, behind one mortgage" : "First lien"}, {a.state_name}</KV>
         </Panel>
         <Panel className="overflow-hidden"><SectionHead title="The three rules" right={<button type="button" className={linkBtn} onClick={() => go(2)}>Open</button>} />
           <KV k="65% rule"><Status tone={r.passed ? "pass" : "fail"} /><span className="font-normal">{pct(r.ratio)} of ARV; {usd(r.exposure)} against a limit of {usd(r.limit_amount)}</span></KV>
-          <KV k="Foreclosure test"><Status tone={fc.passed ? "pass" : "fail"} /><span className="font-normal">{usd(fc.finished.left_for_rkb)} left for RKB against {usd(fc.finished.rkb_out)} paid out</span></KV>
+          <KV k="Foreclosure test"><Status tone={fc.passed ? "pass" : "fail"} /><span className="font-normal">{usd(fc.finished.left_for_rkb)} left for RKB against {usd(fc.finished.rkb_out)} of RKB&apos;s money</span></KV>
           <KV k="Budget test"><Status tone={b.passed ? "pass" : "look"}>{b.passed ? "Pass" : "Looked at by Manju Sir"}</Status><span className="font-normal">{b.per_sqft !== null ? `$${Math.round(b.per_sqft)} a square foot` : ""}{b.range ? `; usual $${b.range[0]} to $${b.range[1]}` : ""}</span></KV>
         </Panel>
         <Panel className="overflow-hidden"><SectionHead title={`Resting on RKB's word${word.length ? ` · ${word.length}` : ""}`} right={<button type="button" className={linkBtn} onClick={() => go(3)}>Open the file</button>} />

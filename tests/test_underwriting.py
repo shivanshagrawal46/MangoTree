@@ -35,8 +35,13 @@ def test_21st_st_matches_the_commitment_letter():
     a = E.assess(E21)
     r = a["rule_65"]
     assert round(a["money"]["principal"] / 235000 * 100, 1) == 51.2
-    assert round(r["ratio"] * 100, 1) == 61.4
-    assert r["interest"] == pytest.approx(21654.87, abs=0.01) and r["fee"] == pytest.approx(2406.10, abs=0.01)
+    # The 65% does not count the note. It counts RKB's own money: 90% of the builder's cost, 2 points and
+    # 14% for six months on that, and what RKB pays ROI Blocks at closing (rule of 2026-11-20).
+    m = a["money"]
+    assert m["funded"] == pytest.approx(83743.10 * 0.9, abs=0.01) and m["rkb_points"] == pytest.approx(1507.38, abs=0.01) and m["rkb_interest"] == pytest.approx(5275.82, abs=0.01)
+    assert m["roi_at_closing"] == pytest.approx((120304.86 - 83743.10 - 1507.38 - 5275.82) / 4, abs=0.01) == pytest.approx(7444.64, abs=0.01)
+    assert m["commission"]["at_sale"] == m["roi_at_closing"] and m["commission"]["margin"] == pytest.approx(29778.56, abs=0.02)
+    assert r["exposure"] == pytest.approx(75368.79 + 1507.38 + 5275.82 + 7444.64, abs=0.02) and round(r["ratio"] * 100, 1) == 38.1
     assert r["passed"] and a["kind"] == "A" and a["lien_position"] == "first"
     lines = {l["key"]: l["amount"] for l in a["money"]["lines"]}
     assert lines["draws"] == pytest.approx(75368.79, abs=0.01) and lines["holdback"] == pytest.approx(8374.31, abs=0.01)
@@ -48,20 +53,41 @@ def test_a_mortgage_that_stays_counts_and_the_same_65_applies_in_second_position
     a = E.assess(f)
     assert a["kind"] == "B" and a["lien_position"] == "second"
     assert a["rule_65"]["limit"] == 0.65
-    assert a["rule_65"]["exposure"] > a["money"]["principal"] + 60000
+    assert a["rule_65"]["exposure"] == pytest.approx(60000 + a["money"]["at_risk"], abs=0.01)      # the mortgage that stays still counts
     over = dict(f, liens=[{"holder": "Senior Bank", "balance": 90000, "status": "current"}])
     b = E.assess(over)
-    assert b["verdict"] == E.DOES_NOT_FIT and "65% rule" in b["reasons"][0]
-    # the most the note can be is what brings the total back to exactly 65%
-    most = b["rule_65"]["most_note"]
-    c = E.rule_65(dict(over, contract_price=most), E.money(dict(over, contract_price=most)))
-    assert c["exposure"] == pytest.approx(235000 * 0.65, abs=1.0)
+    assert b["verdict"] == E.DOES_NOT_FIT and "65% rule" in b["reasons"][0] and "over by" in b["reasons"][0]
+    assert b["rule_65"]["room"] < 0 and b["rule_65"]["exposure"] == pytest.approx(90000 + b["money"]["at_risk"], abs=0.01)
 
 
-def test_interest_free_months_and_points_inside_the_note():
-    f = dict(E21, interest_free_months=6, first_six_inside_note=True)
-    r = E.assess(f)["rule_65"]
-    assert r["fee"] == 0 and r["interest"] == pytest.approx(120304.86 * 0.18 * 6 / 12, abs=0.01)
+def test_the_note_and_its_terms_do_not_move_the_65_rule():
+    base = E.assess(E21)["rule_65"]
+    other_terms = E.assess(dict(E21, rate=14, points=3, term_months=9, interest_free_months=6, first_six_inside_note=True))["rule_65"]
+    assert other_terms["exposure"] == base["exposure"]
+    # a bigger note moves it only through ROI Blocks' quarter of the bigger margin
+    bigger = E.assess(dict(E21, contract_price=130304.86))
+    assert bigger["rule_65"]["exposure"] == pytest.approx(base["exposure"] + 10000 / 4, abs=0.02)
+    # what RKB funds is what moves it
+    dearer = E.assess(dict(E21, builder_cost=93743.10))["rule_65"]
+    assert dearer["exposure"] > base["exposure"]
+
+
+def test_roi_blocks_commission_a_quarter_at_closing_and_a_quarter_at_the_sale():
+    c = E.assess(E21)["money"]["commission"]
+    assert c["retail"] == 120304.86 and c["at_closing"] == c["at_sale"] == pytest.approx(7444.64, abs=0.01) and c["to_roi"] == pytest.approx(14889.28, abs=0.02)
+    # money in the note that is not the renovation (a mortgage paid off, missed payments) is not margin
+    liens = [{"holder": "SPS", "balance": 108023.17, "status": "current", "arrears": 5945.32, "monthly_payment": 1486.33},
+             {"holder": "Aqua", "balance": 47699.26, "status": "current", "payoff_at_closing": True}]
+    m = E.money(dict(E21, builder_cost=50483.40, contract_price=113625.66, has_mortgage=True, liens=liens))
+    assert m["commission"]["retail"] == pytest.approx(59981.08, abs=0.01) and m["roi_at_closing"] == pytest.approx((59981.08 - 50483.40 - 908.70 - 3180.45) / 4, abs=0.01)
+    # RKB's money in the deal counts the payoff and the missed payments it brings up to date
+    assert m["at_risk"] == pytest.approx(50483.40 * 0.9 * 1.09 + m["roi_at_closing"] + 47699.26 + 5945.32, abs=0.02)
+    # a note that leaves no margin pays ROI Blocks nothing, and says so
+    thin = E.assess(dict(E21, contract_price=90000, contingency=0))
+    assert thin["money"]["roi_at_closing"] == 0 and any("nothing is paid to ROI Blocks" in n for n in thin["notices"])
+    # the amount is worked out, never taken from what somebody typed
+    assert E.money(dict(E21, roi_at_closing=99999))["roi_at_closing"] == pytest.approx(7444.64, abs=0.01)
+    assert "Amount paid to ROI Blocks at closing (0 if none)" not in E.details_missing({k: v for k, v in E21.items() if k != "roi_at_closing"})
 
 
 # ------------------------------------------------------------------ kinds and stops
@@ -144,7 +170,8 @@ def test_foreclosure_test_finished_and_closing_day():
     assert fc["finished"]["after_selling"] == pytest.approx(235000 * 0.85 * 0.92)
     assert fc["finished"]["foreclosure_cost"] == 7500 and fc["finished"]["months"] == 5
     assert fc["finished"]["passed"] and fc["closing_day"]["checked"] and fc["closing_day"]["passed"]
-    assert fc["closing_day"]["rkb_out"] == pytest.approx(6813.12 + 1205.0)
+    assert fc["closing_day"]["rkb_out"] == pytest.approx(7444.64 + 1205.0, abs=0.01)       # ROI Blocks' quarter and the recording tax
+    assert fc["finished"]["rkb_out"] == pytest.approx(89596.63, abs=0.02)                   # RKB's money in the deal, not the note and not the full builder's cost
 
 
 def test_foreclosure_test_fails_when_closing_day_money_is_not_covered_by_the_house_as_it_stands():
@@ -410,7 +437,7 @@ def test_review_and_sign_opens_only_when_every_step_before_it_is_complete():
     with pytest.raises(st.Refused):
         st.sign(doc, SHIV)
     st.sign(doc, RAKESH)
-    assert doc["signed"]["by"] == "rakesh" and round(doc["signed"]["ratio"] * 100, 1) == 61.4 and doc["gates"]["step"] == 6
+    assert doc["signed"]["by"] == "rakesh" and round(doc["signed"]["ratio"] * 100, 1) == 38.1 and doc["gates"]["step"] == 6
     assert not doc["gates"]["can_fund"]                                  # recording, no-work and the no-lien covenant still hold the money
     assert {w["key"] for w in doc["gates"]["waiting_closing"]} == {"no_work", "no_lien", "recording"}
     _finish(doc, C.CLOSING)

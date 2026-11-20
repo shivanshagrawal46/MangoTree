@@ -227,6 +227,20 @@ def test_a_state_sheet_written_by_claude_works_like_a_built_in_state_once_approv
         S.STATES.pop("PA", None); S.EXTRA_LINES.pop("PA", None); D.STATE_TEXT.pop("PA", None)
 
 
+def test_no_document_shows_the_builders_cost_or_what_rkb_funds():
+    """The note is the homeowner's number. The builder's cost, the 90% RKB funds, the retainage, the
+    contingency and ROI Blocks' share are between RKB and ROI Blocks (2026-11-20)."""
+    s, doc = _file()
+    docs = D.build(doc)
+    m = doc["assessment"]["money"]
+    hidden = [D.usd(x) for x in (m["work"], m["funded"], round(m["work"] * 0.1, 2), m["contingency"], m["roi_at_closing"], m["cash_out"], m["at_risk"]) if x]
+    for d in docs:
+        t = _text(d)
+        assert not [h for h in hidden if h in t], d["key"]
+        assert "Total funding undertaking" not in t and "limit 65%" not in t
+    assert D.usd(m["principal"]) in _text(_by(docs)["commitment_letter"]) and "Contract price" in _text(_by(docs)["draw_agreement"])
+
+
 def test_every_document_becomes_a_word_file():
     s, doc = _file(state="FL", county="Hillsborough County", interest_free_months=6)
     for d in D.build(doc):

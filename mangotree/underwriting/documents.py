@@ -343,7 +343,6 @@ def commitment(c: Ctx) -> List[Dict[str, Any]]:
          Terms([["Borrower", c.borrower_full], ["Guarantor", ("%s, individually, unconditionally and continuing" % c.guarantor) if c.owner_kind == S.LLC else ""],
                 ["Property", c.property_line],
                 ["Note principal", "%s, the contract price under the %s Customer Agreement, assigned to Lender, with Borrower's Note given in substitution for it" % (usd(c.principal), ROI)],
-                ["Lender's funding undertaking", "%s, advanced in draws as set out below" % usd(m["cash_out"])],
                 ["Purpose", "Renovation of the Property for resale. Business purpose. No proceeds to Borrower."],
                 ["Interest rate", ("%s%% simple per annum on the full principal sum from the date the %s records, whether or not Lender has disbursed all of it. No periodic payments." % (_rate(c.rate), c.instrument))
                  if not c.free else ("No interest for the first %d months after the %s records; then %s%% simple per annum on the unpaid principal. No periodic payments." % (c.free, c.instrument, _rate(c.rate)))],
@@ -355,10 +354,9 @@ def commitment(c: Ctx) -> List[Dict[str, Any]]:
                 ["Lien position", ("Second lien, behind %s only. No other lien may remain." % " and ".join(l["holder"] for l in c.liens_staying)) if c.second else "First and only lien."],
                 ["Trustee", "" if c.is_mortgage else c.trustee_name], ["Settlement agent", c.title_co], ["Loan number", c.loan_no],
                 ["Prepayment", "Permitted at any time" + (", subject to the minimum interest above" if c.min_months else "")], ["Late charge", "None"]]),
-         P("Lender's undertaking to pay for the Work is allocated as follows and is not reallocable without Lender's prior written consent:"),
-         Terms([[l["label"], usd(l["amount"])] for l in m["lines"]] + [["Total funding undertaking", usd(m["cash_out"])]]),
+         # The builder's cost, what RKB funds and ROI Blocks' share are between RKB and ROI Blocks:
+         # a paper the Borrower reads carries the Note principal only (2026-11-20).
          Terms([["Note principal / as-renovated value", "%.1f%%" % (100 * c.principal / arv) if arv else ""],
-                ["Everything standing against the Property at twelve months / as-renovated value", "%.1f%% (limit 65%%)" % (100 * r["ratio"]) if r["ratio"] else ""],
                 ["As-renovated value, determined by Lender", usd(arv)]]),
          P("This loan is made on the security of the Property. Draws are measured against the Contractor's cost and not against the contract price."),
          H("2. CONDITIONS PRECEDENT")]
@@ -385,8 +383,8 @@ def commitment(c: Ctx) -> List[Dict[str, Any]]:
           P("No advance of any kind will be made, and no work may begin and no materials may be delivered, until the %s has recorded and the settlement agent has confirmed the recording "
             "reference to Lender in writing. %s" % (c.instrument, c.st.get("mechanics_lien", "")), lead="3.3 Recording before any advance."),
           P("Each draw request must be accompanied by the Contractor's itemized request against Schedule 1, photographs, partial lien releases from the Contractor and from every subcontractor and "
-            "supplier paid from the previous draw, and Lender's satisfactory inspection. Draws are funded at 90%% of the Contractor's cost of completed work. Retainage of %s is released at "
-            "settlement of the sale of the Property, against final lien releases." % usd(round(m["work"] * 0.10, 2)), lead="3.4 Draws."),
+            "supplier paid from the previous draw, and Lender's satisfactory inspection. Draws are funded at 90% of the cost of completed work. The remaining 10% is retained and released at "
+            "settlement of the sale of the Property, against final lien releases.", lead="3.4 Draws."),
           P("Lender funds only after approving the final settlement statement and confirming wire instructions by telephone with the settlement agent. Wire instructions received by email "
             "will not be relied upon without that call.", lead="3.5 Wire."),
           P("Within two business days of closing, scanned copies of all signed documents to Lender, and the original Note%s overnighted to Lender's custodian: %s."
@@ -855,16 +853,16 @@ def draw_agreement(c: Ctx) -> List[Dict[str, Any]]:
             H("3. DRAW PROCEDURE"),
             P("ROI Blocks submits each draw request to Lender with the Contractor's invoice for completed work measured against Schedule 1, photographs, and signed partial lien releases from the Contractor "
               "and every subcontractor and supplier paid from the previous draw.", lead="3.1"),
-            P("Each draw is funded at ninety percent (90%%) of the Contractor's cost of the completed work. The remaining ten percent (10%%), %s in total, is retained by Lender and paid directly to the "
-              "Contractor at settlement of the sale of the Property, against final lien releases from the Contractor and from every subcontractor and supplier." % usd(round(m["work"] * 0.10, 2)), lead="3.2"),
+            P("Each draw is funded at ninety percent (90%) of the Contractor's cost of the completed work. The remaining ten percent (10%) is retained by Lender and paid directly to the "
+              "Contractor at settlement of the sale of the Property, against final lien releases from the Contractor and from every subcontractor and supplier.", lead="3.2"),
             P("Lender or its inspector may verify the work before funding. Lender will fund approved draws within five (5) business days after approval.", lead="3.3"),
             P("Lender may withhold or reduce a draw if the work is not complete or not in accordance with the scope or applicable codes; if lien releases are missing; if a required permit or inspection is "
               "outstanding; if required insurance is not in force; if a lien or claim has been filed against the Property; or if Borrower or ROI Blocks is in default under the Note, the %s, or this "
               "Agreement." % c.instrument, lead="3.4"),
             H("4. CHANGE ORDERS AND CONTINGENCY"),
-            P("No change to the scope or price of the Work is effective unless set out in a written change order signed by Borrower, ROI Blocks and Lender. The contingency of %s is released only on Lender's "
+            P("No change to the scope or price of the Work is effective unless set out in a written change order signed by Borrower, ROI Blocks and Lender. Any contingency allowance is released only on Lender's "
               "prior written approval. Cost overruns not covered by a signed change order are the sole responsibility of ROI Blocks. No change order increases the amount Borrower owes under the Note "
-              "unless Borrower signs a written modification of the Note." % usd(m["contingency"])),
+              "unless Borrower signs a written modification of the Note."),
             H("5. ROI BLOCKS' UNDERTAKINGS"),
             P("ROI Blocks shall cause the Work to be completed by the target completion date, in a good and workmanlike manner, by properly licensed contractors, and in compliance with all permits and codes.", lead="5.1"),
             P("ROI Blocks shall promptly pay, from the draws it receives, all contractors, subcontractors and suppliers for work and materials furnished, and shall deliver lien releases as required by Section 3.", lead="5.2"),
@@ -881,12 +879,13 @@ def draw_agreement(c: Ctx) -> List[Dict[str, Any]]:
             P("This Agreement is a loan document. As between Borrower and Lender, it controls over any conflicting provision of the Customer Agreement. It is governed by the laws of %s and may be signed in "
               "counterparts, including by electronic signature." % c.sx["law"]),
             c.sig_block(seal=False), _roi_sign(), Sign("CONTRACTOR: %s" % c.contractor.upper(), ["By: ______________________________", "Printed name: ______________________", "Date: ______________"]),
-            _lender_sign(), BREAK, Title("SCHEDULE 1", "Scope of Work and Draw Budget"),
-            Terms([["Contractor's cost of the Work", usd(m["work"])], ["Funded in draws at 90%", usd(round(m["work"] * 0.9, 2))], ["Retained 10%, paid to the Contractor at the sale", usd(round(m["work"] * 0.1, 2))],
-                   ["Contingency and change-order allowance", usd(m["contingency"])], ["Measured area", "%s sq ft above grade, %s sq ft below grade" % (_num(c.f.get("sqft_above")), _num(c.f.get("sqft_below")))],
+            _lender_sign(), BREAK, Title("SCHEDULE 1", "Scope of Work"),
+            # No cost figure here: the Contractor's cost and the draw budget are between Lender, ROI Blocks
+            # and the Contractor. The Borrower's one number is the contract price, which is the Note (2026-11-20).
+            Terms([["Contract price", usd(c.principal)], ["Measured area", "%s sq ft above grade, %s sq ft below grade" % (_num(c.f.get("sqft_above")), _num(c.f.get("sqft_below")))],
                    ["Bedrooms and bathrooms after the Work", "%s bedrooms, %s bathrooms" % (c.f.get("beds") or "[ ]", c.f.get("baths") or "[ ]")]]),
-            P("The Contractor's line-by-line estimate, signed by the Contractor and by Borrower, is attached and forms part of this Schedule. Draws are measured against these costs, not against the "
-              "contract price.")]
+            P("The scope of work, signed by the Contractor and by Borrower, is attached and forms part of this Schedule. The Contractor's cost of the Work and the draw budget are kept in a "
+              "separate schedule between Lender, ROI Blocks and the Contractor. They do not change the contract price or what Borrower owes under the Note.")]
 
 
 def _num(v: Any) -> str:

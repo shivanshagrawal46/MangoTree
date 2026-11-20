@@ -173,7 +173,7 @@ def build(facts: Dict[str, Any], assessment: Optional[Dict[str, Any]] = None) ->
     add(_item("workers_comp", CONTRACTOR, "Workers' compensation, or the state's written exemption", "Required by law where the contractor has employees.",
               checks=["Certificate in force, or the exemption document"]))
     add(_item("scope", CONTRACTOR, "Scope of work signed by the contractor (Schedule 1)", "The contractor agrees the money finishes the job.", hard=True,
-              checks=["Signed by the contractor and by the owner", "Total equals the builder's cost", "Areas, bedrooms and bathrooms agree with the measurement"]))
+              checks=["Signed by the contractor and by the owner", "Areas, bedrooms and bathrooms agree with the measurement"]))
     add(_item("w9", CONTRACTOR, "Form W-9", "RKB pays the contractor directly.", checks=["Name matches the licence", "Tax number present"]))
     add(_item("no_lien", CONTRACTOR, "No-lien and subordination covenant signed by ROI Blocks and the contractor",
               "Whatever they are owed stands behind RKB's lien. Signed before the %s is released for recording." % instrument.lower(), when=CLOSING, hard=True, foreclosure=True,

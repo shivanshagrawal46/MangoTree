@@ -31,9 +31,9 @@ export function CheckPage({ f, go }: PageProps) {
   const rules = [
     { order: r.passed ? 2 : 0, el: <Rule key="r" tone={r.passed ? "pass" : "fail"} word={r.passed ? "Pass" : "Fail"} name="65% rule"
       line={`${usd(r.exposure)} stands against the house. The limit is ${usd(r.limit_amount)}.`} figure={pct(r.ratio)} under="of ARV, limit 65%"
-      working={<>{r.parts.filter((p) => p.amount > 0).map((p) => `${p.label}: ${usd(p.amount, true)}`).join(" · ")}. The most the note can be is {usd(r.most_note)}.</>} /> },
+      working={<>{r.parts.filter((p) => p.amount > 0).map((p) => `${p.label}: ${usd(p.amount, true)}`).join(" · ")}. The note ({usd(m.principal, true)}) is the owner&apos;s number and is not counted here.</>} /> },
     { order: fc.passed ? 2 : 0, el: <Rule key="f" tone={fc.passed ? "pass" : "fail"} word={fc.passed ? "Pass" : "Fail"} name="Foreclosure test"
-      line={`If it never sells, ${usd(fc.finished.left_for_rkb)} is left for RKB against ${usd(fc.finished.rkb_out)} paid out. ${fc.closing_day.checked ? `On closing day, ${usd(fc.closing_day.left_for_rkb)} against ${usd(fc.closing_day.rkb_out)}.` : "Closing day is not checked: no value for the house as it stands."}`}
+      line={`If it never sells, ${usd(fc.finished.left_for_rkb)} is left for RKB against ${usd(fc.finished.rkb_out)} of RKB's money in the deal. ${fc.closing_day.checked ? `On closing day, ${usd(fc.closing_day.left_for_rkb)} against ${usd(fc.closing_day.rkb_out)}.` : "Closing day is not checked: no value for the house as it stands."}`}
       figure={fc.finished.cover !== null ? `${fc.finished.cover.toFixed(1)}×` : ""} under="covered"
       working={<>Finished house {usd(fc.finished.value)}, less 15% = {usd(fc.finished.marked_down)}, less 8% selling cost = {usd(fc.finished.after_selling)}
         {fc.finished.mortgage_ahead > 0 && <>, less the mortgage ahead {usd(fc.finished.mortgage_ahead)} and its growth {usd(fc.finished.mortgage_growth)}</>}, less a foreclosure of about {fc.finished.months} months ({usd(fc.finished.foreclosure_cost)}).
@@ -51,9 +51,9 @@ export function CheckPage({ f, go }: PageProps) {
       <Panel className={cn("px-4 py-3.5 border-l-4 flex flex-wrap items-center gap-x-6 gap-y-2", good ? "border-l-good" : exc ? "border-l-high" : "border-l-critical")}>
         <div className="min-w-0">
           <div className="text-[20px] font-bold">{good ? "Fits RKB's rules" : exc ? "For Rakesh Sir to decide" : a.verdict === "incomplete" ? "Not enough to check yet" : a.rejected_second_mortgage ? "Rejected: second mortgage" : "Does not fit RKB's rules"}</div>
-          <div className="text-muted">{good ? `${usd(r.room)} of room under the 65% limit` : a.headline}</div>
+          <div className="text-muted">{good ? `${pct(r.ratio)} of ARV: the mortgage that stays and RKB's own money, against a limit of 65%` : a.headline}</div>
         </div>
-        <div className="ml-auto text-right"><div className="text-[11px] uppercase tracking-[.05em] text-faint font-semibold">The most the note can be</div><b className="text-[17px] tnum">{usd(r.most_note)}</b></div>
+        <div className="ml-auto text-right"><div className="text-[11px] uppercase tracking-[.05em] text-faint font-semibold">{r.room >= 0 ? "Room under the 65% limit" : "Over the 65% limit by"}</div><b className="text-[17px] tnum">{usd(Math.abs(r.room))}</b></div>
       </Panel>
       {a.reasons.length > 0 && (
         <Panel className="mt-3 px-3.5 py-3 border-critical/40"><h3 className="font-semibold mb-1">Why</h3>
@@ -68,8 +68,8 @@ export function CheckPage({ f, go }: PageProps) {
           <MoneyTable rows={[
             { label: "Lien", amount: a.lien_position === "second" ? "Second, behind one mortgage" : "First" },
             { label: "If RKB must foreclose", amount: `About ${fc.finished.months} months, ${usd(fc.finished.foreclosure_cost)}` },
-            { label: "Note to RKB", amount: usd(m.principal, true) },
-            { label: "Rate, points, term", amount: `${r.rate}% · ${r.points} points · ${r.term_months} months${r.interest_free_months ? ` · ${r.interest_free_months} interest-free` : ""}` },
+            { label: "Note to RKB (the owner's number)", amount: usd(m.principal, true) },
+            { label: "The note's rate, points, term", amount: `${r.rate}% · ${r.points} points · ${r.term_months} months${r.interest_free_months ? ` · ${r.interest_free_months} interest-free` : ""}` },
           ]} />
           <p className="mt-2 text-[12.5px] text-muted">Foreclosure here: {fc.state_route}.{fc.estimate ? " The months and the cost are RKB's estimate." : ""}</p>
           {a.notices.length > 0 && <ul className="mt-2 flex flex-col gap-1.5 text-[12.5px] text-muted list-disc pl-4">{a.notices.map((x) => <li key={x}>{x}</li>)}</ul>}

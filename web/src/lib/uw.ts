@@ -11,7 +11,7 @@ export type Facts = {
   address?: string; state?: string; county?: string; arv?: number; as_is_value?: number; arv_analysis_id?: string;
   sqft_above?: number; sqft_below?: number; measured?: boolean; beds?: number; baths?: number; scope?: string;
   owner_kind?: string; owner_name?: string; owner_lives_there?: boolean; has_mortgage?: boolean; liens?: Lien[];
-  builder_cost?: number; contingency?: number; contract_price?: number; roi_at_closing?: number; closing_costs?: number; cash_to_owner?: number;
+  builder_cost?: number; contingency?: number; contract_price?: number; closing_costs?: number; cash_to_owner?: number;
   rate?: number; points?: number; term_months?: number; interest_free_months?: number; first_six_inside_note?: boolean; minimum_interest_months?: number;
   contractor_name?: string; contractor_licence?: string; title_company?: string; closing_date?: string; tax_id?: string; legal_description?: string;
   borrower_address?: string; signer_name?: string; guarantor_name?: string; completion_date?: string;
@@ -22,9 +22,14 @@ export type ForcedSale = { value: number; marked_down: number; after_selling: nu
 export type Assessment = {
   verdict: "fits" | "exception" | "does_not_fit" | "incomplete"; headline: string; reasons: string[]; notices: string[]; missing: string[];
   kind: string; kind_label: string; lien_position: "first" | "second"; state: string | null; state_name: string | null; new_state?: boolean; rejected_second_mortgage?: boolean;
-  money: { lines: MoneyLine[]; cash_out: number; day_one: number; principal: number; principal_is_contract: boolean; staying: number; work: number; contingency: number; liens: Lien[] };
-  rule_65: { passed: boolean; ratio: number | null; limit: number; exposure: number; limit_amount: number; room: number; most_note: number; parts: { label: string; amount: number }[];
-    rate: number; points: number; term_months: number; interest_free_months: number; interest: number; fee: number };
+  /* `principal` is the note: the owner's number, what the documents carry. `at_risk` is RKB's own money in the deal
+     (90% of the builder's cost, RKB's points and six months' interest on it, ROI Blocks at closing, and any payoff):
+     the figure the 65% rule and the foreclosure test use. `commission` is ROI Blocks' share, worked out on the server. */
+  money: { lines: MoneyLine[]; cash_out: number; day_one: number; principal: number; principal_is_contract: boolean; staying: number; work: number; contingency: number; liens: Lien[];
+    funded: number; rkb_points: number; rkb_interest: number; roi_at_closing: number; at_risk: number;
+    commission: { known: boolean; note: number; beside: number; retail: number; builder_cost: number; points: number; interest: number; margin: number; at_closing: number; at_sale: number; to_roi: number } };
+  rule_65: { passed: boolean; ratio: number | null; limit: number; exposure: number; limit_amount: number; room: number; rkb_money: number; parts: { label: string; amount: number }[];
+    rate: number; points: number; term_months: number; interest_free_months: number };
   foreclosure: { passed: boolean; finished: ForcedSale; closing_day: ForcedSale; state_route: string; estimate: boolean; worst_case?: boolean };
   budget: { passed: boolean; looks: string[]; per_sqft: number | null; range: [number, number] | null; area: number; scope: string | null; contingency_share: number | null };
 };

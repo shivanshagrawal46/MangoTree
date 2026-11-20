@@ -11,7 +11,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Plus, X } from "lucide-react";
 import { Button } from "@/components/ui";
 import { cn } from "@/lib/utils";
-import { num, usd, uw, type Facts, type Lien, type UwConfig } from "@/lib/uw";
+import { num, usd, uw, type Assessment, type Facts, type Lien, type UwConfig } from "@/lib/uw";
 import { KV, PageHead, Panel, SectionHead, Status, input, linkBtn } from "./bits";
 import type { PageProps } from "./workspace";
 
@@ -54,7 +54,6 @@ function sections(cfg: UwConfig | undefined, f: Facts): { key: string; title: st
     ] },
     { key: "loan", title: "The loan", fields: [
       { key: "contract_price", label: "Contract price to the owner (the note)", kind: "money", required: true },
-      { key: "roi_at_closing", label: "Paid to ROI Blocks at closing", kind: "money", required: true, hint: "0 if none" },
       { key: "closing_costs", label: "Closing costs, estimated", kind: "money", required: true, hint: "0 if not known yet" },
       { key: "cash_to_owner", label: "Cash to the owner", kind: "money" },
       { key: "rate", label: "Rate", kind: "percent", unit: "% a year" },
@@ -86,6 +85,27 @@ function show(field: F, v: unknown, cfg?: UwConfig): React.ReactNode {
 }
 
 const LIEN_BLANK: Lien = { holder: "", balance: "", status: "current", payoff_at_closing: false, monthly_payment: "", arrears: "" };
+
+/* ROI Blocks' share: worked out on the server from the note and the builder's cost, never typed in.
+   A quarter of the margin at closing, the same again when the house sells. */
+function Commission({ c }: { c: Assessment["money"]["commission"] }) {
+  const tag = <span className="text-[11px] text-info font-normal">worked out, not entered</span>;
+  const wait = <span className="text-faint font-normal">Worked out once the contract price and the builder&apos;s cost are in</span>;
+  return (
+    <>
+      <KV k="Paid to ROI Blocks at closing">{c.known ? <><span>{usd(c.at_closing, true)}</span>{tag}</> : wait}</KV>
+      <KV k="Paid to ROI Blocks at the sale">{c.known ? <><span>{usd(c.at_sale, true)}</span>{tag}</> : wait}</KV>
+      {c.known && (
+        <div className="px-3.5 py-2 text-[12px] text-muted">
+          A quarter of the margin each time. Margin {usd(c.margin, true)} = the note {usd(c.note, true)}
+          {c.beside > 0 && <>, less {usd(c.beside, true)} in it that is not renovation (mortgage paid off, missed payments, cash to the owner)</>}
+          , less the builder&apos;s cost {usd(c.builder_cost, true)}, less RKB&apos;s 2 points {usd(c.points, true)} and six months at 14% {usd(c.interest, true)}, both on 90% of the builder&apos;s cost.
+          {c.margin <= 0 && <b className="text-high"> No margin is left, so nothing is paid to ROI Blocks.</b>}
+        </div>
+      )}
+    </>
+  );
+}
 
 export function DetailsPage({ f, go, run }: PageProps) {
   const cfg = useQuery({ queryKey: ["uw", "config"], queryFn: uw.config, staleTime: Infinity }).data;
@@ -181,6 +201,7 @@ export function DetailsPage({ f, go, run }: PageProps) {
                     </KV>
                   );
                 })}
+                {s.key === "loan" && !on && <Commission c={f.assessment.money.commission} />}
                 {s.key === "mortgage" && (on ? val("mortgage", "has_mortgage") === true : facts.has_mortgage) && (
                   <div className="px-3.5 py-2.5 border-t border-line">
                     {on ? (

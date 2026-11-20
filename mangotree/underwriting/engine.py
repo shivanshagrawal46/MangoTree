@@ -2,15 +2,25 @@
 
 The rules, as decided on 2026-11-20:
 
-* **The 65% rule.** Every mortgage that stays on the house, plus the note RKB takes,
-  plus RKB's points and the interest the note earns over its term, may not pass
-  65% of the after-repair value. The same 65% applies in first and in second
-  position.
+* **The 65% rule** (as corrected on 2026-11-20: "instead of note amount in the 65%
+  calculation we need the 90% of builder cost + 2 + 14 + rkb gave to roi at closing").
+  Every mortgage that stays on the house, plus RKB's own money in the deal, may not
+  pass 65% of the after-repair value. RKB's money is: 90% of the builder's cost (what
+  RKB funds), 2 points on that, 14% interest on that for six months, and what RKB
+  pays ROI Blocks at closing; and, on a deal that has them, a mortgage RKB pays off,
+  missed payments it brings up to date, and cash to the owner. The NOTE is not used
+  here. The same 65% applies in first and in second position.
 * **The foreclosure test.** If the house never sells: the value marked down 15%,
   less 8% selling cost, less the mortgage ahead of RKB and what it grows by while
   the foreclosure runs, less that state's foreclosure cost and holding cost, must
-  still cover every dollar RKB has paid out. It is asked twice: once for the
-  finished house, once for closing day, before any work is done.
+  still cover RKB's money in the deal (the same figure as in the 65% rule). It is
+  asked twice: once for the finished house, once for closing day, before any work.
+* **The note** is the homeowner's number. It is what the documents and the file
+  carry, and nothing else. The builder's cost is between RKB and ROI Blocks only.
+* **ROI Blocks' commission.** (the note, less the builder's cost, less RKB's 2 points
+  and six months' interest on 90% of the builder's cost) divided by four is paid to
+  ROI Blocks at closing, and the same amount again when the house sells. It is
+  worked out here, never typed in.
 * **The budget test.** The builder's cost per square foot against the usual range
   for that scope in that state, and a contingency of at least 10% on its own line.
   A budget outside the range is not refused; one person looks and says yes or no.
@@ -32,6 +42,12 @@ LIMIT = 0.65                 # of ARV
 MARKDOWN = 0.15              # value lost in a forced sale
 SELLING_COST = 0.08          # commission, transfer tax, settlement
 FUNDED_SHARE = 0.90          # of each draw; the rest is held to the sale
+#: RKB's own charge on what it funds (90% of the builder's cost): 2 points and 14% a year
+#: for the first six months. Fixed between RKB and ROI Blocks; not the note's rate.
+COST_POINTS = 2.0
+COST_RATE = 14.0
+COST_MONTHS = 6
+ROI_SHARE = 0.25             # of the margin at closing, and the same again at the sale
 MIN_CONTINGENCY = 0.10       # of the builder's cost of work
 SENIOR_RATE_GUESS = 0.07     # a year, when the senior lender's payment is not known
 REVIEW_CHANGE = 0.07         # a verified figure this far from the one the check ran on re-opens the check
@@ -104,14 +120,24 @@ def money(facts: Dict[str, Any]) -> Dict[str, Any]:
     liens = _liens(facts)
     work = _n(facts.get("builder_cost"))
     contingency = _n(facts.get("contingency"))
-    roi = _n(facts.get("roi_at_closing"))
     closing = _n(facts.get("closing_costs"))
     cash_owner = _n(facts.get("cash_to_owner"))
     payoffs = sum(l["balance"] for l in liens if l["payoff_at_closing"])
     arrears = sum(l["arrears"] for l in liens if not l["payoff_at_closing"])
     staying = sum(l["balance"] for l in liens if not l["payoff_at_closing"])
-    before_tax = work + contingency + roi + closing + payoffs + arrears + cash_owner
     contract = _n(facts.get("contract_price"))
+    # What RKB funds, and RKB's own charge on it.
+    funded = work * FUNDED_SHARE
+    rkb_points = funded * COST_POINTS / 100.0
+    rkb_interest = funded * COST_RATE / 100.0 * COST_MONTHS / 12.0
+    # ROI Blocks' commission: a quarter of the margin at closing, a quarter at the sale.
+    # Money in the note that is not the renovation (a mortgage paid off, missed payments,
+    # cash to the owner) is not margin, so it is taken out of the note first.
+    beside = payoffs + arrears + cash_owner
+    retail = (contract - beside) if contract > 0 else 0.0
+    margin = (retail - work - rkb_points - rkb_interest) if contract > 0 else 0.0
+    roi = round(max(0.0, margin) * ROI_SHARE, 2)
+    before_tax = work + contingency + roi + closing + payoffs + arrears + cash_owner
     principal = contract if contract > 0 else before_tax
     tax = S.recording_tax(facts.get("state") or "", facts.get("county"), principal)
     if contract <= 0:
@@ -130,8 +156,15 @@ def money(facts: Dict[str, Any]) -> Dict[str, Any]:
     lines = [l for l in lines if l["amount"] > 0]
     cash_out = round(sum(l["amount"] for l in lines), 2)
     day_one = round(roi + closing + tax["amount"] + payoffs + arrears + cash_owner, 2)
+    # RKB's money in the deal: the figure the 65% rule and the foreclosure test use. Not the note.
+    at_risk = round(funded + rkb_points + rkb_interest + roi + beside, 2)
     return {"lines": lines, "cash_out": cash_out, "day_one": day_one, "principal": round(principal, 2), "principal_is_contract": contract > 0,
-            "staying": round(staying, 2), "liens": liens, "work": work, "contingency": contingency, "tax_sure": tax["sure"]}
+            "staying": round(staying, 2), "liens": liens, "work": work, "contingency": contingency, "tax_sure": tax["sure"],
+            "funded": round(funded, 2), "rkb_points": round(rkb_points, 2), "rkb_interest": round(rkb_interest, 2), "roi_at_closing": roi,
+            "payoffs": round(payoffs, 2), "arrears": round(arrears, 2), "cash_owner": round(cash_owner, 2), "at_risk": at_risk,
+            "commission": {"known": contract > 0, "note": round(contract, 2), "beside": round(beside, 2), "retail": round(retail, 2), "builder_cost": round(work, 2),
+                           "points": round(rkb_points, 2), "interest": round(rkb_interest, 2), "margin": round(margin, 2),
+                           "at_closing": roi, "at_sale": roi, "to_roi": round(2 * roi, 2)}}
 
 
 def rule_65(facts: Dict[str, Any], m: Dict[str, Any]) -> Dict[str, Any]:
@@ -140,22 +173,22 @@ def rule_65(facts: Dict[str, Any], m: Dict[str, Any]) -> Dict[str, Any]:
     points = _n(facts.get("points")) if facts.get("points") not in (None, "") else DEFAULT_POINTS
     term = int(_n(facts.get("term_months")) or DEFAULT_TERM)
     free = int(_n(facts.get("interest_free_months")))
-    inside = bool(facts.get("first_six_inside_note"))
-    charged = max(0, term - free)
-    interest = m["principal"] * rate / 100.0 * charged / 12.0
-    fee = 0.0 if inside else m["principal"] * points / 100.0
-    exposure = m["staying"] + m["principal"] + fee + interest
+    # The note and its rate are the homeowner's terms: shown, and checked against the state's
+    # limits, but NOT what the 65% counts. The 65% counts the mortgage that stays and RKB's own money.
+    exposure = m["staying"] + m["at_risk"]
     limit = arv * LIMIT
-    per_dollar = 1.0 + (0.0 if inside else points / 100.0) + rate / 100.0 * charged / 12.0
-    most = max(0.0, (limit - m["staying"]) / per_dollar) if arv > 0 else 0.0
     ratio = exposure / arv if arv > 0 else None
     return {"passed": bool(arv > 0 and exposure <= limit + 0.005), "ratio": ratio, "limit": LIMIT, "exposure": round(exposure, 2), "limit_amount": round(limit, 2),
-            "room": round(limit - exposure, 2), "most_note": round(most, 2),
+            "room": round(limit - exposure, 2), "rkb_money": m["at_risk"],
             "parts": [{"label": "Mortgage that stays ahead of RKB", "amount": m["staying"]},
-                      {"label": "RKB's note" + (" (the contract price)" if m["principal_is_contract"] else " (what RKB pays out)"), "amount": m["principal"]},
-                      {"label": "RKB's points, %.2g%%" % points + (" (already inside the note)" if inside else ""), "amount": round(fee, 2)},
-                      {"label": "Interest at %.4g%% for %d months" % (rate, charged), "amount": round(interest, 2)}],
-            "rate": rate, "points": points, "term_months": term, "interest_free_months": free, "interest": round(interest, 2), "fee": round(fee, 2)}
+                      {"label": "90% of the builder's cost, funded by RKB", "amount": m["funded"]},
+                      {"label": "RKB's %.2g points on that" % COST_POINTS, "amount": m["rkb_points"]},
+                      {"label": "Interest at %.4g%% for %d months on that" % (COST_RATE, COST_MONTHS), "amount": m["rkb_interest"]},
+                      {"label": "Paid to ROI Blocks at closing", "amount": m["roi_at_closing"]},
+                      {"label": "Mortgage paid off at closing by RKB", "amount": m["payoffs"]},
+                      {"label": "Missed mortgage payments brought up to date by RKB", "amount": m["arrears"]},
+                      {"label": "Cash to the owner", "amount": m["cash_owner"]}],
+            "rate": rate, "points": points, "term_months": term, "interest_free_months": free}
 
 
 def _forced_sale(value: float, m: Dict[str, Any], st: Optional[Dict[str, Any]], facts: Dict[str, Any], *, occupied: bool) -> Dict[str, Any]:
@@ -185,8 +218,8 @@ def foreclosure_test(facts: Dict[str, Any], m: Dict[str, Any]) -> Dict[str, Any]
     arv = _n(facts.get("arv"))
     occupied = bool(facts.get("anyone_lives_there") or facts.get("owner_lives_there"))
     done = _forced_sale(arv, m, st, facts, occupied=occupied)
-    done.update({"rkb_out": m["cash_out"], "passed": done["left_for_rkb"] >= m["cash_out"] - 0.005,
-                 "cover": (done["left_for_rkb"] / m["cash_out"]) if m["cash_out"] > 0 else None})
+    done.update({"rkb_out": m["at_risk"], "passed": done["left_for_rkb"] >= m["at_risk"] - 0.005,
+                 "cover": (done["left_for_rkb"] / m["at_risk"]) if m["at_risk"] > 0 else None})
     as_is = _n(facts.get("as_is_value"))
     if as_is > 0:
         day = _forced_sale(as_is, m, st, facts, occupied=occupied)
@@ -273,10 +306,10 @@ def assess(facts: Dict[str, Any]) -> Dict[str, Any]:
     reasons: List[str] = []
     if not missing:
         if not r65["passed"]:
-            reasons.append("65%% rule: what stands against the house is %s, which is %.1f%% of the %s value. The limit is %s. The most the note can be is %s."
-                           % (_money(r65["exposure"]), (r65["ratio"] or 0) * 100, _money(_n(facts.get("arv"))), _money(r65["limit_amount"]), _money(r65["most_note"])))
+            reasons.append("65%% rule: what stands against the house is %s, which is %.1f%% of the %s value. The limit is %s, so it is over by %s."
+                           % (_money(r65["exposure"]), (r65["ratio"] or 0) * 100, _money(_n(facts.get("arv"))), _money(r65["limit_amount"]), _money(-r65["room"])))
         if not fc["finished"]["passed"]:
-            reasons.append("Foreclosure test: if the finished house had to be sold in a foreclosure, %s would be left for RKB against %s paid out."
+            reasons.append("Foreclosure test: if the finished house had to be sold in a foreclosure, %s would be left for RKB against %s of RKB's money in the deal."
                            % (_money(fc["finished"]["left_for_rkb"]), _money(fc["finished"]["rkb_out"])))
         if fc["closing_day"].get("passed") is False:
             reasons.append("Foreclosure test, closing day: before any work is done, a forced sale of the house as it stands leaves %s for RKB against %s paid out on closing day."
@@ -295,6 +328,9 @@ def assess(facts: Dict[str, Any]) -> Dict[str, Any]:
     if len(m["liens"]) >= 2 and not rejected_second:
         gone = [l["holder"] for l in m["liens"] if l["payoff_at_closing"]]
         notices.append("The house has more than one mortgage today. %s must be paid off and released at closing, so that RKB stands behind one mortgage only." % " and ".join(gone))
+    if m["commission"]["known"] and m["commission"]["margin"] <= 0 and not missing:
+        notices.append("The note leaves no margin after the builder's cost and RKB's points and interest (%s short), so nothing is paid to ROI Blocks."
+                       % _money(-m["commission"]["margin"]))
     if fc["finished"].get("mortgage_growth_guessed"):
         notices.append("The senior lender's monthly payment is not entered; its growth during a foreclosure is estimated at 7% a year.")
     if not m["tax_sure"] and st:
@@ -325,7 +361,7 @@ def assess(facts: Dict[str, Any]) -> Dict[str, Any]:
 
 #: The figures a verified document can move. If one moves by more than REVIEW_CHANGE
 #: from what the quick check ran on, the check is run again and the file says so.
-WATCHED = ("arv", "builder_cost", "contract_price", "closing_costs", "roi_at_closing")
+WATCHED = ("arv", "builder_cost", "contract_price", "closing_costs")
 
 
 def moved(before: Dict[str, Any], after: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -373,6 +409,5 @@ def details_missing(facts: Dict[str, Any]) -> List[str]:
     want(f.get("contingency") not in (None, ""), "Contingency (0 if none)")
     want(f.get("scope") in SCOPE_TIERS, "Scope of the work")
     want(_n(f.get("contract_price")) > 0, "Contract price to the owner (the note)")
-    want(f.get("roi_at_closing") not in (None, ""), "Amount paid to ROI Blocks at closing (0 if none)")
     want(f.get("closing_costs") not in (None, ""), "Closing costs, estimated (0 if not known yet)")
     return list(dict.fromkeys(need))
