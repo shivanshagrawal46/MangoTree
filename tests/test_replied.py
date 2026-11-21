@@ -207,7 +207,7 @@ def test_a_run_is_made_once_per_slot_and_reads_until_nothing_waits(monkeypatch):
         db = mongomock.MongoClient().db
 
     s = object.__new__(Scheduler)
-    s.mongo, s.runs, claimed, rounds = M(), M.db["scheduled_runs"], [], []
+    s.mongo, s.runs, claimed, rounds, read_over = M(), M.db["scheduled_runs"], [], [], []
     s._now_local = lambda: datetime(2026, 11, 23, 6, 0)
     s._claim_daily = lambda job: (job not in claimed) and (claimed.append(job) or True)
     s._release_daily = lambda job, ok: None
@@ -224,6 +224,10 @@ def test_a_run_is_made_once_per_slot_and_reads_until_nothing_waits(monkeypatch):
         def __init__(self, *a):
             pass
 
+        def run(self, deep=False, aside=True):
+            read_over.append((deep, aside))
+            return {"files": {"durham_st": {"done": 2, "duplicate": 1}, "_general": {"done": 0}}, "failed": [], "cost_usd": 0.4}
+
         def rewrite_outdated(self, limit=4):
             return {"rewritten": [1], "closed": [], "failed": []}
 
@@ -234,6 +238,9 @@ def test_a_run_is_made_once_per_slot_and_reads_until_nothing_waits(monkeypatch):
     out = s.run_brain()
     assert (out["slot"], out["read"], out["drafts"], out["remaining"], out["replies_rewritten"]) == ("brain_06", 50, 2, 0, 1) and len(rounds) == 2
     assert weighed == [True] and (out["sent_checked"], out["sent_closed"]) == (2, 1)      # everything RKB sent is weighed at a daily run
+    # every person's to-dos are read over at the run itself (Monday 6 am: the thorough reading), and the run says what it settled
+    assert read_over == [(True, False)] and out["todos"] == {"deep": True, "files": 2, "closed": 3, "cost_usd": 0.4, "failed": 0}
+    assert out["result"]["emails"]["found_answered"] == 1 and set(out["result"]["people"]) == {"rakesh", "jp", "manjunath", "shivansh"}
     assert s.run_brain() == {"skipped": "already run"} and len(rounds) == 2            # the next minute's round does nothing
     s._now_local = lambda: datetime(2026, 11, 23, 10, 30)
     assert s.run_brain() == {"skipped": "not a run hour"}
@@ -270,3 +277,36 @@ def test_one_files_records_are_read_back_to_back_in_the_order_they_came():
     rows = [{"n": 1, "p": ["durham_st"]}, {"n": 2, "p": []}, {"n": 3, "p": ["varnum"]}, {"n": 4, "p": ["durham_st"]}, {"n": 5, "p": []}, {"n": 6, "p": ["varnum", "durham_st"]}]
     assert [r["n"] for r in by_file(rows, lambda r: r["p"])] == [1, 4, 2, 5, 3, 6]      # no file given: the general file
     assert by_file([], lambda r: r["p"]) == []
+
+
+def test_a_run_says_for_each_person_what_it_found_done_and_what_is_left():
+    from mangotree.brain.store import BrainStore
+    from mangotree.brain.sweep import GENERAL, run_result
+
+    class M:
+        db = mongomock.MongoClient().db
+        artifacts = db["artifacts"]
+
+    store = BrainStore(M())
+    since = datetime(2026, 11, 23, 11, 0, tzinfo=timezone.utc)
+    old, new = since - timedelta(hours=5), since + timedelta(minutes=10)
+    store.files.insert_one({"property_id": "durham_st", "name": "1631 North Durham St", "open_items": [
+        {"id": "a", "owner": "rakesh", "kind": "decision", "status": "open", "title": "Decide A"},
+        {"id": "b", "owner": "rakesh", "kind": "reply", "status": "open", "title": "Tell B"},
+        {"id": "c", "owner": "rakesh", "kind": "reply", "status": "done", "title": "Answer C", "closed_at": new, "closed_by": "mail", "closed_note": "sent 23 Nov"},
+        {"id": "d", "owner": "jp", "kind": "action", "status": "done", "title": "Pay D", "closed_at": new, "closed_by": "sweep"},
+        {"id": "e", "owner": "jp", "kind": "action", "status": "dropped", "title": "Pay D again", "closed_at": new, "closed_by": "sweep"},
+        {"id": "f", "owner": "jp", "kind": "action", "status": "done", "title": "Earlier", "closed_at": old, "closed_by": "sweep"},       # before this run
+        {"id": "g", "owner": "manjunath", "kind": "action", "status": "done", "title": "By hand", "closed_at": new, "closed_by": "manjunath"},   # his own tick is not the run's
+        {"id": "h", "owner": "wes", "kind": "waiting", "status": "open", "title": "Wes to send"}]})
+    store.events.insert_many([{"sha": "1", "property_id": "durham_st", "status": "done", "at": new, "reply_wanted": True},
+                              {"sha": "1", "property_id": "_general", "status": "done", "at": new, "reply_wanted": False},      # one email, two files
+                              {"sha": "2", "property_id": "durham_st", "status": "done", "at": new, "reply_wanted": False},
+                              {"sha": "3", "property_id": "durham_st", "status": "done", "at": old, "reply_wanted": True}])
+    r = run_result(M(), store, since, answered=1)
+    assert r["emails"] == {"read": 2, "reply_needed": 1, "no_reply_needed": 1, "found_answered": 1}
+    p = r["people"]
+    assert (p["rakesh"]["left"], p["rakesh"]["replies_left"], p["rakesh"]["n_closed"], p["rakesh"]["closed"][0]["how"]) == (2, 1, 1, "reply found sent")
+    assert [c["how"] for c in p["jp"]["closed"]] == ["found done", "said twice"] and p["jp"]["left"] == 0
+    assert p["manjunath"]["n_closed"] == 0 and p["shivansh"] == {"left": 0, "replies_left": 0, "closed": [], "n_closed": 0}
+    assert "names the property" in GENERAL

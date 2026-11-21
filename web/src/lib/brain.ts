@@ -132,9 +132,15 @@ export type DayCard = {
 };
 export type DayDone = { title: string; property: string; property_id: string; closed_at: string; closed_by?: string; note?: string; assigned_by?: string | null };
 export type TeamRow = { person: string; name: string; left: number; late: number; done_today: number; given_open: number; now: DayCard[]; later: DayCard[]; done: DayDone[] };
+/** What the last of the two daily runs (6 am, 11 am Eastern) settled for the person looking. */
+export type DayCheck = {
+  at: string; left: number; replies_left: number; n_closed: number;
+  closed: { title: string; property: string; how: string; note?: string }[];
+  emails?: { read: number; reply_needed: number; no_reply_needed: number; found_answered: number } | null;
+};
 export type DayBoard = {
   person: string; name: string; day: string; now: DayCard[]; later: DayCard[]; left: number; late: number; done_today: DayDone[];
-  people: { person: string; name: string }[]; can_give: boolean; team: TeamRow[] | null;
+  people: { person: string; name: string }[]; can_give: boolean; team: TeamRow[] | null; check?: DayCheck | null;
 };
 
 /** A call that was read: what it said about each property, with the speakers' own words. */

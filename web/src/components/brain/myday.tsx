@@ -25,7 +25,7 @@ import { Button, Card, Dialog, DialogContent, Input, Select, Skeleton, Textarea 
 import { DraftCard } from "@/components/brain/draft";
 import type { Alerts } from "@/components/brain/followups";
 import { cn } from "@/lib/utils";
-import { errText, type DayBoard, type DayCard, type Draft, type TeamRow } from "@/lib/brain";
+import { errText, type DayBoard, type DayCard, type DayCheck, type Draft, type TeamRow } from "@/lib/brain";
 
 const SHOW = 7;                                   // rows of a list before "more"
 const usd = (n: number) => n.toLocaleString("en-US", { style: "currency", currency: "USD" });
@@ -250,6 +250,31 @@ function SiteStrip() {
   );
 }
 
+/* What the last daily run settled: one line, and the to-dos it took off the list on request. */
+function CheckLine({ k }: { k: DayCheck }) {
+  const [open, setOpen] = React.useState(false);
+  const when = new Date(k.at).toLocaleString("en-US", { timeZone: "America/New_York", weekday: "short", hour: "numeric", minute: "2-digit" });
+  const e = k.emails;
+  const n = (x: number, one: string, many: string) => `${x} ${x === 1 ? one : many}`;
+  return (
+    <div className="mt-4 rounded-lg border border-line bg-elev px-4 py-2 text-[12.5px] text-muted">
+      <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5">
+        <b className="font-semibold text-fg">Last check: {when} ET</b>
+        {e && <span>{n(e.read, "new email", "new emails")} read: {n(e.reply_needed, "needs", "need")} a reply, {n(e.no_reply_needed, "needs", "need")} none{e.found_answered > 0 ? `; ${n(e.found_answered, "waiting reply was", "waiting replies were")} found already sent` : ""}.</span>}
+        <span>Your to-dos: {k.n_closed > 0 ? `${k.n_closed} found done and taken off` : "none found done"}, <b className="font-semibold text-fg tnum">{k.left}</b> left.</span>
+        {k.closed.length > 0 && <button type="button" onClick={() => setOpen((v) => !v)} className="font-semibold text-accent hover:underline">{open ? "Hide" : "See which"}</button>}
+      </div>
+      {open && (
+        <ul className="mt-1.5 space-y-1 border-t border-line pt-1.5">
+          {k.closed.map((c, i) => (
+            <li key={i}><span className="font-semibold text-fg">{c.title}</span> · {c.property} · {c.how}{c.note ? <span> — {c.note}</span> : null}</li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 /* ───────────────────────── Today: my own work ───────────────────────── */
 
 export function MyDay() {
@@ -269,7 +294,8 @@ export function MyDay() {
   const lists = [s.replies.length > 0, s.work.length > 0, true].filter(Boolean).length;
   return (
     <>
-      <div className={cn("mt-5 grid gap-3 grid-cols-2", s.replies.length > 0 && s.work.length > 0 ? "lg:grid-cols-5" : s.replies.length > 0 || s.work.length > 0 ? "lg:grid-cols-4" : "lg:grid-cols-3")}>
+      {d.check && <CheckLine k={d.check} />}
+      <div className={cn("mt-3 grid gap-3 grid-cols-2", s.replies.length > 0 && s.work.length > 0 ? "lg:grid-cols-5" : s.replies.length > 0 || s.work.length > 0 ? "lg:grid-cols-4" : "lg:grid-cols-3")}>
         {s.replies.length > 0 && <Tile label="Replies to send" value={s.replies.length} hint={changed ? `${changed} changed since written — read again` : "all written and ready to read"} />}
         {s.work.length > 0 && <Tile label="Bills and site checks" value={s.work.length} hint={`${s.workGroups[0].cards.length} bill${s.workGroups[0].cards.length === 1 ? "" : "s"} · ${s.workGroups[1].cards.length} site check${s.workGroups[1].cards.length === 1 ? "" : "s"}`} />}
         <Tile label="Decisions waiting for you" value={decide.length} hint={soon ? `${soon} due this week` : "none due this week"} />

@@ -645,9 +645,15 @@ class Scheduler:
             return {"skipped": "not a run hour"}
         if not self._claim_daily(slot):
             return {"skipped": "already run"}
-        from mangotree.brain.sweep import Sweep
+        from mangotree.brain.sweep import Sweep, run_result
         from mangotree.brain.updater import Updater
         total: Dict[str, Any] = {"slot": slot, "read": 0, "drafts": 0, "errors": 0, "remaining": 0}
+        # What this run reports as settled counts from the end of the run before it, so a to-do that
+        # a call closed in between is in it too.
+        started = datetime.now(timezone.utc)
+        prev = (self.runs.find_one({"job": "brain"}, sort=[("at", -1)]) or {}).get("at")
+        prev = prev.replace(tzinfo=prev.tzinfo or timezone.utc) if isinstance(prev, datetime) else None
+        since = prev if prev and started - prev < timedelta(hours=26) else started
         try:
             updater = Updater(self.mongo, store)
             for _ in range(self.BRAIN_ROUNDS):
@@ -667,8 +673,23 @@ class Scheduler:
                 total.update({"sent_checked": done.get("checked", 0), "sent_closed": len(done.get("drafts") or []) + len(done.get("items") or [])})
             except Exception:
                 logger.exception("weighing the sent mail failed")
-            redone = Sweep(self.mongo, store).rewrite_outdated(limit=5)
+            # Then every person's open to-dos are read over against the record (2026-11-21: at both
+            # runs, not once a day): what is done is closed and what is said twice is merged. Monday's
+            # first reading is the thorough one, against the emails word for word.
+            sweeper = Sweep(self.mongo, store)
+            try:
+                deep = slot == "brain_06" and self._now_local().weekday() == 0
+                sw = sweeper.run(deep=deep, aside=False)
+                total["todos"] = {"deep": deep, "files": len(sw["files"]), "closed": sum(f.get("done", 0) + f.get("duplicate", 0) for f in sw["files"].values()),
+                                  "cost_usd": sw["cost_usd"], "failed": len(sw["failed"])}
+            except Exception:
+                logger.exception("reading the to-dos over failed")
+            redone = sweeper.rewrite_outdated(limit=5)
             total.update({"replies_rewritten": len(redone["rewritten"]), "replies_closed": len(redone["closed"]), "rewrite_failed": len(redone["failed"])})
+            try:
+                total["result"] = run_result(self.mongo, store, since, answered=total.get("sent_closed", 0))
+            except Exception:
+                logger.exception("the run's result could not be counted")
             from mangotree.api import swr
             swr.clear()
             self._record("brain", not total["errors"] and not total["rewrite_failed"], total)
@@ -718,11 +739,17 @@ class Scheduler:
         store = BrainStore(self.mongo)
         out: Dict[str, Any] = {}
         try:
-            # Monday's reading is the thorough one (against the emails word for word); the other days' is the short one.
-            deep = self._now_local().weekday() == 0
-            sw = Sweep(self.mongo, store).run(deep=deep, aside=False)      # the daily reading closes what is done; it puts nothing aside for being old
-            out["sweep"] = {"deep": deep, "files": len(sw["files"]), "closed": sum(f.get("done", 0) + f.get("duplicate", 0) + f.get("put_aside", 0) for f in sw["files"].values()),
-                            "cost_usd": sw["cost_usd"], "failed": len(sw["failed"])}
+            # The 6 am run reads the lists over (2026-11-21). Only when it has not — the switch is off,
+            # or it failed — is that done here, so the email never goes out on lists nobody checked.
+            did = self.runs.find_one({"job": "brain", "detail.todos.files": {"$exists": True}, "at": {"$gte": datetime.now(timezone.utc) - timedelta(hours=4)}})
+            if did:
+                out["sweep"] = {"by": "the 6 am run", **(did["detail"].get("todos") or {})}
+            else:
+                # Monday's reading is the thorough one (against the emails word for word); the other days' is the short one.
+                deep = self._now_local().weekday() == 0
+                sw = Sweep(self.mongo, store).run(deep=deep, aside=False)      # the daily reading closes what is done; it puts nothing aside for being old
+                out["sweep"] = {"deep": deep, "files": len(sw["files"]), "closed": sum(f.get("done", 0) + f.get("duplicate", 0) + f.get("put_aside", 0) for f in sw["files"].values()),
+                                "cost_usd": sw["cost_usd"], "failed": len(sw["failed"])}
         except Exception as exc:   # the email still goes if the reading-over fails
             logger.exception("morning sweep failed")
             out["sweep"] = {"error": str(exc)[:300]}

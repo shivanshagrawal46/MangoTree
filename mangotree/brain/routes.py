@@ -580,6 +580,11 @@ def install(app: FastAPI, mongo: Mongo, jobs) -> None:
         out["people"] = [{"person": p, "name": t["name"]} for p, t in TEAM.items() if p != me]
         out["can_give"] = user.get("role") == "ceo"
         out["team"] = myday.team(me) if user.get("role") == "ceo" else None
+        # What the last of the two daily runs settled for this person (2026-11-21).
+        last = mongo.db["scheduled_runs"].find_one({"job": "brain", "detail.result.people": {"$exists": True}}, sort=[("at", -1)])
+        if last:
+            res = last["detail"]["result"]
+            out["check"] = {"at": last["at"], "emails": res.get("emails"), **(res["people"].get(me) or {"left": 0, "replies_left": 0, "closed": [], "n_closed": 0})}
         return data.clean(out)
 
     @app.post("/brain/tasks")

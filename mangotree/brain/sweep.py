@@ -29,7 +29,7 @@ from mangotree.storage.mongo import Mongo
 
 from . import config as bc
 from . import prompts
-from .context import day, property_block
+from .context import day, portfolio_block, property_block
 from .llm import BrainError, cost_of, structured, system_blocks
 from .store import OWNERS, BrainStore, name_of, now
 
@@ -79,8 +79,48 @@ every open item one verdict.
 why — one plain sentence a person can check. Give a verdict for every id below, and only those."""
 
 
+#: The general file's to-dos often name a person or a matter and not the property ("identify the
+#: Armstrongs' property and start the foreclosure" stayed open for weeks while the Tower Road file
+#: carried that very work). Read with every property in front of it, such a line can be settled.
+GENERAL = """
+EVERY PROPERTY IN BRIEF is given above the items. An item of this file that only asks to find out
+which property or person something is about is done once the list answers it. An item that
+repeats work a property's own file already carries as an open item of its own is done here too.
+In both cases why names the property, so the person knows where the work now sits. Where the
+list does not plainly answer it, keep the item."""
+
+
 def _aware(d: Any) -> Optional[datetime]:
     return d.replace(tzinfo=d.tzinfo or timezone.utc) if isinstance(d, datetime) else None
+
+
+def run_result(mongo: Mongo, store: BrainStore, since: datetime, *, answered: int = 0) -> Dict[str, Any]:
+    """What one of the two daily runs settled, in plain counts (asked for on 2026-11-21): the emails
+    it read and how many of them need a reply, and for each person at RKB which to-dos it found
+    done and how many are left. Kept with the run, and shown to each person on Today."""
+    from .myday import TEAM
+    since = _aware(since)
+    people: Dict[str, Dict[str, Any]] = {p: {"left": 0, "replies_left": 0, "closed": []} for p in TEAM}
+    for f in store.list_files():
+        for i in f.get("open_items") or []:
+            p = people.get(i.get("owner"))
+            if p is None:
+                continue
+            if i.get("status") == "open":
+                p["left"] += 1
+                p["replies_left"] += int(i.get("kind") == "reply")
+            elif _aware(i.get("closed_at")) and _aware(i["closed_at"]) >= since and i.get("closed_by") in ("sweep", "mail", "brain", "call"):
+                how = "reply found sent" if i.get("closed_by") == "mail" else "said twice" if i.get("status") == "dropped" else "found done"
+                p["closed"].append({"title": i.get("title"), "property": name_of(f["property_id"]), "how": how, "note": str(i.get("closed_note") or "")[:300]})
+    for p in people.values():
+        p["n_closed"] = len(p["closed"])
+        p["closed"] = p["closed"][:12]
+    read: Dict[str, bool] = {}
+    for e in store.events.find({"status": "done"}, {"sha": 1, "at": 1, "reply_wanted": 1}).sort("at", -1).limit(400):
+        if _aware(e.get("at")) and _aware(e["at"]) >= since:
+            read[e["sha"]] = read.get(e["sha"], False) or bool(e.get("reply_wanted"))
+    wanted = sum(1 for v in read.values() if v)
+    return {"emails": {"read": len(read), "reply_needed": wanted, "no_reply_needed": len(read) - wanted, "found_answered": int(answered)}, "people": people}
 
 
 class Sweep:
@@ -136,8 +176,10 @@ class Sweep:
             lines.append(f"- [{i['id']}] ({i.get('owner')}, {i.get('kind')}{due}; came from: {came}) {i.get('title')}" + (f" — {i['detail']}" if i.get("detail") else ""))
         user = (f"TODAY: {today:%Y-%m-%d}   THE LAST SEVEN DAYS BEGIN: {week:%Y-%m-%d}\n\n{property_block(self.mongo, self.store, pid, file=file)}\n\n"
                 f"=== CALLS ABOUT THIS PROPERTY SINCE {today - timedelta(days=21):%Y-%m-%d} ===\n{self._calls_text(pid, today - timedelta(days=21))}\n\n"
+                + (portfolio_block(self.store) + "\n\n" if pid == bc.GENERAL_ID else "") +
                 f"=== THE OPEN ITEMS TO READ OVER ({len(items)}) ===\n" + "\n".join(lines))
-        job = (prompts.general_note() if pid == bc.GENERAL_ID else "") + "\n" + SWEEP.replace("@@OWNERS@@", ", ".join(OWNERS)) + REPLIES
+        job = ((prompts.general_note() if pid == bc.GENERAL_ID else "") + "\n" + SWEEP.replace("@@OWNERS@@", ", ".join(OWNERS))
+               + (GENERAL if pid == bc.GENERAL_ID else "") + REPLIES)
         drafts = self.store.list_drafts(pid=pid) if deep else []
         if drafts:
             # The waiting replies are checked on the thorough reading only: whether a draft is still
