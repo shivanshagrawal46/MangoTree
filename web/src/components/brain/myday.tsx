@@ -1,14 +1,16 @@
 "use client";
 
-/* My day — one person's own work, and nothing else (the layout agreed on 2026-11-18).
+/* My day — one person's own work, and nothing else.
 
-   Four numbers at the top. Then two lists side by side, never mixed:
-     · Replies to send  — grouped Late / Today / Waiting longer; one button, "Read and send".
-     · My to-dos        — grouped Decide / Do; one button, "Done".
-   (JP Sir and Manjunath Sir have "Bills and site checks" where Rakesh Sir has replies.)
-   About seven rows of each show; "more" opens the rest in place. A click on a row's words
-   opens that row in place: the whole line, its detail, and the email or call it came from.
-   One thin strip under them says what came in from the sites.
+   Laid out as an admin page (2026-11-21): flat notices for what came in from the sites (new daily
+   logs, new bills), one line on what the last daily check settled, one row of plain numbers, then
+   one table per kind of work, never mixed:
+     · Replies    — a written draft ("Review draft") or a reply still to write ("Mark done").
+     · Decisions  — overdue first, then by due date.
+     · To do      — the same.
+   (JP Sir and Manjunath Sir also have "Bills and site checks".) Five rows of each show; "View all"
+   opens the rest in place. A click on a row's words opens it in place: the whole line, its detail,
+   and the email or call it came from.
 
    The team is NOT here. It has its own page (TeamPage, Rakesh Sir only): he sees each
    person's list, gives a task, sends a reminder — and cannot mark another person's work
@@ -18,7 +20,7 @@ import * as React from "react";
 import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { ArrowRight, Check, ChevronDown, Plus, Send } from "lucide-react";
+import { AlertTriangle, ArrowRight, Check, ChevronDown, Info, Plus, Send, X } from "lucide-react";
 import { api } from "@/lib/api";
 import { useEvidence } from "@/components/evidence";
 import { Button, Card, Dialog, DialogContent, Input, Select, Skeleton, Textarea } from "@/components/ui";
@@ -27,7 +29,6 @@ import type { Alerts } from "@/components/brain/followups";
 import { cn } from "@/lib/utils";
 import { errText, type DayBoard, type DayCard, type DayCheck, type Draft, type TeamRow } from "@/lib/brain";
 
-const SHOW = 7;                                   // rows of a list before "more"
 const usd = (n: number) => n.toLocaleString("en-US", { style: "currency", currency: "USD" });
 const daysSince = (iso?: string | null) => (iso ? Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000)) : null);
 const dayWord = (n: number) => `${n} day${n === 1 ? "" : "s"}`;
@@ -53,19 +54,8 @@ function useActions(onOpenDraft: (id: string) => void) {
   };
   return { done, openDraft: onOpenDraft, refresh };
 }
-type Actions = ReturnType<typeof useActions>;
 
 /* ───────────────────────── small pieces ───────────────────────── */
-
-function Tile({ label, value, hint, late }: { label: string; value: number; hint: string; late?: boolean }) {
-  return (
-    <div className="rounded-xl border border-line bg-elev px-4 py-3">
-      <div className="text-[10.5px] font-semibold uppercase tracking-[0.09em] text-faint">{label}</div>
-      <div className={cn("mt-0.5 text-[26px] font-semibold tracking-tight leading-tight tnum", late && value > 0 && "text-critical")}>{value}</div>
-      <div className="text-[12px] text-muted truncate">{hint}</div>
-    </div>
-  );
-}
 
 function Chip({ tone, children }: { tone: "late" | "warn" | "plain"; children: React.ReactNode }) {
   return <span className={cn("ml-1.5 inline-block align-[1px] rounded px-1.5 py-px text-[10.5px] font-semibold whitespace-nowrap",
@@ -132,121 +122,156 @@ function lateChip(c: DayCard) {
   return <Chip tone="late">{n > 0 ? `${dayWord(n)} late` : "late"}</Chip>;
 }
 
-function ReplyRow({ c, a }: { c: DayCard; a: Actions }) {
-  const waited = daysSince(c.received);
-  const said = c.why_now && !/^(new|open for|the reply is written)/i.test(c.why_now) ? c.why_now : "";
-  const note = [waited ? `waiting ${dayWord(waited)}` : "came in today", said].filter(Boolean).join(" · ");
-  return (
-    <Row c={c} title={`${c.from_name || "Reply"} — ${c.subject || c.title}`} {...where(c)} note={note}
-      chips={<>{lateChip(c)}{c.stale && <Chip tone="warn">changed — read again</Chip>}</>}
-      right={<Button size="sm" variant={c.stale ? "secondary" : "primary"} onClick={() => c.draft_id && a.openDraft(c.draft_id)}>{c.stale ? "Read again" : <><Send size={12} /> Read and send</>}</Button>} />
-  );
-}
-
-function TodoRow({ c, a }: { c: DayCard; a: Actions }) {
-  const due = c.due && !c.overdue && !dueToday(c) ? dueText(c) : "";
-  const why = c.why_now && !/^(new|open for|waiting for your decision|due |was due)/i.test(c.why_now) ? c.why_now : "";
-  return (
-    <Row c={c} title={c.title} {...where(c)} note={[due, why].filter(Boolean).join(" · ") || undefined}
-      chips={<>{lateChip(c)}{c.assigned_by && <Chip tone="plain">from {c.assigned_by_name || "Rakesh Sir"}</Chip>}</>}
-      right={<Button size="sm" variant="secondary" onClick={() => a.done(c)}><Check size={12} /> Done</Button>} />
-  );
-}
-
-function WorkRow({ c }: { c: DayCard }) {
-  const note = [c.amount != null ? usd(c.amount) : "", c.days ? `${dayWord(c.days)} old` : ""].filter(Boolean).join(" · ");
-  return <Row c={c} title={c.title} {...where(c)} note={note || undefined} chips={c.overdue ? <Chip tone="late">late</Chip> : null}
-    right={<Link href={c.href}><Button size="sm" variant="secondary">Open <ArrowRight size={12} /></Button></Link>} />;
-}
-
-type Group = { label: string; cards: DayCard[] };
-
-/* One list: its heading, its groups, about seven rows, then "more" in place. */
-function ListCard({ title, groups, empty, row, all }: { title: string; groups: Group[]; empty: string; row: (c: DayCard) => React.ReactNode; all?: { href: string; label: string } }) {
-  const [open, setOpen] = React.useState(false);
-  const total = groups.reduce((n, g) => n + g.cards.length, 0);
-  // How many rows of each group show: the first SHOW rows of the whole list, group by group.
-  const before = groups.map((_, i) => groups.slice(0, i).reduce((n, g) => n + g.cards.length, 0));
-  const shown = groups.map((g, i) => (open ? g.cards : g.cards.slice(0, Math.max(0, SHOW - before[i]))));
-  return (
-    <Card className="overflow-hidden self-start">
-      <div className="flex items-baseline justify-between px-4 pt-3 pb-2.5">
-        <h2 className="text-[15px] font-semibold tracking-tight">{title} <span className="font-medium text-faint tnum">· {total}</span></h2>
-        {all && total > 0 && <Link href={all.href} className="text-[12.5px] font-semibold text-accent hover:underline">{all.label} →</Link>}
-      </div>
-      {total === 0 && <div className="border-t border-line px-4 py-6 text-[13px] text-muted">{empty}</div>}
-      {groups.map((g, i) => {
-        const rows = shown[i];
-        if (!rows.length) return null;
-        return (
-          <React.Fragment key={g.label}>
-            <div className="border-t border-line bg-sunken/70 px-4 py-1.5 text-[10.5px] font-semibold uppercase tracking-[0.09em] text-faint">{g.label} · {g.cards.length}</div>
-            <ul>{rows.map((c) => <React.Fragment key={c.key}>{row(c)}</React.Fragment>)}</ul>
-          </React.Fragment>
-        );
-      })}
-      {total > SHOW && (
-        <button type="button" onClick={() => setOpen((v) => !v)} className="w-full border-t border-line bg-sunken/30 px-4 py-2.5 text-center text-[12.5px] font-semibold text-accent hover:bg-sunken/70">
-          {open ? "Show fewer" : `${total - SHOW} more →`}
-        </button>
-      )}
-    </Card>
-  );
-}
-
 /* Late first, then by due date, then in the order the day was planned. */
 function byUrgency(cards: DayCard[]) {
   const t = (c: DayCard) => (c.due ? Date.parse(dueDay(c)) : Number.MAX_SAFE_INTEGER);
   return cards.map((c, i) => ({ c, i })).sort((x, y) => Number(!!y.c.overdue) - Number(!!x.c.overdue) || t(x.c) - t(y.c) || x.i - y.i).map((x) => x.c);
 }
 
-function split(cards: DayCard[]) {
-  const replies = cards.filter((c) => c.type === "reply");
-  const todos = cards.filter((c) => c.type === "todo");
-  const work = cards.filter((c) => c.type === "bill" || c.type === "check");
-  const fresh = (c: DayCard) => dueToday(c) || (daysSince(c.received) ?? 99) <= 1;
-  return {
-    replies, todos, work,
-    replyGroups: [
-      { label: "Late", cards: replies.filter((c) => c.overdue) },
-      { label: "Today", cards: replies.filter((c) => !c.overdue && fresh(c)) },
-      { label: "Waiting longer", cards: replies.filter((c) => !c.overdue && !fresh(c)) },
-    ],
-    todoGroups: [
-      { label: "Decide", cards: byUrgency(todos.filter((c) => c.kind === "decision")) },
-      { label: "Do", cards: byUrgency(todos.filter((c) => c.kind !== "decision")) },
-    ],
-    workGroups: [
-      { label: "Bills", cards: work.filter((c) => c.type === "bill") },
-      { label: "Site checks", cards: work.filter((c) => c.type === "check") },
-    ],
-  };
+/* ───────────────────────── Today: my own work ─────────────────────────
+   Laid out as an admin page (2026-11-21, after two looser layouts were turned down): flat notices
+   for what came in from the sites, one row of plain numbers, then one table per kind of work —
+   replies, decisions, things to do — never mixed. Colour is used for state only: red for overdue,
+   amber for due today. */
+
+const ROWS = 5;                                   // rows of a table before "View all"
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const dueShort = (c: DayCard) => (c.due ? `${Number(dueDay(c).slice(8, 10))} ${MONTHS[Number(dueDay(c).slice(5, 7)) - 1]}` : "");
+const raisedShort = (iso?: string | null) => (iso ? new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "America/New_York" }) : "");
+const count = (x: number, one: string, many: string) => `${x} ${x === 1 ? one : many}`;
+const BTN = "inline-flex h-[26px] items-center gap-1 whitespace-nowrap rounded-[5px] border px-2.5 text-[12px] font-medium transition-colors disabled:opacity-50";
+const BTN_PLAIN = cn(BTN, "border-line-strong bg-elev text-fg hover:bg-sunken");
+const BTN_MAIN = cn(BTN, "border-accent bg-accent text-white hover:opacity-90");
+
+function State({ tone, children }: { tone?: "red" | "amber" | "green"; children: React.ReactNode }) {
+  return (
+    <span className={cn("inline-flex items-center gap-1.5 text-[12.5px]", tone === "red" ? "font-medium text-critical" : tone === "amber" ? "font-medium text-high" : "text-fg/80")}>
+      <i className={cn("h-[7px] w-[7px] shrink-0 rounded-full", tone === "red" ? "bg-critical" : tone === "amber" ? "bg-high" : tone === "green" ? "bg-good" : "bg-line-strong")} />
+      {children}
+    </span>
+  );
 }
 
-/* What came in from the sites: one thin strip, not a card of its own. */
-function SiteStrip() {
+/* Where a row stands against its date: overdue, due today, due in so many days; a reply with no date says how long it has waited. */
+function Standing({ c }: { c: DayCard }) {
+  if (c.overdue) { const n = daysLate(c); return <State tone="red">{n > 0 ? `Overdue ${dayWord(n)}` : "Overdue"}</State>; }
+  if (dueToday(c)) return <State tone="amber">Due today</State>;
+  if (c.due) { const n = -daysLate(c); return <State>{n === 1 ? "Due tomorrow" : `Due in ${dayWord(n)}`}</State>; }
+  if (c.type === "reply") { const w = daysSince(c.received); return <State>{w ? `Waiting ${dayWord(w)}` : "Came in today"}</State>; }
+  if (c.days) return <State>{dayWord(c.days)} old</State>;
+  return <span className="text-faint">—</span>;
+}
+
+type Col = { head: string; width?: number; right?: boolean; cell: (c: DayCard) => React.ReactNode };
+
+function TableRow({ c, cols, lead }: { c: DayCard; cols: Col[]; lead: (c: DayCard) => string }) {
+  const [open, setOpen] = React.useState(false);
+  const text = lead(c);
+  return (
+    <>
+      <tr className="group border-t border-line hover:bg-sunken/40">
+        <td className="h-[38px] max-w-0 cursor-pointer pl-4 pr-3" onClick={() => setOpen((v) => !v)} title={open ? "Close" : "Click to read it in full"}>
+          <div className="flex items-center gap-1.5">
+            <span className={cn("min-w-0 text-[13px] font-medium", open ? "whitespace-normal py-2 leading-snug" : "truncate")}>{text}</span>
+            {c.assigned_by && <span className="shrink-0 rounded-[3px] bg-sunken px-1.5 text-[11px] text-muted">from {c.assigned_by_name || "Rakesh Sir"}</span>}
+            <ChevronDown size={13} className={cn("shrink-0 text-faint opacity-0 transition group-hover:opacity-100", open && "rotate-180 opacity-100")} />
+          </div>
+        </td>
+        {cols.map((col) => <td key={col.head || "act"} className={cn("truncate px-3 text-[12.5px] text-fg/80", col.right && "pl-3 pr-4 text-right")}>{col.cell(c)}</td>)}
+      </tr>
+      {open && <tr><td colSpan={cols.length + 1} className="bg-sunken/25 pt-2.5"><More c={c} shown={text} /></td></tr>}
+    </>
+  );
+}
+
+/* One kind of work as a table: its name and count, column heads, five rows, and the rest on request. */
+function WorkTable({ title, hint, lead, leadHead, cards, cols, empty }: { title: string; hint: string; lead: (c: DayCard) => string; leadHead: string; cards: DayCard[]; cols: Col[]; empty: string }) {
+  const [all, setAll] = React.useState(false);
+  const rows = all ? cards : cards.slice(0, ROWS);
+  return (
+    <section className="mt-3.5 overflow-hidden rounded-md border border-line bg-elev">
+      <div className="flex items-center justify-between gap-3 px-4 py-2.5">
+        <h2 className="flex items-center gap-2 text-[14px] font-semibold">
+          {title}
+          <span className="rounded-[3px] bg-sunken px-1.5 py-px text-[12px] font-medium text-muted tnum">{cards.length}</span>
+          <span className="hidden text-[12.5px] font-normal text-muted sm:inline">{hint}</span>
+        </h2>
+        {cards.length > ROWS && <button type="button" onClick={() => setAll((v) => !v)} className="text-[12.5px] font-medium text-accent hover:underline">{all ? "Show fewer" : "View all"}</button>}
+      </div>
+      {cards.length === 0 ? <div className="border-t border-line px-4 py-5 text-[13px] text-muted">{empty}</div> : (
+        <table className="w-full table-fixed border-collapse">
+          <colgroup><col />{cols.map((col) => <col key={col.head || "act"} style={{ width: col.width }} />)}</colgroup>
+          <thead>
+            <tr className="border-t border-line bg-sunken/50 text-left text-[11.5px] font-medium text-muted">
+              <th className="py-1.5 pl-4 pr-3 font-medium">{leadHead}</th>
+              {cols.map((col) => <th key={col.head || "act"} className={cn("px-3 py-1.5 font-medium", col.right && "pr-4 text-right")}>{col.head}</th>)}
+            </tr>
+          </thead>
+          <tbody>{rows.map((c) => <TableRow key={c.key} c={c} cols={cols} lead={lead} />)}</tbody>
+        </table>
+      )}
+      {cards.length > ROWS && (
+        <div className="flex items-center justify-between border-t border-line bg-sunken/50 px-4 py-1.5 text-[12px] text-muted">
+          <span>Showing {rows.length} of {cards.length} · overdue first, then by due date</span>
+          <button type="button" onClick={() => setAll((v) => !v)} className="font-medium text-accent hover:underline">{all ? "Show fewer" : `View all ${cards.length}`}</button>
+        </div>
+      )}
+    </section>
+  );
+}
+
+/* What came in from the sites, as flat notices above everything: new daily logs, new bills.
+   A notice a person has closed stays closed (on this browser) until Buildertrend brings something new. */
+const SEEN_KEY = "mt_today_seen";
+function Notices() {
   const q = useQuery({ queryKey: ["brain", "alerts"], queryFn: () => api.get<Alerts>("/brain/alerts"), staleTime: 60_000, refetchInterval: 180_000 });
+  // Read once, in the browser. (On the server there is no data yet, so nothing is drawn there either way.)
+  const [seen, setSeen] = React.useState<Record<string, string>>(() => {
+    try { return typeof window === "undefined" ? {} : JSON.parse(window.localStorage.getItem(SEEN_KEY) || "{}"); } catch { return {}; }
+  });
   const a = q.data;
-  if (!a || (a.new_logs.length === 0 && a.in_review.count === 0)) return null;
+  if (!a) return null;
   const logs = a.new_logs.reduce((n, l) => n + l.count, 0);
   const fresh = a.in_review.bills.filter((b) => b.new);
+  const sig = { logs: `${a.read_at || ""}:${logs}`, bills: fresh.map((b) => b.bill_id).sort().join(",") };
+  const close = (k: "logs" | "bills") => { const next = { ...seen, [k]: sig[k] }; setSeen(next); try { window.localStorage.setItem(SEEN_KEY, JSON.stringify(next)); } catch { /* private mode: closed for this visit only */ } };
+  const showLogs = logs > 0 && seen.logs !== sig.logs;
+  const showBills = fresh.length > 0 && seen.bills !== sig.bills;
+  if (!showLogs && !showBills) return null;
+  const read = a.read_at ? new Date(a.read_at).toLocaleString("en-US", { timeZone: "America/New_York", weekday: "short", hour: "numeric", minute: "2-digit" }) : "";
+  const bar = "grid grid-cols-[16px_minmax(0,1fr)_auto_auto] items-center gap-2.5 rounded-[4px] border border-l-[3px] px-3 py-[7px] text-[13px]";
+  const shortName = (p: string) => p.replace(/^\d+\s+/, "");
   return (
-    <Card className="mt-3.5 grid sm:grid-cols-[1fr_1fr_auto] overflow-hidden">
-      <div className="px-4 py-2.5 text-[13px] min-w-0">
-        <span className="block text-[10.5px] font-semibold uppercase tracking-[0.09em] text-faint">New from the sites</span>
-        {logs === 0 ? <span className="text-muted">No new daily log since Buildertrend was last read.</span> : (
-          <span className="block truncate">{a.new_logs.map((l, i) => <React.Fragment key={l.property_id}>{i > 0 && " · "}<Link href={`/property/${l.property_id}?tab=site`} className="font-semibold hover:text-accent">{l.property}</Link> {l.count} new log{l.count === 1 ? "" : "s"}</React.Fragment>)}</span>
-        )}
-      </div>
-      <div className="px-4 py-2.5 text-[13px] min-w-0 sm:border-l border-line">
-        <span className="block text-[10.5px] font-semibold uppercase tracking-[0.09em] text-faint">Bills waiting</span>
-        {a.in_review.count === 0 ? <span className="text-muted">None.</span> : (
-          <span className="block truncate"><b className="font-semibold tnum">{a.in_review.count} bill{a.in_review.count === 1 ? "" : "s"} · {usd(a.in_review.amount)}</b>
-            {fresh.length > 0 && <> · {fresh.length} new: {fresh.map((b) => `${b.property.replace(/^\d+\s+/, "")} ${b.title.toLowerCase()}`).join(", ")}</>}</span>
-        )}
-      </div>
-      <div className="px-4 py-2.5 self-center sm:border-l border-line"><Link href="/bills" className="text-[12.5px] font-semibold text-accent hover:underline whitespace-nowrap">Open bills →</Link></div>
-    </Card>
+    <div className="mt-4 grid gap-1.5">
+      {showLogs && (
+        <div className={cn(bar, "border-money-in/25 border-l-money-in bg-money-in/[0.045]")}>
+          <Info size={15} className="text-money-in" />
+          <div className="truncate">
+            <b className="font-semibold">{count(logs, "new daily log", "new daily logs")}</b>
+            <span className="ml-2 text-fg/75">
+              {a.new_logs.map((l, i) => <React.Fragment key={l.property_id}>{i > 0 && " · "}<Link href={`/property/${l.property_id}?tab=site`} className="hover:text-money-in hover:underline">{shortName(l.property)} ({l.count})</Link></React.Fragment>)}
+              {read && <span className="text-muted"> · Buildertrend read {read} ET</span>}
+            </span>
+          </div>
+          <span />
+          <button type="button" aria-label="Close this notice" onClick={() => close("logs")} className="grid h-5 w-5 place-items-center rounded text-faint hover:bg-sunken hover:text-fg"><X size={13} /></button>
+        </div>
+      )}
+      {showBills && (
+        <div className={cn(bar, "border-high/25 border-l-high bg-high-soft/60")}>
+          <AlertTriangle size={15} className="text-high" />
+          <div className="truncate">
+            <b className="font-semibold">{count(fresh.length, "new bill waiting for approval", "new bills waiting for approval")}</b>
+            <span className="ml-2 text-fg/75">
+              {fresh.map((b, i) => <React.Fragment key={b.bill_id}>{i > 0 && " · "}<Link href={`/bills/${b.bill_id}`} className="hover:text-high hover:underline">{shortName(b.property)} <span className="tnum">{usd(b.amount)}</span></Link></React.Fragment>)}
+              <span className="text-muted"> · {count(a.in_review.count, "bill", "bills")} waiting in all, <span className="tnum">{usd(a.in_review.amount)}</span></span>
+            </span>
+          </div>
+          <Link href="/bills" className="whitespace-nowrap text-[12.5px] font-medium text-high hover:underline">Review bills</Link>
+          <button type="button" aria-label="Close this notice" onClick={() => close("bills")} className="grid h-5 w-5 place-items-center rounded text-faint hover:bg-sunken hover:text-fg"><X size={13} /></button>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -255,19 +280,19 @@ function CheckLine({ k }: { k: DayCheck }) {
   const [open, setOpen] = React.useState(false);
   const when = new Date(k.at).toLocaleString("en-US", { timeZone: "America/New_York", weekday: "short", hour: "numeric", minute: "2-digit" });
   const e = k.emails;
-  const n = (x: number, one: string, many: string) => `${x} ${x === 1 ? one : many}`;
   return (
-    <div className="mt-4 rounded-lg border border-line bg-elev px-4 py-2 text-[12.5px] text-muted">
+    <div className="mt-3 rounded-md border border-line bg-elev px-4 py-2 text-[12.5px] text-muted">
       <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5">
         <b className="font-semibold text-fg">Last check: {when} ET</b>
-        {e && <span>{n(e.read, "new email", "new emails")} read: {n(e.reply_needed, "needs", "need")} a reply, {n(e.no_reply_needed, "needs", "need")} none{e.found_answered > 0 ? `; ${n(e.found_answered, "waiting reply was", "waiting replies were")} found already sent` : ""}.</span>}
-        <span>Your to-dos: {k.n_closed > 0 ? `${k.n_closed} found done and taken off` : "none found done"}, <b className="font-semibold text-fg tnum">{k.left}</b> left.</span>
-        {k.closed.length > 0 && <button type="button" onClick={() => setOpen((v) => !v)} className="font-semibold text-accent hover:underline">{open ? "Hide" : "See which"}</button>}
+        {e && (e.read === 0 ? <span>No new email.</span>
+          : <span>{count(e.read, "new email", "new emails")} read: {count(e.reply_needed, "needs", "need")} a reply, {count(e.no_reply_needed, "needs", "need")} none{e.found_answered > 0 ? `; ${count(e.found_answered, "waiting reply was", "waiting replies were")} found already sent` : ""}.</span>)}
+        <span>Your to-dos: {k.n_closed > 0 ? `${k.n_closed} taken off` : "none taken off"}, <b className="font-semibold text-fg tnum">{k.left}</b> left.</span>
+        {k.closed.length > 0 && <button type="button" onClick={() => setOpen((v) => !v)} className="font-medium text-accent hover:underline">{open ? "Hide" : "See which"}</button>}
       </div>
       {open && (
         <ul className="mt-1.5 space-y-1 border-t border-line pt-1.5">
           {k.closed.map((c, i) => (
-            <li key={i}><span className="font-semibold text-fg">{c.title}</span> · {c.property} · {c.how}{c.note ? <span> — {c.note}</span> : null}</li>
+            <li key={i}><span className="font-medium text-fg">{c.title}</span> · {c.property}<span> — {c.note || c.how}</span></li>
           ))}
         </ul>
       )}
@@ -275,41 +300,70 @@ function CheckLine({ k }: { k: DayCheck }) {
   );
 }
 
-/* ───────────────────────── Today: my own work ───────────────────────── */
+function Figure({ label, value, hint, red }: { label: string; value: number; hint: string; red?: boolean }) {
+  return (
+    <div className="min-w-0 border-l border-line px-4 py-2.5 first:border-l-0">
+      <div className="text-[12px] text-muted">{label}</div>
+      <div className={cn("text-[22px] font-semibold leading-tight tracking-tight tnum", red && value > 0 && "text-critical")}>{value}</div>
+      <div className="truncate text-[12px] text-muted">{hint}</div>
+    </div>
+  );
+}
 
 export function MyDay() {
   const q = useQuery({ queryKey: ["brain", "myday"], queryFn: () => api.get<DayBoard>("/brain/myday"), placeholderData: (prev) => prev, refetchInterval: 60_000 });
   const [draft, setDraft] = React.useState<Draft | null>(null);
   const openDraft = async (id: string) => { try { setDraft(await api.get<Draft>(`/brain/drafts/${id}`)); } catch (e) { toast.error(errText(e)); } };
   const a = useActions(openDraft);
-  if (q.isLoading || !q.data) return <div className="mt-5 space-y-3.5"><Skeleton className="h-20" /><Skeleton className="h-96" /></div>;
+  if (q.isLoading || !q.data) return <div className="mt-5 space-y-3.5"><Skeleton className="h-16" /><Skeleton className="h-64" /><Skeleton className="h-64" /></div>;
   const d = q.data;
-  const s = split([...d.now, ...d.later]);
-  const decide = s.todoGroups[0].cards, doing = s.todoGroups[1].cards;
-  const late = [...s.replies, ...s.todos, ...s.work].filter((c) => c.overdue);
-  const soon = decide.filter((c) => c.due && daysLate(c) >= -7).length;
-  const changed = s.replies.filter((c) => c.stale).length;
-  const lateBy = [[late.filter((c) => c.type === "reply").length, "reply", "replies"], [late.filter((c) => c.type === "todo").length, "to-do", "to-dos"],
-    [late.filter((c) => c.type === "bill" || c.type === "check").length, "bill or check", "bills and checks"]] as const;
-  const lists = [s.replies.length > 0, s.work.length > 0, true].filter(Boolean).length;
+  const cards = [...d.now, ...d.later];
+  const drafted = (c: DayCard) => c.type === "reply" && !!c.draft_id;
+  // A reply is a written draft, or a to-do whose whole point is to answer someone. Overdue first, then what is written and ready to send.
+  const replyRank = (c: DayCard) => (c.overdue ? 0 : drafted(c) ? 1 : 2);
+  const replies = byUrgency(cards.filter((c) => c.type === "reply" || (c.type === "todo" && c.kind === "reply"))).map((c, i) => ({ c, i })).sort((x, y) => replyRank(x.c) - replyRank(y.c) || x.i - y.i).map((x) => x.c);
+  const decisions = byUrgency(cards.filter((c) => c.type === "todo" && c.kind === "decision"));
+  const todos = byUrgency(cards.filter((c) => c.type === "todo" && c.kind !== "decision" && c.kind !== "reply"));
+  const work = cards.filter((c) => c.type === "bill" || c.type === "check");
+  const late = cards.filter((c) => c.overdue);
+  const week = (list: DayCard[]) => list.filter((c) => c.due && !c.overdue && daysLate(c) >= -7).length;
+  const lateBy = [[late.filter((c) => replies.includes(c)).length, "reply", "replies"], [late.filter((c) => decisions.includes(c)).length, "decision", "decisions"],
+    [late.filter((c) => todos.includes(c)).length, "to-do", "to-dos"], [late.filter((c) => work.includes(c)).length, "bill or check", "bills and checks"]] as const;
+
+  const done = (c: DayCard): React.ReactNode => <button type="button" className={BTN_PLAIN} onClick={() => a.done(c)}><Check size={12} /> Mark done</button>;
+  const property: Col = { head: "Property", width: 178, cell: (c) => (c.property_id === "_general" ? "General" : <Link href={`/property/${c.property_id}`} className="hover:text-accent hover:underline">{c.property}</Link>) };
+  const raised: Col = { head: "Raised", width: 84, cell: (c) => <span className="tnum">{raisedShort(c.opened_at) || "—"}</span> };
+  const due: Col = { head: "Due", width: 84, cell: (c) => <span className="tnum">{dueShort(c) || "—"}</span> };
+  const standing: Col = { head: "Status", width: 142, cell: (c) => <Standing c={c} /> };
+  const replyCols: Col[] = [property, due, standing,
+    { head: "Draft", width: 148, cell: (c) => (!drafted(c) ? <span className="text-muted">Not drafted</span> : c.stale ? <State tone="amber">Changed, read again</State> : <State tone="green">Ready</State>) },
+    { head: "", width: 128, right: true, cell: (c) => (drafted(c)
+      ? <button type="button" className={c.stale ? BTN_PLAIN : BTN_MAIN} onClick={() => c.draft_id && a.openDraft(c.draft_id)}>{c.stale ? "Read again" : "Review draft"}</button>
+      : done(c)) }];
+  const todoCols: Col[] = [property, raised, due, standing, { head: "", width: 128, right: true, cell: done }];
+  const workCols: Col[] = [property,
+    { head: "Amount", width: 110, cell: (c) => <span className="tnum">{c.amount != null ? usd(c.amount) : "—"}</span> },
+    standing,
+    { head: "", width: 128, right: true, cell: (c) => <Link href={c.href} className={BTN_PLAIN}>Open <ArrowRight size={12} /></Link> }];
+  const replyLead = (c: DayCard) => (drafted(c) ? `${c.from_name || "Reply"} — ${c.subject || c.title}` : c.title);
+
   return (
     <>
+      <Notices />
       {d.check && <CheckLine k={d.check} />}
-      <div className={cn("mt-3 grid gap-3 grid-cols-2", s.replies.length > 0 && s.work.length > 0 ? "lg:grid-cols-5" : s.replies.length > 0 || s.work.length > 0 ? "lg:grid-cols-4" : "lg:grid-cols-3")}>
-        {s.replies.length > 0 && <Tile label="Replies to send" value={s.replies.length} hint={changed ? `${changed} changed since written — read again` : "all written and ready to read"} />}
-        {s.work.length > 0 && <Tile label="Bills and site checks" value={s.work.length} hint={`${s.workGroups[0].cards.length} bill${s.workGroups[0].cards.length === 1 ? "" : "s"} · ${s.workGroups[1].cards.length} site check${s.workGroups[1].cards.length === 1 ? "" : "s"}`} />}
-        <Tile label="Decisions waiting for you" value={decide.length} hint={soon ? `${soon} due this week` : "none due this week"} />
-        <Tile label="Things to do" value={doing.length} hint={`${d.done_today.length} done today`} />
-        <Tile label="Late" value={late.length} late hint={late.length ? lateBy.filter(([n]) => n > 0).map(([n, one, many]) => `${n} ${n === 1 ? one : many}`).join(" · ") : "nothing is late"} />
+
+      <div className={cn("mt-3 grid grid-cols-2 overflow-hidden rounded-md border border-line bg-elev", work.length > 0 ? "lg:grid-cols-5" : "lg:grid-cols-4")}>
+        <Figure label="Replies" value={replies.length} hint={`${replies.filter(drafted).length} drafted · ${replies.filter((c) => !drafted(c)).length} not drafted`} />
+        <Figure label="Decisions" value={decisions.length} hint={week(decisions) ? `${week(decisions)} due this week` : "none due this week"} />
+        <Figure label="To do" value={todos.length} hint={`${week(todos) ? `${week(todos)} due this week` : "none due this week"} · ${d.done_today.length} done today`} />
+        {work.length > 0 && <Figure label="Bills and site checks" value={work.length} hint={`${count(work.filter((c) => c.type === "bill").length, "bill", "bills")} · ${count(work.filter((c) => c.type === "check").length, "site check", "site checks")}`} />}
+        <Figure label="Overdue" value={late.length} red hint={late.length ? lateBy.filter(([n]) => n > 0).map(([n, one, many]) => `${n} ${n === 1 ? one : many}`).join(" · ") : "nothing is overdue"} />
       </div>
 
-      <div className={cn("mt-3.5 grid gap-3.5", lists > 1 && "lg:grid-cols-2")}>
-        {s.replies.length > 0 && <ListCard title="Replies to send" groups={s.replyGroups} empty="No reply is waiting to be sent." all={{ href: "/replies", label: "See all replies" }} row={(c) => <ReplyRow c={c} a={a} />} />}
-        {s.work.length > 0 && <ListCard title="Bills and site checks" groups={s.workGroups} empty="No bill or site check is waiting." all={{ href: "/chase", label: "See all follow-ups" }} row={(c) => <WorkRow c={c} />} />}
-        <ListCard title="My to-dos" groups={s.todoGroups} empty="Nothing is waiting for you. New things appear here as emails, calls and bills come in." row={(c) => <TodoRow c={c} a={a} />} />
-      </div>
-
-      <SiteStrip />
+      <WorkTable title="Replies" hint="People waiting to hear from you" leadHead="Subject" lead={replyLead} cards={replies} cols={replyCols} empty="Nobody is waiting for a reply from you." />
+      {work.length > 0 && <WorkTable title="Bills and site checks" hint="From Buildertrend" leadHead="Item" lead={(c) => c.title} cards={work} cols={workCols} empty="No bill or site check is waiting." />}
+      <WorkTable title="Decisions" hint="Waiting for your decision" leadHead="Decision" lead={(c) => c.title} cards={decisions} cols={todoCols} empty="No decision is waiting for you." />
+      <WorkTable title="To do" hint="Things for you to do or have done" leadHead="Task" lead={(c) => c.title} cards={todos} cols={todoCols} empty="Nothing is waiting for you. New things appear here as emails, calls and bills come in." />
 
       <Dialog open={!!draft} onOpenChange={(o) => !o && setDraft(null)}>
         <DialogContent wide className="max-h-[90vh] overflow-y-auto" title="Reply">
