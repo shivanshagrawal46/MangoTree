@@ -5,7 +5,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Check, Copy, ExternalLink, Mail, MailOpen, RefreshCw, X } from "lucide-react";
 import { api, subscribeJob } from "@/lib/api";
@@ -32,6 +32,37 @@ export function useDraftRefresh() {
   }, [qc]);
 }
 
+/* The email being answered, shown above the reply (asked for on 2026-11-21: "we should see the email
+   that came, to know what we are replying for"). Its own words only — what it quotes from earlier
+   messages is left out — in a box that scrolls, with the whole email one click away. */
+function Incoming({ o, onOpen }: { o: NonNullable<Draft["original"]>; onOpen: () => void }) {
+  const [all, setAll] = React.useState(false);
+  const text = (o.body || "").trim();
+  const long = text.length > 900 || text.split("\n").length > 12;
+  return (
+    <div className="mb-3">
+      <div className="mb-1 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
+        <div className="text-[11.5px] font-medium text-muted">The email you are replying to</div>
+        <button type="button" onClick={onOpen} className="text-[12px] font-medium text-accent hover:underline">Open the whole email</button>
+      </div>
+      <div className="rounded-md border border-line bg-sunken/50">
+        <div className="border-b border-line px-3 py-1.5 text-[12.5px]">
+          <span className="font-semibold">{o.from || "—"}</span>
+          <span className="text-muted"> · {fmtDate(o.date, "EEE d MMM yyyy, HH:mm")}</span>
+          <div className="truncate text-muted">{o.subject || "(no subject)"}</div>
+        </div>
+        <div className={cn("whitespace-pre-wrap px-3 py-2 text-[13px] leading-[1.6]", !all && "max-h-[190px] overflow-y-auto")}>{text || "(This email has no words of its own. Open the whole email to see what it carried.)"}</div>
+        {((o.attachments || []).length > 0 || long) && (
+          <div className="flex flex-wrap items-baseline justify-between gap-x-3 border-t border-line px-3 py-1.5 text-[12px] text-muted">
+            <span className="min-w-0 truncate">{(o.attachments || []).length > 0 ? `Attached: ${(o.attachments || []).join(", ")}` : ""}</span>
+            {long && <button type="button" onClick={() => setAll((v) => !v)} className="font-medium text-accent hover:underline">{all ? "Show less" : "Show all of it"}</button>}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function DraftCard({ draft, compact, onChange, showProperty = true }: { draft: Draft; compact?: boolean; onChange?: (d: Draft) => void; showProperty?: boolean }) {
   const [d, setD] = React.useState<Draft>(draft);
   const [body, setBody] = React.useState(draft.body || "");
@@ -43,6 +74,10 @@ export function DraftCard({ draft, compact, onChange, showProperty = true }: { d
   const refresh = useDraftRefresh();
   const evidence = useEvidence();
   const area = React.useRef<HTMLTextAreaElement>(null);
+  // The email it answers comes with a single draft, not with a list of them: fetched when the card is opened.
+  const whole = useQuery({ queryKey: ["brain", "draft-original", draft.draft_id], queryFn: () => api.get<Draft>(`/brain/drafts/${draft.draft_id}`),
+    enabled: open && !!draft.reply_to_sha && !draft.original, staleTime: 10 * 60_000 });
+  const original = draft.original || whole.data?.original;
 
   // When the draft changes underneath (the chat revised it, or it was sent), take the new version.
   const [seen, setSeen] = React.useState(draft);
@@ -136,6 +171,8 @@ export function DraftCard({ draft, compact, onChange, showProperty = true }: { d
               <span className="font-semibold text-high">Before you send: </span>{ownNote(d.note)}
             </div>
           )}
+          {original && <Incoming o={original} onOpen={() => evidence.open({ sha: original.sha256 })} />}
+          {original && <div className="mb-1 text-[11.5px] font-medium text-muted">Your reply</div>}
           <Input value={subject} onChange={(e) => setSubject(e.target.value)} onBlur={saveIfChanged} disabled={done} className="mb-2 text-[13px] font-medium" aria-label="Subject" />
           <textarea ref={area} value={body} onChange={(e) => setBody(e.target.value)} onBlur={saveIfChanged} disabled={done} spellCheck
             className="w-full rounded-xl border border-line bg-bg px-3.5 py-3 text-[13.5px] leading-[1.65] whitespace-pre-wrap focus:outline-none focus:ring-2 focus:ring-accent/30 resize-none min-h-[120px]" aria-label="Email text" />
@@ -160,7 +197,7 @@ export function DraftCard({ draft, compact, onChange, showProperty = true }: { d
             <span className="flex-1" />
             {d.outlook?.web_link && <a href={d.outlook.web_link} target="_blank" rel="noreferrer" className="text-xs text-accent hover:underline flex items-center gap-1"><ExternalLink size={11} /> Open in Outlook</a>}
             {d.outlook?.saved_at && !d.outlook.as_reply && d.outlook.why_not && <span className="basis-full text-[11.5px] text-high">Saved as a new email because {d.outlook.why_not}.</span>}
-            {d.reply_to_sha && <button type="button" onClick={() => evidence.open({ sha: d.reply_to_sha! })} className="text-xs text-accent hover:underline">See the email it answers</button>}
+            {d.reply_to_sha && !original && <button type="button" onClick={() => evidence.open({ sha: d.reply_to_sha! })} className="text-xs text-accent hover:underline">See the email it answers</button>}
           </div>
           {d.lookups?.length ? <div className="mt-2 text-[11px] text-faint">Looked at: {d.lookups.slice(0, 3).join("; ")}</div> : null}
         </div>
