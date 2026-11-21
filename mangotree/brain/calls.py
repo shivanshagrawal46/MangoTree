@@ -366,6 +366,19 @@ class Calls:
             taken.append(self._keep(self.client.note(n["id"]), "folder")["note_id"])
         return {"folder": fid, "taken": taken}
 
+    #: How far back the standing pull looks. A call shows in Granola only once its summary is
+    #: finished, which can be hours after it ended; a call already looked at is never fetched again.
+    NEW_DAYS = 4
+
+    def pull_new(self) -> Dict[str, Any]:
+        """The standing rule from 2026-11-21 (admin: "no fetch from the RKB-ROI folder fetch directly
+        for granola as we have done before"): every new call in Granola is looked at, the way the
+        past calls were — taken when an ROI Blocks person is a named speaker, else by its content.
+        A call put in the folder is still taken, without the content check."""
+        out = self.pull_past(since=max(SINCE, now() - timedelta(days=self.NEW_DAYS)))
+        out["taken"] = list(out.get("by_folder") or []) + list(out.get("by_speaker") or []) + list(out.get("by_content") or [])
+        return out
+
     def pull_past(self, since: datetime = SINCE, until: Optional[datetime] = None) -> Dict[str, Any]:
         """The calls already made: taken when an ROI Blocks person is a named speaker, else by content."""
         known = self._known()

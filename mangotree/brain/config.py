@@ -44,6 +44,59 @@ MAIL_BLOCK_CHARS = 700_000
 #: attached or uploaded in the same window is given to the model in full, once
 #: each, under its own heading. The largest fortnight measured was 420k characters.
 FILES_BLOCK_CHARS = 1_000_000
+#: How a newly arrived record is read into its file (2026-11-14).
+#:   "lean" — the model is handed the property's page, the last 14 days of emails
+#:            in full, a one-line list of every document on file, and the new
+#:            record with its own attachments in full; anything else it opens or
+#:            searches for itself, up to EVENT_LOOKUPS times.
+#:   "full" — the earlier way: every email AND every attachment of 14 days in
+#:            full with every record, and no way to look anything up.
+#: Reply drafts and chat are not affected: they keep the full record.
+EVENT_MODE = os.environ.get("MT_BRAIN_EVENT_MODE", "lean").strip().lower()
+#: Look-ups (open a document, search, recent mail …) one new record may use.
+#: Five since 2026-11-21 (admin: "a look up of 5 by ai"); three before.
+EVENT_LOOKUPS = 5
+#: When new records are read into the files and replies are drafted, on the firm's clock
+#: (US Eastern): twice a day and at no other time by itself (admin, 2026-11-21: "step 2 and
+#: step 3 should run automatically only twice a day once 11 am EST and 6 am EST"). A person
+#: can still start a reading by hand. A run missed at its hour (the server was down) is made
+#: up within RUN_LATE_HOURS, not later.
+RUN_HOURS = (6, 11)
+RUN_LATE_HOURS = 4
+#: The lean reading is made at high effort: what it is handed is small, so care is
+#: affordable. The second reading MUST use the same effort — a different effort
+#: makes the API store the whole prompt a second time instead of reusing it.
+EVENT_EFFORT = os.environ.get("MT_BRAIN_EFFORT_EVENT_LEAN", "high")
+#: A second reading of every entry before it is filed: what the record says that
+#: the entry left out, what it got wrong, an action nobody was given, and whether
+#: the reply decision is right. What it finds goes back to the writer once.
+EVENT_CHECK = os.environ.get("MT_BRAIN_EVENT_CHECK", "1").strip().lower() not in ("0", "false", "no")
+#: The document list: a document newer than this gets a line saying what it is;
+#: an older one is listed by name and date only. All of them can be opened.
+DOC_LIST_FULL_DAYS = 90
+DOC_LIST_LINE_CHARS = 280
+DOC_LIST_MAX = 600
+#: The mail a new record is read against (2026-11-14). A file whose conversations
+#: of the last 14 days come to no more than this, once cleaned, is given whole.
+#: A busier file is given the conversations of the last two days and those
+#: connected to the new record in full, and every other one in a single line.
+#: Whether a quoted message that stands in the chain as its own email is left out
+#: where it is quoted again. OFF: an email is kept as it was sent, its chain under
+#: it (admin directive 2026-11-14: "it's a more safer option"). Only the signature
+#: comes off. The code for leaving repeats out stays, to be measured, not used.
+MAIL_DROP_REPEATS = os.environ.get("MT_BRAIN_DROP_REPEATS", "0").strip().lower() in ("1", "true", "yes")
+MAIL_FULL_CHARS = 80_000
+#: Room for conversations older than two days that are connected to the new record.
+MAIL_CONNECTED_CHARS = 30_000
+#: A file with this many emails in the last day is busy enough for the stable
+#: parts of its prompt to be kept for an hour (written at twice the input price,
+#: read at a twentieth) rather than five minutes.
+BUSY_FILE_EMAILS = 3
+#: Whether a busy file's stable parts are kept for an hour at all. Off since 2026-11-21: new
+#: records are read in two runs a day, one file's records back to back (``updater.by_file``),
+#: so the next reading of a file comes within minutes and the five-minute store is enough —
+#: the hour would cost twice the input price to write and never be used.
+EVENT_CACHE_HOUR = os.environ.get("MT_BRAIN_CACHE_HOUR", "0").strip().lower() in ("1", "true", "yes")
 #: What the document search may place in one prompt. Past this, further passages are
 #: listed by number and opened on demand. (A general-file draft whose five
 #: searches each fanned out reached 1.43M tokens and was refused, 2026-11-12.)
@@ -66,5 +119,9 @@ SENDER_NAMES = {"rakesh": "Rakesh", "jp": "JP", "manjunath": "Manjunath"}
 #: Automatic processing of new mail (the scheduler calls the updater). Can be
 #: switched off from settings without a deploy.
 SETTING_ENABLED = "brain_enabled"
+#: Whether opening the Today page also starts a reading of unread mail, outside the two daily
+#: runs. On unless switched off (admin, 2026-11-21, kept it). The "Check for new mail" button
+#: always starts one.
+SETTING_READ_ON_OPEN = "brain_read_on_open"
 #: When on, a finished draft is also placed in the Outlook Drafts folder.
 SETTING_OUTLOOK_DRAFTS = "brain_outlook_drafts"

@@ -97,7 +97,7 @@ export type Home = {
   me: string; properties: PropertyLine[]; missing: { property_id: string; name: string }[]; drafts: Draft[];
   todos: OpenItem[]; waiting: OpenItem[]; activity: Activity[]; pending_records: number;
   stats: { drafts_sent: number; sent_as_written: number; avg_kept: number | null };
-  settings: { enabled: boolean; outlook_drafts: boolean };
+  settings: { enabled: boolean; outlook_drafts: boolean; read_on_open?: boolean; run_hours?: number[] }; reading?: boolean;
 };
 
 export type Source = { index: number; chunk_id: string; artifact_sha: string; citation: string; display_name?: string; date?: string; placement?: string };

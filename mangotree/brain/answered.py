@@ -76,6 +76,9 @@ LINK_LABEL = {"same_conversation": "in the same conversation", "direct_reply": "
               "to_same_person": "sent to the same person afterwards"}
 
 
+RULE = 2      # the closing rule a stored check was made under; an older "partly answered" is looked at once more
+
+
 def replied(verdict: Dict[str, Any]) -> bool:
     """Has RKB dealt with this email, so that no draft should be waiting for it?
 
@@ -127,8 +130,16 @@ class Answered:
             ors += [{"participants.to": {"$in": senders}}, {"participants.cc": {"$in": senders}}]
         if not ors:
             return []
-        q = {"source_type": "email", "date": {"$gt": art["date"]}, "participants.from": {"$in": rkb}, "sha256": {"$ne": art["sha256"]}, "$or": ors}
-        rows = list(self.mongo.artifacts.find(q, {**EMAIL_FIELDS, "references": 1}).sort("date", 1).limit(limit))
+        base = {"source_type": "email", "date": {"$gt": art["date"]}, "participants.from": {"$in": rkb}, "sha256": {"$ne": art["sha256"]}}
+        fields = {**EMAIL_FIELDS, "references": 1}
+        rows = list(self.mongo.artifacts.find({**base, "$or": ors}, fields).sort("date", 1).limit(limit))
+        # A reply in this very conversation is never crowded out: someone RKB writes to
+        # every day has more than ``limit`` later emails, and the reply may be the 26th.
+        own = [o for o in ors if "thread_key" in o or "in_reply_to" in o or "references" in o]
+        if own and len(rows) >= limit:
+            have = {r["sha256"] for r in rows}
+            rows += [r for r in self.mongo.artifacts.find({**base, "$or": own}, fields).sort("date", -1).limit(limit) if r["sha256"] not in have]
+            rows.sort(key=lambda r: r["date"])
         for r in rows:
             if art.get("thread_key") and r.get("thread_key") == art["thread_key"]:
                 r["link"] = "same_conversation"
@@ -148,7 +159,7 @@ class Answered:
         check is not paid for twice."""
         cands = self.candidates(art) if candidates is None else candidates
         base = {"checked_at": datetime.now(timezone.utc), "candidates": len(cands), "latest": cands[-1]["sha256"] if cands else None,
-                "by": [], "what_rkb_said": "", "still_owed": []}
+                "by": [], "what_rkb_said": "", "still_owed": [], "rule": RULE}
         if not cands:
             return {**base, "status": "not_answered"}
         frm = ", ".join(self.records.who(a) for a in ((art.get("participants") or {}).get("from") or [])[:2])
@@ -184,5 +195,11 @@ class Answered:
         if status in ("answered", "partly_answered") and not by:
             # It says RKB answered but named no email we hold: do not act on it.
             status = "unknown"
+        try:
+            # Every check is written down with its cost, so a day's spending can be counted (2026-11-21).
+            self.mongo.db["answer_checks"].insert_one({"at": base["checked_at"], "sha": art["sha256"], "status": status, "candidates": len(cands),
+                                                       "usage": r["usage"], "cost_usd": cost_of(r["usage"])})
+        except Exception:
+            pass
         return {**base, "status": status, "by": by, "what_rkb_said": str(d.get("what_rkb_said") or "")[:800],
                 "still_owed": [str(x)[:300] for x in (d.get("still_owed") or [])][:8], "cost_usd": cost_of(r["usage"])}

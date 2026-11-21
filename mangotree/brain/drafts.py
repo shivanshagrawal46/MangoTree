@@ -26,7 +26,7 @@ from . import config as bc
 from . import prompts
 from . import verify
 from .agent import run_loop
-from .answered import Answered, replied
+from .answered import RULE, Answered, replied
 from .context import EMAIL_FIELDS, Records, day, property_block
 from .lessons import Lessons, changed_enough
 from .llm import add_usage, cost_of, system_blocks
@@ -66,6 +66,13 @@ def similarity(a: str, b: str) -> float:
     return round(difflib.SequenceMatcher(None, a, b, autojunk=False).ratio(), 3)
 
 
+def _unseen(prev: Dict[str, Any], latest: Optional[str]) -> bool:
+    """Is there something the stored check has not weighed? New mail from RKB, a check that
+    could not run, or a "partly answered" given before a reply to that very email closed a draft."""
+    return (prev.get("latest") != latest or prev.get("status") in (None, "unknown")
+            or (prev.get("status") == "partly_answered" and prev.get("rule") != RULE))
+
+
 def _left_open(verdict: Dict[str, Any]) -> str:
     """What RKB's reply did not take up, for the note on a draft closed because RKB replied."""
     owed = [str(x) for x in (verdict.get("still_owed") or []) if x]
@@ -88,6 +95,21 @@ class DraftWriter:
     def sender_addresses(self, sender: str) -> List[str]:
         p = self.mongo.people.find_one({"person_id": sender}, {"addresses": 1, "send_as": 1}) or {}
         return [str(a).lower() for a in (p.get("addresses") or []) + (p.get("send_as") or [])]
+
+    def with_rakesh_copied(self, sender: str, to: Sequence[Dict[str, Any]], cc: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """The copy line of a reply that goes out from Manjunath Sir or JP Sir always has Rakesh Sir on it
+        (admin, 2026-11-21). Only Rakesh Sir's mailboxes are read: a reply he is not copied on is never
+        seen here, and the reply and its to-do would stay on the list after it was sent."""
+        cc = list(cc or [])
+        if sender == bc.DEFAULT_SENDER:
+            return cc
+        his = self.sender_addresses(bc.DEFAULT_SENDER)
+        there = {str(x.get("email") or "").lower() for x in list(to or []) + cc}
+        if not his or there & set(his):
+            return cc
+        addr = next((a for a in his if a.endswith("@mtreh.com")), his[0])
+        name = (self.records.people_by_address().get(addr) or {}).get("display_name") or "Rakesh Bhargava"
+        return cc + [{"name": name, "email": addr}]
 
     def _user(self, sender: str) -> Dict[str, Any]:
         u = self.mongo.db["users"].find_one({"user_id": sender}, {"_id": 0, "user_id": 1, "name": 1, "role": 1}) or {}
@@ -265,8 +287,9 @@ class DraftWriter:
         meta["verification"] = {"ran": bool(last.get("ran")), "passes": len(passes), "statements_checked": last.get("statements_checked", 0),
                                 "found": found_first, "corrected": max(0, found_first - len(open_problems)) if len(passes) > 1 else 0,
                                 "open": open_problems}
+        to_people = people or kit._people(to_default)
         doc = {"property_ids": [p for p in pids if p], "reply_to_sha": email_sha, "thread_key": art.get("thread_key"),
-               "to": people or kit._people(to_default), "cc": kit._people(out.get("cc") or []),
+               "to": to_people, "cc": self.with_rakesh_copied(sender, to_people, kit._people(out.get("cc") or [])),
                "subject": str(out.get("subject") or f"Re: {art.get('subject') or ''}").strip()[:300], "body": body,
                "note": note[:2500], "sender": sender, "origin": "auto", "why": why, "urgency": urgency,
                "points": list(points), "in_reply_to": self._answers(art),
@@ -280,7 +303,9 @@ class DraftWriter:
                 self.store.drafts.update_many({"thread_key": art["thread_key"], "status": "ready", "origin": "auto"},
                                               {"$set": {"status": "superseded", "updated_at": now(), "superseded_by_sha": email_sha}})
             d = self.store.create_draft(doc)
-        if self.store.setting(bc.SETTING_OUTLOOK_DRAFTS, False):
+        # Outlook's Drafts folder is Rakesh Sir's own. A reply that goes out from Manjunath Sir or JP Sir
+        # stays here as a draft: he copies it and sends it from his own mailbox.
+        if sender == bc.DEFAULT_SENDER and self.store.setting(bc.SETTING_OUTLOOK_DRAFTS, False):
             try:
                 self.to_outlook(d["draft_id"])
             except Exception as exc:
@@ -306,19 +331,27 @@ class DraftWriter:
         sent = self.mongo.artifacts.find_one({"sha256": by.get("sha")}, {"sha256": 1, "date": 1, "body_clean": 1, "subject": 1}) if by.get("sha") else None
         made = draft.get("written_at") or draft.get("created_at")
         made = made.replace(tzinfo=made.tzinfo or timezone.utc) if made else None
-        after_draft = bool(sent and sent.get("date") and made and sent["date"] >= made)
+        sent_on = sent.get("date") if sent else None
+        sent_on = sent_on.replace(tzinfo=sent_on.tzinfo or timezone.utc) if sent_on else None
+        after_draft = bool(sent_on and made and sent_on >= made)
         fields: Dict[str, Any] = {
             "status": "sent", "auto_closed": True, "sent_sha": by.get("sha"), "sent_at": by.get("at"), "sent_by": by.get("who"), "stale": None,
             "closed_at": now(), "closed_note": (f"{by.get('who') or 'RKB'} replied on {day(by.get('at'), '%d %b %Y %H:%M')} UTC"
                                                + (f" (“{by.get('subject')}”)" if by.get("subject") else "") + f". {verdict.get('what_rkb_said') or ''}"
                                                + _left_open(verdict)).strip(),
-            "answer_check": {k: verdict.get(k) for k in ("status", "latest", "checked_at", "what_rkb_said", "still_owed", "candidates")},
+            "answer_check": {k: verdict.get(k) for k in ("status", "latest", "checked_at", "what_rkb_said", "still_owed", "candidates", "rule")},
             "answered_before_draft": not after_draft,
         }
         if after_draft and (sent.get("body_clean") or "").strip():
             sim = similarity(draft.get("original_body") or draft.get("body") or "", sent["body_clean"])
             fields.update({"kept_ratio": sim, "sent_as_written": sim >= 0.9})
         out = self.store.update_draft(draft["draft_id"], fields) or draft
+        # The to-do that said "reply to this" leaves the list with the draft when the email is answered.
+        # When RKB replied to it only in part, the to-do stays and says what was sent and what is still owed.
+        if verdict.get("status") == "answered":
+            self.store.close_reply_items(draft.get("reply_to_sha"), note=fields["closed_note"], by="mail", sha=by.get("sha"))
+        else:
+            self.store.note_reply_items(draft.get("reply_to_sha"), fields["closed_note"])
         for pid in draft.get("property_ids") or [bc.GENERAL_ID]:
             self.store.add_activity(pid, at=by.get("at") or now(), kind="reply_sent", who=by.get("who") or "RKB",
                                     title=f"Reply sent by {by.get('who') or 'RKB'} — draft closed",
@@ -352,13 +385,13 @@ class DraftWriter:
         cands = self.answered.candidates(art)
         prev = draft.get("answer_check") or {}
         latest = cands[-1]["sha256"] if cands else None
-        if cands and (force or prev.get("latest") != latest or prev.get("status") in (None, "unknown")):
+        if cands and (force or _unseen(prev, latest)):
             verdict = self.answered.check(art, candidates=cands)
             if replied(verdict):
                 if fields:
                     self.store.update_draft(draft["draft_id"], fields)
                 return self.close_as_answered({**draft, **fields}, verdict)
-            fields["answer_check"] = {k: verdict.get(k) for k in ("status", "latest", "checked_at", "what_rkb_said", "still_owed", "candidates", "error")}
+            fields["answer_check"] = {k: verdict.get(k) for k in ("status", "latest", "checked_at", "what_rkb_said", "still_owed", "candidates", "rule", "error")}
             if verdict["status"] == "partly_answered":
                 by = (verdict.get("by") or [{}])[-1]
                 fields["stale"] = {"since": by.get("at"), "sha": by.get("sha"), "kind": "partly_answered",
@@ -391,7 +424,7 @@ class DraftWriter:
             return False
         cands = self.answered.candidates(art)
         prev = draft.get("answer_check") or {}
-        return bool(cands) and (prev.get("latest") != cands[-1]["sha256"] or prev.get("status") in (None, "unknown"))
+        return bool(cands) and _unseen(prev, cands[-1]["sha256"])
 
     def refresh(self, drafts: Sequence[Dict[str, Any]], *, force: bool = False, within: int = 120) -> List[Dict[str, Any]]:
         """Before waiting drafts are shown or rewritten: check each against the sent

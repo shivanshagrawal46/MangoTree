@@ -600,20 +600,84 @@ class Scheduler:
         self._last_poll = datetime.now(timezone.utc)
         return out
 
-    def run_brain(self) -> Dict[str, Any]:
-        """Read newly arrived records into the property files (and draft replies)."""
+    def _brain_slot(self) -> Optional[str]:
+        """The run that is due now, if any: "brain_06" from 6 am, "brain_11" from 11 am (the firm's
+        clock). A run missed at its hour is made up within RUN_LATE_HOURS, then let go."""
         from mangotree.brain import config as bc
+        hour = self._now_local().hour
+        due = [h for h in bc.RUN_HOURS if h <= hour < h + bc.RUN_LATE_HOURS]
+        return f"brain_{max(due):02d}" if due else None
+
+    def run_replied(self, *, full: bool = False) -> Dict[str, Any]:
+        """Replies that have gone out: the waiting reply and its to-do leave the list by themselves.
+        With every mail intake, only when RKB has written in the very conversation to the person who
+        wrote (one small reading confirms it is the reply). ``full``, at the two daily runs: every
+        email RKB sent that person since is weighed. Same switch as the reading of new mail."""
+        from mangotree.brain import config as bc
+        from mangotree.brain.replied import Replied
         from mangotree.brain.store import BrainStore
-        from mangotree.brain.updater import Updater
         store = BrainStore(self.mongo)
         if not store.setting(bc.SETTING_ENABLED, True):
             return {"skipped": "switched off"}
-        out = Updater(self.mongo, store).run_pending(max_items=25)
-        if out.get("read"):
+        out = Replied(self.mongo, store).run(full=full)
+        if out["checked"]:
+            if out["drafts"] or out["items"] or out["partly"]:
+                from mangotree.api import swr
+                swr.clear()
+            self._record("replied", True, {"checked": out["checked"], "drafts": len(out["drafts"]), "items": len(out["items"]), "partly": len(out["partly"]),
+                                           "closed": [d.get("subject") for d in out["drafts"]][:10] + [i.get("title") for i in out["items"]][:10]})
+        return out
+
+    #: A run reads until nothing is waiting, in rounds of 25, and stops after this many rounds.
+    BRAIN_ROUNDS = 8
+
+    def run_brain(self) -> Dict[str, Any]:
+        """Read newly arrived records into the property files, draft the replies owed, and write
+        again the waiting replies that a call or a later email has overtaken. Twice a day
+        (``brain.config.RUN_HOURS``), and not in between."""
+        from mangotree.brain import config as bc
+        from mangotree.brain.store import BrainStore
+        store = BrainStore(self.mongo)
+        if not store.setting(bc.SETTING_ENABLED, True):
+            return {"skipped": "switched off"}
+        slot = self._brain_slot()
+        if not slot:
+            return {"skipped": "not a run hour"}
+        if not self._claim_daily(slot):
+            return {"skipped": "already run"}
+        from mangotree.brain.sweep import Sweep
+        from mangotree.brain.updater import Updater
+        total: Dict[str, Any] = {"slot": slot, "read": 0, "drafts": 0, "errors": 0, "remaining": 0}
+        try:
+            updater = Updater(self.mongo, store)
+            for _ in range(self.BRAIN_ROUNDS):
+                out = updater.run_pending(max_items=25)
+                if out.get("skipped"):
+                    total["skipped"] = out["skipped"]      # a person started a reading by hand: it is doing this work
+                    break
+                for k in ("read", "drafts", "errors"):
+                    total[k] += int(out.get(k) or 0)
+                total["remaining"] = int(out.get("remaining") or 0)
+                if not out.get("read") or not total["remaining"]:
+                    break
+            # Then everything RKB has sent is weighed against what is still waiting, so nothing already
+            # answered is left on a list, or written again below.
+            try:
+                done = self.run_replied(full=True)
+                total.update({"sent_checked": done.get("checked", 0), "sent_closed": len(done.get("drafts") or []) + len(done.get("items") or [])})
+            except Exception:
+                logger.exception("weighing the sent mail failed")
+            redone = Sweep(self.mongo, store).rewrite_outdated(limit=5)
+            total.update({"replies_rewritten": len(redone["rewritten"]), "replies_closed": len(redone["closed"]), "rewrite_failed": len(redone["failed"])})
             from mangotree.api import swr
             swr.clear()
-            self._record("brain", not out.get("errors"), {k: out.get(k) for k in ("read", "drafts", "errors", "remaining")})
-        return out
+            self._record("brain", not total["errors"] and not total["rewrite_failed"], total)
+            # Records that failed are tried again at the next run, not by repeating this one.
+            self._release_daily(slot, True)
+        except Exception:
+            self._release_daily(slot, False)
+            raise
+        return total
 
     CALLS_MINUTES = 15
 
@@ -630,16 +694,17 @@ class Scheduler:
         calls = Calls(self.mongo, store)
         if not calls.client.ready or not store.setting(bc.SETTING_ENABLED, True):
             return {"skipped": "no Granola key" if not calls.client.ready else "switched off"}
-        pulled = calls.pull_folder()
+        # Straight from Granola, not from a folder (admin, 2026-11-21): every new call is looked at,
+        # and taken when an ROI Blocks person is a named speaker or its content is our work.
+        pulled = calls.pull_new()
         out = calls.run() if (pulled.get("taken") or calls.waiting("read") or calls.waiting("apply")) else {"read": [], "applied": [], "failed": []}
-        # A waiting reply that a call (or the morning reading) has overtaken is written again, a few each round.
-        from mangotree.brain.sweep import Sweep
-        redone = Sweep(self.mongo, store).rewrite_outdated(limit=3)
-        if out.get("applied") or redone["rewritten"] or redone["closed"]:
+        # A waiting reply that a call has overtaken is written again at the next of the two daily
+        # runs (run_brain), not here: writing a reply is step 3.
+        if out.get("applied"):
             from mangotree.api import swr
             swr.clear()
-        return {"taken": len(pulled.get("taken") or []), "read": len(out["read"]), "applied": len(out["applied"]), "failed": out["failed"] + redone["failed"],
-                "replies_rewritten": len(redone["rewritten"]), "replies_closed": len(redone["closed"])}
+        return {"taken": len(pulled.get("taken") or []), "seen": pulled.get("seen", 0), "read": len(out["read"]), "applied": len(out["applied"]),
+                "failed": out["failed"], "pick_cost_usd": pulled.get("pick_cost_usd", 0.0)}
 
     def _due_my_day(self) -> bool:
         from mangotree.brain.myday import due_morning
@@ -681,7 +746,9 @@ class Scheduler:
         return not last or (datetime.now(timezone.utc) - last["at"]) > timedelta(hours=1)
 
     def tick(self) -> None:
+        polled = False
         if self.intake_enabled and self._due_poll():
+            polled = True
             try:
                 out = self.run_intake()
                 self._record("intake", not out["intake"].get("source_errors"), out["intake"])
@@ -689,11 +756,18 @@ class Scheduler:
                 logger.exception("mail intake failed")
                 self._record("intake", False, str(exc)[:400])
                 self._last_poll = datetime.now(timezone.utc)
+        # Replies that have gone out (2026-11-21): after every mail intake, a waiting reply (and its
+        # to-do) that RKB has since answered leaves the list, without waiting for the daily readings.
+        if polled:
+            try:
+                self.run_replied()
+            except Exception:
+                logger.exception("matching sent replies failed")
         # The property files (2026-11-12): whatever the arrival chain has finished
         # with is read into its property's file — status, open items, the activity
-        # log, and a reply draft where one is owed. One Opus 5.5 call per record;
-        # this is light work and does not wait for the daily cycle. Switch:
-        # settings.brain_enabled.
+        # log, and a reply draft where one is owed. One Opus 5.5 call per record.
+        # Twice a day, at 6 am and 11 am Eastern (2026-11-21), not as mail arrives.
+        # Switch: settings.brain_enabled.
         if self.intake_enabled:
             try:
                 self.run_brain()
@@ -704,14 +778,14 @@ class Scheduler:
         if self.intake_enabled and self._due_calls():
             try:
                 out = self.run_calls()
-                if out.get("taken") or out.get("read") or out.get("applied") or out.get("failed") or out.get("replies_rewritten") or out.get("replies_closed"):
+                if out.get("taken") or out.get("read") or out.get("applied") or out.get("failed"):
                     self._record("calls", not out.get("failed"), out)
             except Exception as exc:
                 logger.exception("reading calls failed")
                 self._record("calls", False, str(exc)[:400])
             self._last_calls = datetime.now(timezone.utc)
-        # My day (2026-11-18): at 4:30 am US Eastern each person's list is read over and their
-        # morning email goes out. Not part of the paused daily analysis below; once a day.
+        # My day: at 6:30 am US Eastern (2026-11-21; 4:30 before), after the 6 am reading above,
+        # each person's list is read over and their morning email goes out. Once a day.
         if self.intake_enabled and self._due_my_day() and self._claim_daily("my_day"):
             try:
                 out = self.run_my_day()

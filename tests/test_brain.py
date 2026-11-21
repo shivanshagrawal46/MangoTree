@@ -279,6 +279,18 @@ def test_a_bill_is_in_review_only_when_buildertrend_lists_it_under_in_review():
     assert Buildertrend._bill(_bt_row(purchaseOrderPaymentStatus={"paymentStatus": 7}), "durham_st", False, None)["status"].startswith("Other")
 
 
+def test_a_bill_is_waiting_when_it_is_on_the_need_your_approval_list_not_just_under_in_review():
+    from mangotree.brain.buildertrend import Buildertrend, IN_REVIEW
+    # Under Buildertrend's "In Review" tab but not on "Bills need your approval": its status stays, it is not waiting for RKB.
+    b = Buildertrend._bill(_bt_row(), "durham_st", True, None, waiting=False)
+    assert b["status"] == IN_REVIEW and b["bt_in_review"] and not b["in_review"] and b["to_approve"] is False
+    b = Buildertrend._bill(_bt_row(), "durham_st", True, None, waiting=True)
+    assert b["in_review"] and b["to_approve"] is True
+    # A pull that does not carry the approval list falls back to the tab.
+    b = Buildertrend._bill(_bt_row(), "durham_st", True, None)
+    assert b["in_review"] and b["to_approve"] is None
+
+
 def test_a_bill_in_review_is_given_to_the_model_line_by_line():
     from mangotree.brain.buildertrend import Buildertrend
     detail = {"createdByName": "Kelly Stone", "description": {"value": ""}, "attachedFiles": {"files": [{"title": "invoice.pdf"}]},
@@ -362,6 +374,59 @@ def test_a_tick_records_when_and_who_and_a_paid_bill_moves_to_paid():
     t.set_step(1, "paid", True, user)
     assert [r["bill_id"] for r in t.rows("open")] == [2] and [r["bill_id"] for r in t.rows("paid")] == [1] and t.open_count() == 1
     assert len(t.track.find_one({"bill_id": 1})["history"]) == 3            # every tick and untick is kept
+
+
+def test_a_comment_on_a_bill_is_kept_with_who_wrote_it_and_can_be_changed_or_removed():
+    import pytest
+    t = _bill_tracker()
+    manju, jp = {"user_id": "manjunath", "name": "Manjunath Sir"}, {"user_id": "jp", "name": "JP Sir"}
+    r = t.set_comment(2, "  Waiting for the\nrevised invoice  ", manju)
+    assert r["comment"]["text"] == "Waiting for the revised invoice" and r["comment"]["by_name"] == "Manjunath Sir" and r["comment"]["at"]
+    assert [x["comment"] and x["comment"]["text"] for x in t.rows("open")] == ["Waiting for the revised invoice", None]   # on the list, on its own bill
+    assert t.open_count() == 2 and t.rows("open")[0]["steps"]["paid"] is None                                               # a comment ticks nothing
+    t.set_comment(2, "Invoice received 16 Nov", jp)
+    t.set_comment(2, "Invoice received 16 Nov", manju)                                                                      # the same text again: nothing changes
+    assert t.rows("open")[0]["comment"]["by_name"] == "JP Sir"
+    assert t.set_comment(2, "", jp)["comment"] is None and t.rows("open")[0]["comment"] is None                            # empty removes it
+    assert [h["comment"] for h in t.track.find_one({"bill_id": 2})["history"]] == ["Waiting for the revised invoice", "Invoice received 16 Nov", ""]
+    assert t.set_comment(1, "", jp)["comment"] is None and t.track.find_one({"bill_id": 1}) is None                        # nothing written for an empty comment
+    with pytest.raises(KeyError):
+        t.set_comment(99, "x", jp)
+
+
+# ------------------------------------------------- brokers: who RKB knows, by area, with where each entry came from
+def test_brokers_are_listed_by_area_with_their_source_and_the_last_email_from_the_mail(monkeypatch):
+    import mongomock
+    import pytest
+    from mangotree.brain import brokers as bk
+
+    class _M:
+        db = mongomock.MongoClient().db
+
+    m = _M()
+    monkeypatch.setattr(bk, "name_of", lambda pid: {"tower_road": "14376 Tower Road"}.get(pid, pid))
+    b = bk.Brokers(m)
+    b.set_area("unionville_va", "Unionville, VA", 1, ["tower_road"])
+    b.set_area("other", "Other areas", 2, [])
+    m.db["property_files"].insert_one({"property_id": "tower_road", "stage": {"stage": "listed", "recovery": False}})
+    b.upsert({"area": "unionville_va", "name": "Rob Smith III", "brokerage": "Century 21 New Millennium", "phones": [{"label": "cell", "number": "540-818-5707"}, {"label": "", "number": " "}],
+              "emails": ["RobSellsDMV@gmail.com", "not an address"], "property_ids": ["tower_road"], "source": "records", "source_note": "their email signature"})
+    b.upsert({"area": "unionville_va", "name": "Web Person", "phones": [], "emails": [], "source": "web", "source_url": "https://example.com/agent"})
+    b.upsert({"area": "unionville_va", "name": "Rob Smith III", "brokerage": "from a web page", "phones": [], "emails": [], "source": "web"})   # the web never replaces our own record
+    with pytest.raises(ValueError):
+        b.upsert({"area": "other", "name": "X", "source": "guess"})
+    m.db["artifacts"].insert_many([
+        {"source_type": "email", "date": datetime(2026, 8, 1), "participants": {"from": ["robsellsdmv@gmail.com"], "to": ["rakesh@mtreh.com"], "cc": []}},
+        {"source_type": "email", "date": datetime(2026, 8, 15), "participants": {"from": ["wes@roiblocks.com"], "to": ["rakesh@mtreh.com"], "cc": ["RobSellsDMV@gmail.com"]}}])
+    p = b.page()
+    area = p["areas"][0]
+    assert area["label"] == "Unionville, VA" and area["properties"] == [{"property_id": "tower_road", "name": "14376 Tower Road", "group": "market"}]
+    assert [r["name"] for r in area["brokers"]] == ["Rob Smith III", "Web Person"]                    # our own records first
+    rob = area["brokers"][0]
+    assert rob["brokerage"] == "Century 21 New Millennium" and rob["emails"] == ["robsellsdmv@gmail.com"] and rob["phones"] == [{"label": "cell", "number": "540-818-5707"}]
+    assert rob["last_email"] == datetime(2026, 8, 15) and rob["source_label"] == "In our records"     # copied on the newer email
+    assert area["brokers"][1]["last_email"] is None and area["counts"] == {"records": 1, "wes_list": 0, "web": 1}
+    assert p["counts"]["all"] == 2 and p["counts"]["with_email"] == 1 and p["counts"]["with_phone"] == 1
 
 
 def test_a_bill_part_way_through_stays_on_the_list_after_buildertrend_moves_it_on_or_deletes_it():
@@ -871,7 +936,7 @@ def _money_sheet(monkeypatch):
     m.db["bt_bills"].insert_many([
         {"bill_id": 1, "property_id": "durham_st", "title": "Repair-1 (Contractor)", "amount": 11340.0, "status": "Paid", "holdback": False, "invoice_date": datetime(2026, 10, 1), "line_items": lines(0.9)},
         {"bill_id": 2, "property_id": "durham_st", "title": "Repair-1 (Hold-back)", "amount": 1260.0, "status": "Ready for payment", "holdback": True, "invoice_date": datetime(2026, 10, 1), "line_items": lines(0.1)},
-        {"bill_id": 3, "property_id": "durham_st", "title": "Windows (materials)", "amount": 954.0, "status": "In review", "holdback": False, "invoice_date": datetime(2026, 10, 28),
+        {"bill_id": 3, "property_id": "durham_st", "title": "Windows (materials)", "amount": 954.0, "status": "In review", "in_review": True, "holdback": False, "invoice_date": datetime(2026, 10, 28),
          "line_items": [li("", "06 - Subcontractor Services", 954.0, 954.0)]},
         {"bill_id": 4, "property_id": "durham_st", "title": "Old bill", "amount": 100.0, "status": "Paid", "holdback": False, "invoice_date": datetime(2026, 9, 5)},
     ])
@@ -1003,15 +1068,49 @@ def test_a_follow_up_goes_by_itself_and_one_put_aside_returns_when_things_change
     assert s["payments"]["paid"] == 4100.0 and s["payments"]["paid_count"] == 3 and s["payments"]["held_back"] == 300.0 and s["payments"]["to_pay"] == 0.0
 
 
-def test_two_proposal_lines_with_the_same_name_and_price_share_the_bills(monkeypatch):
+def test_a_bill_line_goes_to_the_proposal_line_buildertrend_ties_it_to_and_is_never_guessed(monkeypatch):
+    # Lane Pl, 16 Nov 2026: two "Plumbing- Modify and Upgrade" lines, same cost code, same unit price. The bill's
+    # $1,433.61 was put on the $3,882.68 line ("most room left"); Buildertrend has it on the $3,185.79 one.
     ms, m = _money_sheet(monkeypatch)
-    m.db["bt_estimates"].update_one({"property_id": "durham_st"}, {"$push": {"groups": {"title": "10 - Bath", "lines": [
-        {"line_id": 7, "title": "Toilet", "cost_code": "14.1 Bath", "builder_cost": 610.0, "unit_cost": 305.0, "price": 900.0},
-        {"line_id": 8, "title": "Toilet", "cost_code": "14.1 Bath", "builder_cost": 305.0, "unit_cost": 305.0, "price": 450.0}]}}})
-    m.db["bt_bills"].insert_one({"bill_id": 9, "property_id": "durham_st", "title": "Bath", "amount": 915.0, "status": "Paid", "holdback": False, "invoice_date": datetime(2026, 10, 9),
-                                 "line_items": [{"title": "Toilet", "cost_code": "14.1 Bath", "unit_cost": 305.0, "amount": 305.0}] * 3})
-    rows = [r for r in ms.build("durham_st")["rows"] if r["title"] == "Toilet"]
-    assert sorted((r["proposal"], r["billed"]) for r in rows) == [(305.0, 305.0), (610.0, 610.0)]
+    plumb = lambda i, cost, po, text: {"line_id": i, "title": "Plumbing- Modify and Upgrade", "cost_code": "47 - Plumbing", "builder_cost": cost, "unit_cost": 995.56,
+                                       "price": cost, "po_line_id": po, "description": text}
+    m.db["bt_estimates"].update_one({"property_id": "durham_st"}, {"$push": {"groups": {"title": "03 - Plumbing", "lines": [
+        plumb(7, 3882.68, 329, "Repair leak in main level bathroom."), plumb(8, 3185.79, 298, "Install water lines to move washer.")]}}})
+    line = lambda **more: {"title": "Plumbing- Modify and Upgrade", "cost_code": "47 - Plumbing", "unit_cost": 995.56, "amount": 1433.61, **more}
+    bill = lambda i, **more: {"bill_id": i, "property_id": "durham_st", "title": "Remodel-6", "amount": 1433.61, "status": "Paid", "holdback": False,
+                              "invoice_date": datetime(2026, 11, 13), "line_items": [line(**more)]}
+    billed = lambda: {r["proposal"]: r["billed"] for r in ms.build("durham_st")["rows"] if r["title"].startswith("Plumbing")}
+    m.db["bt_bills"].insert_one(bill(9, po_line_id=298))                              # Buildertrend's own tie: the purchase-order line
+    assert billed() == {3882.68: 0.0, 3185.79: 1433.61}
+    m.db["bt_bills"].delete_one({"bill_id": 9})
+    m.db["bt_bills"].insert_one(bill(10, description="Install water lines to move washer."))   # no tie read yet: the description leaves one line
+    assert billed() == {3882.68: 0.0, 3185.79: 1433.61}
+    m.db["bt_bills"].delete_one({"bill_id": 10})
+    m.db["bt_bills"].insert_one(bill(11))                                             # nothing tells the two apart: not placed, never guessed
+    s = ms.build("durham_st")
+    assert {r["proposal"]: r["billed"] for r in s["rows"] if r["kind"] == "proposal" and r["title"].startswith("Plumbing")} == {3882.68: 0.0, 3185.79: 0.0}
+    loose = next(r for r in s["rows"] if r.get("unplaced"))
+    assert (loose["kind"], loose["billed"]) == ("other", 1433.61) and "more than once" in loose["group"]
+    assert any(o["amount"] == 1433.61 for o in s["outside"])                          # listed where a person puts it on a line
+
+
+def test_in_review_on_the_sheet_is_the_need_your_approval_list_not_buildertrends_in_review_tab(monkeypatch):
+    ms, m = _money_sheet(monkeypatch)
+    li = {"title": "Demolition Labor", "cost_code": "02 - Demolition", "unit_cost": 3000.0, "amount": 400.0}
+    m.db["bt_bills"].insert_one({"bill_id": 9, "property_id": "durham_st", "title": "Under the tab only", "amount": 400.0, "status": "In review", "in_review": False,
+                                 "holdback": False, "invoice_date": datetime(2026, 11, 1), "line_items": [li]})
+    # Approved in Buildertrend but not paid, with its hold-back twin: not counted either — the sheet takes paid bills and the approval list only.
+    ready = lambda i, title, amount, held: {"bill_id": i, "property_id": "durham_st", "title": title, "amount": amount, "status": "Ready for payment", "holdback": held,
+                                            "invoice_date": datetime(2026, 11, 5), "line_items": [{**li, "amount": amount}]}
+    m.db["bt_bills"].insert_many([ready(10, "Repair-2 (Contractor)", 270.0, False), ready(11, "Repair-2 (Hold-back)", 30.0, True)])
+    s = ms.build("durham_st")
+    assert s["totals"]["in_review"] == 954.0 and s["payments"]["in_review"] == 954.0 and s["payments"]["in_review_count"] == 1   # only the bill on the approval list
+    demo = next(r for r in s["rows"] if r["title"] == "Demolition Labor")
+    assert (demo["billed"], demo["held_back"], demo["billed_all"]) == (3000.0, 300.0, 3700.0)                                    # not in the columns; the over-billing check still sees them
+    assert any("3 bill(s) are neither paid nor on RKB's approval list ($700.00)" in n and "Repair-2 (Contractor) $270.00" in n for n in s["notes"])
+    assert {9, 10, 11} <= {b["bill_id"] for b in s["bills"]}                                                                     # ...and they stay in the bill list
+    assert s["totals"]["paid"] == 11340.0 and s["payments"]["paid"] == 11440.0 and s["payments"]["to_pay"] == 0.0                # paid is paid bills only
+    assert s["totals"]["to_pay"] == 0.0 and s["payments"]["held_back"] == 1260.0                                                 # the hold-back of a counted bill stays held back
 
 
 # ------------------------------------------------- the sheet as a funding ledger
@@ -1109,6 +1208,30 @@ def test_a_draft_is_closed_once_rkb_has_replied_to_that_email_even_if_not_to_eve
     from mangotree.brain.drafts import _left_open
     assert _left_open({"status": "partly_answered", "still_owed": ["the wire date"]}) == " Not taken up in that reply: the wire date."
     assert _left_open({"status": "answered", "still_owed": []}) == ""
+
+
+def test_an_old_partly_answered_is_looked_at_once_more_and_a_reply_in_the_conversation_is_never_crowded_out():
+    import mongomock
+    from mangotree.brain.answered import RULE, Answered
+    from mangotree.brain.drafts import _unseen
+    assert _unseen({"status": "partly_answered", "latest": "a"}, "a")                      # judged before a reply to that email closed a draft
+    assert not _unseen({"status": "partly_answered", "latest": "a", "rule": RULE}, "a")    # judged under today's rule: not paid for twice
+    assert not _unseen({"status": "not_answered", "latest": "a"}, "a") and _unseen({"status": "not_answered", "latest": "a"}, "b")
+
+    class M:
+        artifacts = mongomock.MongoClient().db["artifacts"]
+
+    class R:
+        def rkb_addresses(self):
+            return ["rakesh@mtreh.com"]
+    asked = {"sha256": "in", "source_type": "email", "date": datetime(2026, 11, 9), "thread_key": "t-questions", "participants": {"from": ["wes@roiblocks.com"]}}
+    other = [{"sha256": f"o{i:02d}", "source_type": "email", "date": datetime(2026, 11, 9, 1) + timedelta(hours=i), "thread_key": f"t{i}",
+              "participants": {"from": ["rakesh@mtreh.com"], "to": ["wes@roiblocks.com"]}} for i in range(30)]
+    reply = {"sha256": "reply", "source_type": "email", "date": datetime(2026, 11, 12), "thread_key": "t-questions",
+             "participants": {"from": ["rakesh@mtreh.com"], "to": ["wes@roiblocks.com"]}}
+    M.artifacts.insert_many([asked, *other, reply])
+    cands = Answered(M(), R()).candidates(asked)
+    assert len(cands) == 26 and cands[-1]["sha256"] == "reply" and cands[-1]["link"] == "same_conversation"      # the 31st email RKB sent him, still seen
 
 
 # ------------------------------------------------- one bill, checked line by line
@@ -1229,3 +1352,218 @@ def test_waiting_bills_are_checked_by_themselves_and_only_when_something_has_cha
     assert "kept" not in bc.read(7, force=True) and len(calls) == before + 1
     BillTracker(m).set_step(7, "manju_approved", True, {"user_id": "manjunath", "name": "Manjunath Sir"})
     assert [r["bill_id"] for r in bc.waiting()] == [3]                                     # approved: no longer read by itself
+
+
+# ------------------------------------------------- reading a new record into its file (2026-11-14)
+def test_an_email_with_only_a_name_and_a_number_under_it_asks_nothing():
+    from mangotree.brain.context import says_nothing
+    frm = {"participants": {"from": ["kelly@roiblocks.com"]}}
+    assert says_nothing({**frm, "body_clean": "Kelly Stone\n\n(678) 778-7915"})                    # a draw sheet sent with a signature only
+    assert says_nothing({**frm, "body_clean": ""}) and says_nothing({**frm, "body_clean": "Thanks,\nKelly\nkelly@roiblocks.com\nCell: 678-778-7915"})
+    assert not says_nothing({**frm, "body_clean": "Final.\n\nKelly Stone\n\n(678) 778-7915"})      # one word of her own: the model decides
+    assert not says_nothing({**frm, "body_clean": "Can you send the receipt for the second payment?\n\nKelly Stone"})
+    assert not says_nothing({**frm, "body_clean": "Wes Stone\nFounder & CEO ROIBLOCKS\n276-496-6472"})   # not the sender's name: left to the model
+
+
+def test_a_new_record_gets_three_look_ups_and_no_more():
+    from mangotree.brain.updater import LOOKUP_TOOLS, CappedKit
+
+    class _Kit:
+        calls = []
+
+        def specs(self):
+            return [{"name": n} for n in ("search_records", "open_document", "property_file", "save_draft", "recent_mail")]
+
+        def run(self, name, args):
+            self.calls.append(name)
+            return "text of the document", False, f"Opened {args.get('ref')}"
+
+    kit = CappedKit(_Kit(), limit=3)
+    assert [t["name"] for t in kit.specs()] == ["search_records", "open_document", "recent_mail"]      # nothing that writes, no whole other file
+    assert "property_file" not in LOOKUP_TOOLS and kit.run("save_draft", {})[1] is True and kit.used == 0
+    for left in ("2 look-ups left", "1 look-up left", "0 look-ups left"):
+        content, is_error, _ = kit.run("open_document", {"ref": "abc"})
+        assert not is_error and left in content
+    content, is_error, _ = kit.run("open_document", {"ref": "abc"})
+    assert is_error and "submit_update now" in content and len(_Kit.calls) == 3 and kit.labels == ["Opened abc"] * 3
+
+
+def test_text_kept_for_an_hour_is_costed_at_twice_the_input_price():
+    from mangotree.brain.llm import cost_of, usage_dict
+
+    class _U:
+        input_tokens, output_tokens, cache_read_input_tokens, cache_creation_input_tokens = 1000, 0, 0, 200_000
+
+        class cache_creation:
+            ephemeral_1h_input_tokens, ephemeral_5m_input_tokens = 150_000, 50_000
+
+    class _R:
+        usage = _U
+
+    u = usage_dict(_R)
+    assert u["cache_write"] == 200_000 and u["cache_write_1h"] == 150_000
+    assert cost_of(u) == round(1000 * 4 / 1e6 + 150_000 * 8 / 1e6 + 50_000 * 5 / 1e6, 4)
+    assert cost_of({"cache_write": 100_000}) == 0.5                                                 # older rows carry no split: as before
+
+
+def test_the_new_reading_is_told_the_documents_are_a_list_and_chat_is_told_what_it_always_was():
+    from mangotree.brain import prompts
+    assert "RETRIEVED FROM THE RECORDS" in prompts.CORE and "each one in full" in prompts.CORE
+    assert "RETRIEVED FROM THE RECORDS" not in prompts.CORE_LEAN and "It\nis a list, not the documents" in prompts.CORE_LEAN
+    assert "Nothing has been searched for you in advance" in prompts.CORE_LEAN
+    assert prompts.CORE_LEAN.endswith(prompts._RULES) and prompts.CORE.endswith(prompts._RULES)     # the same rules of evidence for both
+    assert "You have 5 look-ups for this record" in prompts.EVENT_LEAN and "submit_update" in prompts.EVENT_LEAN
+    for job in (prompts.EVENT, prompts.EVENT_LEAN):                                                 # the reply rule holds either way
+        assert "in the words of this message" in job and "is not\n  a request for a reply" in job and "@@" not in job
+
+
+def test_an_entry_gets_a_second_reading_and_what_it_finds_goes_back_to_the_writer_in_plain_words():
+    from mangotree.brain import config as bc, eventcheck, prompts
+    from mangotree.brain.updater import SUBMIT_UPDATE, _NoLookups
+    entry = {"relevance": "minor", "title": "Rakesh forwards a bounce", "summary": "Yahoo blocked the copy to Duwayne.", "headline": None, "status": None,
+             "facts_set": [], "items_add": [], "items_close": [], "items_update": [], "reply": {"needed": False}}
+    shown = eventcheck.render_entry(entry)
+    assert "rating: minor" in shown and "items: none added, closed or changed" in shown and shown.endswith("reply owed: no")
+    sound = {"missed": [], "wrong": [], "actions": [], "reply_right": True, "reply_note": "", "rating_right": True, "rating_note": ""}
+    assert eventcheck.findings(sound) == [] and eventcheck.summary(sound, corrected=False)["corrected"] is False
+    found = eventcheck.findings({**sound, "missed": ["Crystal is holding the file from underwriting over the $121,000 figure."],
+                                 "actions": ["Rakesh: fix mtreh.com email authentication (DKIM/SPF)."], "reply_right": False, "reply_note": "Kelly asks for the $954."})
+    assert [f.split(":")[0] for f in found] == ["Left out", "No item for", "The reply decision is wrong"]
+    text = eventcheck.as_instruction(found)
+    assert "Crystal is holding the file" in text and "call submit_update again" in text and "already open on the file" in text
+    assert eventcheck.summary({**sound, "missed": ["x"]}, corrected=True) == {"ran": True, "missed": 1, "wrong": 0, "actions": 0, "reply_right": True,
+                                                                              "rating_right": True, "corrected": True}
+    # The second reader is told the same reply rule, looks nothing up, and reads at the writer's effort so the stored prompt is shared.
+    assert "in the words of this message" in eventcheck.BRIEF and "Do not call submit_update" in eventcheck.BRIEF
+    assert _NoLookups().specs() == [] and _NoLookups().run("open_document", {})[1] is True
+    assert eventcheck.SUBMIT_CHECK["strict"] and SUBMIT_UPDATE["strict"] and bc.EVENT_EFFORT == "high"
+    assert "as long as\n  the record needs and no longer" in prompts.EVENT_LEAN and "one to three\n  plain sentences" in prompts.EVENT
+    assert "something is broken, failing or blocked" in prompts.EVENT_LEAN
+
+
+def _lean_records():
+    import mongomock
+    from mangotree.brain.context import Records
+    db = mongomock.MongoClient(tz_aware=True).db
+
+    class _M:
+        pass
+
+    m = _M()
+    m.db, m.artifacts, m.chunks, m.occurrences, m.people = db, db["artifacts"], db["chunks"], db["occurrences"], db["people"]
+    utc = timezone.utc
+
+    def mail(sha, when, body, **kw):
+        return {"sha256": sha * 64, "source_type": "email", "property_ids": ["lodestone"], "date": when, "created_at": when,
+                "participants": {"from": ["kelly@roiblocks.com"], "to": ["rakesh@mtreh.com"]}, "body_clean": body, **kw}
+
+    def doc(sha, when, name, text, parent=None, **kw):
+        return {"sha256": sha * 64, "source_type": "attachment", "property_ids": ["lodestone"], "date": when, "created_at": when, "filename": name,
+                "text": text, "extraction": {"char_count": len(text)}, "parent_email_shas": [parent * 64] if parent else [], **kw}
+
+    m.artifacts.insert_many([
+        mail("a", datetime(2026, 11, 10, 15, 29, tzinfo=utc), "Here is the Cornerstone draw spreadsheet.", subject="Lodestone Dr - Draw update", thread_key="t1"),
+        mail("b", datetime(2026, 11, 13, 9, 0, tzinfo=utc), "The painters start on Monday.", subject="Painting"),
+        mail("c", datetime(2026, 11, 13, 14, 39, tzinfo=utc), "Kelly Stone\n\n(678) 778-7915", subject="Lodestone Dr - Draw update", thread_key="t1"),
+        doc("d", datetime(2026, 11, 10, 15, 29, tzinfo=utc), "Lodestone Draws.xlsx", "DRAW ONE LINE BY LINE 4,289.40 " * 20, parent="a"),
+        doc("e", datetime(2026, 11, 13, 14, 39, tzinfo=utc), "Lodestone Draws v2.xlsx", "DRAW TWO TOTAL 10,559.77 " * 20, parent="c"),
+        doc("f", datetime(2026, 6, 1, tzinfo=utc), "Deed of Trust.pdf", "THIS DEED OF TRUST " * 50, doc_class="deed_of_trust"),
+        doc("9", datetime(2026, 11, 12, tzinfo=utc), "image001.png", "", parent="b"),
+    ])
+    m.chunks.insert_many([{"artifact_sha": "d" * 64, "ordinal": 0, "tier1": "Draw sheet for Lodestone Dr from Cornerstone Remodeling, draw 1."},
+                          {"artifact_sha": "f" * 64, "ordinal": 0, "tier1": "First page of the deed of trust."}])
+    return Records(m), datetime(2026, 11, 13, 15, 0, tzinfo=utc)
+
+
+def test_a_new_record_is_read_with_the_emails_in_full_and_the_documents_as_a_list():
+    from mangotree.brain import cleanmail
+    cleanmail.Signatures._cache.clear()
+    r, as_of = _lean_records()
+    new = r.art.find_one({"sha256": "c" * 64})
+    view = r.mail_view("lodestone", new=new, as_of=as_of)
+    mail = view["stable"] + view["live"]
+    assert view["stable"].startswith("=== THE MAIL") and (view["emails"], view["conversations"], view["full"], view["listed"]) == (2, 1, 1, 0)
+    assert "--- CONVERSATION: “Painting” — 1 message(s)" in view["live"] and "The painters start on Monday." in view["live"]   # today's conversation is the live part
+    assert "The painters" not in view["stable"] and "Cornerstone draw spreadsheet" not in mail   # the new record's own conversation is given with the record
+    assert "DRAW ONE LINE BY LINE" not in mail and view["last_day"] == 1                         # an attachment's text is never sent with the mail
+
+    docs = r.documents_block("lodestone", as_of=as_of)
+    line = {ln.split("]")[0][5:]: ln for ln in docs.splitlines() if ln.startswith("[sha=")}
+    assert list(line) == ["f" * 12, "d" * 12, "e" * 12]                                             # every document, oldest first; the logo is left off
+    assert "first page: Draw sheet for Lodestone Dr" in line["d" * 12] and "came from kelly@roiblocks.com with “Lodestone Dr - Draw update”" in line["d" * 12]
+    assert line["f" * 12].endswith("Deed of Trust.pdf · deed of trust")                             # older than 90 days: its name, date and kind only
+    assert "DRAW ONE" not in docs and "THIS DEED OF TRUST" not in docs and "1 picture, video or archive" in docs
+
+    r.art.update_one({"sha256": "a" * 64}, {"$set": {"internet_message_id": "<m1@x>"}})
+    new = {**new, "in_reply_to": ["<m1@x>"]}
+    text = r.render_record(new, direction="received")
+    assert "THIS CONVERSATION SO FAR (1 message(s), oldest first):" in text and "Here is the Cornerstone draw spreadsheet." in text   # the chain, unbroken
+    assert "(starts the conversation)\nHere is the Cornerstone" in text                              # each message says where it stands in the chain …
+    assert "(replying to the message of 2026-11-10 15:29 UTC from kelly@roiblocks.com [sha=aaaaaaaaaaaa])" in text   # … and which message it answers
+    assert "(replying to a message that is not on file)" in r.render_message({**new, "in_reply_to": ["<gone@x>"]}, direction="received", earlier=[])
+    assert "Lodestone Draws.xlsx [sha=dddddddddddd]" in text and "DRAW ONE LINE BY LINE" not in text   # an earlier message's file is named, not pasted
+    assert "(no words of their own in this email" in text and "(678) 778-7915" not in text          # a signature is not words
+    assert "DRAW TWO TOTAL 10,559.77" in text and "Lodestone Draws v2.xlsx" in text                 # the new email's own attachment, in full
+
+
+def test_a_conversation_is_shown_once_and_never_broken():
+    from mangotree.brain import cleanmail as cm
+    first = "Hello\nI called Duwayne and he will pick up the windows and pay for the windows. Once\nwe have a receipt we will immediately reimburse him"
+    # A reply that quotes the first message under it, re-wrapped and with ">" in front, as a mail client does.
+    reply = ("Rakesh,\nDuwayne has paid for and picked up the windows (see attached). Please get him reimbursed as soon as possible.\n\nThank you both!\n\n"
+             "On Thu, Nov 12, 2026 at 2:07 PM Rakesh Bhargava <rakesh.bhargava@gmail.com> wrote:\n\n"
+             "> Hello\n> I called Duwayne and he will pick up the windows and pay for\n> the windows. Once we have a receipt we will immediately reimburse him\n")
+    own, pieces = cm.split_quoted(reply)
+    assert own.endswith("Thank you both!") and len(pieces) == 1 and cm.covered(pieces[0], [first])
+    # As the system runs (admin directive 2026-11-14): the email is kept as it was sent, its chain under it, whole.
+    c = cm.clean(reply, "", [first])
+    assert c["why"] == ["sent"] and "immediately reimburse him" in c["kept"][0] and c["left_out"] == 0 and c["own"].endswith("Thank you both!")
+    # With repeats left out (kept for measuring, not in use): a message held in the chain is shown once.
+    c = cm.clean(reply, "", [first], drop_repeats=True)
+    assert c["kept"] == [] and (c["quoted"], c["left_out"]) == (1, 1) and "reimbursed as soon as possible" in c["own"]
+    # Even then, when the first message is NOT on file the quote is all there is of it, so it stays, word for word.
+    c = cm.clean(reply, "", [], drop_repeats=True)
+    assert c["why"] == ["not_held"] and "immediately reimburse him" in c["kept"][0]
+    # A forward of somebody else's email is not a repeat of anything, either way.
+    forward = "See below.\n\n[Forwarded message]\nFrom: Kina Jenkins <kina@loudouninsurancegroup.com>\nDate: Thursday, September 10, 2026\nTo: Wes Stone\nSubject: Certificates\n\nHello,\nPlease see attached for the requested certificates for the three properties.\n"
+    for drop in (False, True):
+        c = cm.clean(forward, "", [first, reply], drop_repeats=drop)
+        assert c["own"] == "See below." and len(c["kept"]) == 1 and "requested certificates" in c["kept"][0]
+    # Where the mail client stored the quote apart from the body, it is judged the same way.
+    assert cm.clean("Thanks Kelly", "From: Kelly Stone <kelly@roiblocks.com>\nSent: Friday\nTo: Rakesh\nSubject: Re: Windows\n\n" + reply.split("\n\nOn Thu")[0], [reply])["kept"] == []
+    # Answers typed INSIDE the quoted email are words that exist nowhere else: that quote is always kept whole.
+    asked = "Rakesh,\nCan you confirm the following before closing?\n1. The loan amount is $99,861.\n2. The carrier will raise the limit this week.\n3. George signs the guaranty on Friday."
+    inline = ("See my answers below.\n\nFrom: Wes Stone <wes@roiblocks.com>\nSent: Friday\nTo: Rakesh\nSubject: Closing\n\n" + asked.replace(
+        "1. The loan amount is $99,861.", "1. The loan amount is $99,861.\nYes.").replace("3. George signs the guaranty on Friday.", "3. George signs the guaranty on Friday.\nNo, Monday."))
+    c = cm.clean(inline, "", [asked], drop_repeats=True)
+    assert cm.covered(cm.split_quoted(inline)[1][0], [asked]) and cm.written_inside(cm.split_quoted(inline)[1][0], [asked])
+    assert c["why"] == ["inside"] and "No, Monday." in c["kept"][0] and "Yes." in c["kept"][0]
+    assert not cm.written_inside(pieces[0], [first]) and cm.clean(reply, "", [first], drop_repeats=True)["inside"] == []   # a plain re-wrapped quote has nothing written inside it
+    # A line of underscores above a person's own signature is not the start of somebody else's message …
+    signed = "I will send the wire today.\n\n______________________________\n\n*Rakesh Bhargava*\nManaging Partner\nPhone: 516-484-0018"
+    assert cm.split_quoted(signed)[1] == []
+    # … and it is, when a quoted message's header follows it.
+    assert len(cm.split_quoted("Ok.\n________________________________\nFrom: Wes Stone <wes@roiblocks.com>\nSent: Friday\nTo: Rakesh\nSubject: Wire\n\nPlease confirm the wire of $6,685.03 went out today.")[1]) == 1
+
+
+def test_only_the_signature_comes_off_and_only_from_the_end():
+    from mangotree.brain import cleanmail as cm
+    sig = "\n\nBest Regards,\n\n*Rakesh*\n\n*Rakesh Bhargava*\nManager of General Partner\nMangoTree Real Estate Holdings L.P. <http://www.mtreh.com/>\nPhone: 631-223-7157\nConnect with me on Linkedin\nOur business thrives on referral\nMight you have a referral for us?\n\nv>"
+    bodies = ["Thanks Kelly. I texted him for the other two receipts." + sig, "Please confirm the wire." + sig, "Send the dec page." + sig,
+              "Call me at 4.\nPlease see attached." + sig, "Approved.\nPlease see attached." + sig, "No signature on this one.\nPlease see attached."]
+    learned = cm.Signatures(None).learn(bodies)
+    assert "manager of general partner" in learned and "rakesh bhargava" in learned and "might you have a referral for us?" in learned
+    assert "please see attached." not in learned and "best regards," not in learned            # a sentence three times is not a signature; a courtesy never is
+    shown = cm.clean(bodies[0], "", [], learned=learned, names=["Rakesh Bhargava (Rakesh Sir)", "rakesh"])["own"]
+    assert shown == "Thanks Kelly. I texted him for the other two receipts.\n\nBest Regards,"
+    # The same words in the middle of a message are the message, not a signature.
+    middle = "Rakesh Bhargava\nis the name on the note, and the Manager of General Partner signs.\nSend it today." + sig
+    assert cm.clean(middle, "", [], learned=learned, names=["rakesh"])["own"].startswith("Rakesh Bhargava\nis the name on the note")
+    # Too few emails to learn from: phone, address and the sender's own name still come off, nothing else.
+    assert cm.clean("Please confirm receipt.\n\nJessica Tolley\n(301) 555-0188\njtolley@mid-atlantictitle.com", "", [], names=["jtolley"])["own"] == "Please confirm receipt.\n\nJessica Tolley"
+    assert cm.clean("Please confirm receipt.\n\nJessica Tolley\n(301) 555-0188", "", [], names=["Jessica Tolley"])["own"] == "Please confirm receipt."
+    # What no person reads goes; what a person wrote stays, even when it looks like a header.
+    assert cm.tidy("Join here https://zoom.us/j/1<https://www.google.com/url?q=https://zoom.us/j/1&sa=D&source=calendar&usd=2&usg=AOvVaw0908M08ZHXXrxzPGHwvPsX> now") == "Join here https://zoom.us/j/1 now"
+    assert cm.tidy("Received: $500 from the title company today.\nPlease book it.") == "Received: $500 from the title company today.\nPlease book it."
+    dump = "The message was blocked.\nARC-Seal: i=1; a=rsa-sha256;\n b=RH9HqyPLad6GxfTTUPlWM5v7L1TTZ59UzLUodXwdV45eLz+s0nP36xfu64PQdWP\nX-Received: by 2002:a05\nX-Gm-Gg: AYBFou216pY8Jh4+lRXHWMLnpURat00gZL9r5qSqfyB2\nSubject: Re: Windows"
+    assert cm.tidy(dump) == "The message was blocked.\n(… 4 lines of mail-server headers left out)\nSubject: Re: Windows"

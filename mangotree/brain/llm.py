@@ -68,15 +68,22 @@ RECORD_MARK = "=== THE MAIL"
 
 def usage_dict(r) -> Dict[str, int]:
     u = getattr(r, "usage", None)
+    made = getattr(u, "cache_creation", None)
     return {"input": getattr(u, "input_tokens", 0) or 0, "output": getattr(u, "output_tokens", 0) or 0,
             "cache_read": getattr(u, "cache_read_input_tokens", 0) or 0,
-            "cache_write": getattr(u, "cache_creation_input_tokens", 0) or 0}
+            "cache_write": getattr(u, "cache_creation_input_tokens", 0) or 0,
+            # The part of cache_write kept for an hour. It is billed at twice the
+            # input price, not the 1.25x of the five-minute cache.
+            "cache_write_1h": getattr(made, "ephemeral_1h_input_tokens", 0) or 0}
 
 
 def cost_of(usage: Dict[str, int]) -> float:
-    from mangotree.core.usage import cost_usd
-    return round(cost_usd(bc.MODEL, input_tokens=usage.get("input", 0), output_tokens=usage.get("output", 0),
-                          cache_read=usage.get("cache_read", 0), cache_write=usage.get("cache_write", 0)), 4)
+    from mangotree.core.usage import cost_usd, price_for
+    base = cost_usd(bc.MODEL, input_tokens=usage.get("input", 0), output_tokens=usage.get("output", 0),
+                    cache_read=usage.get("cache_read", 0), cache_write=usage.get("cache_write", 0))
+    p_in, _, _, p_write = price_for(bc.MODEL)
+    hour = min(int(usage.get("cache_write_1h", 0) or 0), int(usage.get("cache_write", 0) or 0))
+    return round(base + hour * max(0.0, 2 * p_in - p_write) / 1_000_000, 4)
 
 
 def add_usage(total: Dict[str, int], more: Dict[str, int]) -> Dict[str, int]:

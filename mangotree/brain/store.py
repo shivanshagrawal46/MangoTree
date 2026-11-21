@@ -139,7 +139,7 @@ class BrainStore:
                  source_sha: Optional[str] = None, opened_at: Optional[datetime] = None, by: str = "brain") -> Dict[str, Any]:
         return {"id": _id("i"), "title": str(title or "").strip()[:160], "detail": str(detail or "").strip()[:600],
                 "owner": norm_owner(owner), "kind": kind if kind in ITEM_KINDS else "action", "due": parse_day(due),
-                "status": "open", "opened_at": opened_at or now(), "source_sha": source_sha, "by": by,
+                "status": "open", "opened_at": opened_at or now(), "added_at": now(), "source_sha": source_sha, "by": by,
                 "closed_at": None, "closed_note": None, "closed_by": None, "closed_by_sha": None}
 
     def add_item(self, pid: str, **kw) -> Dict[str, Any]:
@@ -175,6 +175,33 @@ class BrainStore:
             return False
         sets["updated_at"] = now()
         return self.files.update_one({"property_id": pid, "open_items.id": item_id}, {"$set": sets}).modified_count > 0
+
+    def close_reply_items(self, source_sha: Optional[str], *, note: str, by: str = "mail", sha: Optional[str] = None,
+                          status: str = "done") -> List[Dict[str, str]]:
+        """Close every open "reply" to-do that was raised by this email, on whichever file it stands.
+        A reply that has gone out must take its to-do off the list with it (admin, 2026-11-21)."""
+        closed: List[Dict[str, str]] = []
+        if not source_sha:
+            return closed
+        q = {"open_items": {"$elemMatch": {"source_sha": source_sha, "status": "open", "kind": "reply"}}}
+        for f in self.files.find(q, {"property_id": 1, "open_items": 1}):
+            for i in f.get("open_items") or []:
+                if i.get("status") == "open" and i.get("kind") == "reply" and i.get("source_sha") == source_sha:
+                    if self.close_item(f["property_id"], i["id"], note=note, by=by, sha=sha, status=status):
+                        closed.append({"property_id": f["property_id"], "item_id": i["id"], "title": i.get("title") or ""})
+        return closed
+
+    def note_reply_items(self, source_sha: Optional[str], detail: str) -> int:
+        """The open "reply" to-dos raised by this email stay open, and now say this (what was sent, what is still owed)."""
+        n = 0
+        if not source_sha:
+            return n
+        q = {"open_items": {"$elemMatch": {"source_sha": source_sha, "status": "open", "kind": "reply"}}}
+        for f in self.files.find(q, {"property_id": 1, "open_items": 1}):
+            for i in f.get("open_items") or []:
+                if i.get("status") == "open" and i.get("kind") == "reply" and i.get("source_sha") == source_sha:
+                    n += int(self.update_item(f["property_id"], i["id"], {"detail": detail}))
+        return n
 
     @staticmethod
     def open_items(file: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:

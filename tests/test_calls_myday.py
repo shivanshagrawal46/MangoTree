@@ -297,12 +297,12 @@ def test_what_was_closed_today_counts_as_done_today():
     assert b["left"] == 0 and len(b["done_today"]) == 1 and b["done_today"][0]["title"] == "Send the payoff letter"
 
 
-def test_the_morning_email_is_due_from_four_thirty_eastern():
-    assert not due_morning(datetime(2026, 11, 18, 9, 29, tzinfo=UTC))      # 4:29 am EST
-    assert due_morning(datetime(2026, 11, 18, 9, 30, tzinfo=UTC))          # 4:30 am EST
-    assert due_morning(datetime(2026, 11, 18, 13, 59, tzinfo=UTC))         # 8:59 am EST
-    assert not due_morning(datetime(2026, 11, 18, 14, 0, tzinfo=UTC))      # 9:00 am EST
-    assert due_morning(datetime(2026, 7, 1, 8, 30, tzinfo=UTC))            # 4:30 am EDT
+def test_the_morning_email_is_due_from_six_thirty_eastern_after_the_six_am_reading():
+    assert not due_morning(datetime(2026, 11, 18, 11, 29, tzinfo=UTC))     # 6:29 am EST
+    assert due_morning(datetime(2026, 11, 18, 11, 30, tzinfo=UTC))         # 6:30 am EST
+    assert due_morning(datetime(2026, 11, 18, 15, 59, tzinfo=UTC))         # 10:59 am EST
+    assert not due_morning(datetime(2026, 11, 18, 16, 0, tzinfo=UTC))      # 11:00 am EST
+    assert due_morning(datetime(2026, 7, 1, 10, 30, tzinfo=UTC))           # 6:30 am EDT
 
 
 # -------------------------------------------------------------------- sweep

@@ -56,15 +56,20 @@ def _blocks(content) -> List[dict]:
 def run_loop(*, system: Sequence[dict], messages: List[dict], toolkit, effort: str, max_rounds: int,
              max_tokens: int = bc.CHAT_MAX_TOKENS, on_text: Optional[OnText] = None, on_round: Optional[Callable[[], None]] = None,
              on_tool: Optional[OnTool] = None, terminal_tool: Optional[Dict[str, Any]] = None,
-             should_stop: Optional[Callable[[], bool]] = None) -> LoopResult:
+             should_stop: Optional[Callable[[], bool]] = None, tool_list: Optional[Sequence[dict]] = None) -> LoopResult:
     """Run until the model answers in text (or calls ``terminal_tool``).
 
     ``messages`` is extended in place with this turn's assistant/tool messages.
     ``terminal_tool`` is a tool definition; calling it ends the loop and its
     input is returned as ``result.terminal``.
+
+    ``tool_list``, when given, is sent as the tools exactly as it stands (it
+    must contain ``terminal_tool``). Two calls that are to share the stored
+    prompt — a writer and its checker — must send the same tools in the same
+    order, since the tools are the first thing in what is stored.
     """
     res = LoopResult()
-    tools = list(toolkit.specs()) + ([terminal_tool] if terminal_tool else [])
+    tools = list(tool_list) if tool_list is not None else list(toolkit.specs()) + ([terminal_tool] if terminal_tool else [])
     reminded = False
     for round_no in range(1, max_rounds + 4):
         if should_stop and should_stop():

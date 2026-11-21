@@ -13,7 +13,9 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence
 from mangotree.config.registry import PROPERTY_INDEX
 from mangotree.storage.mongo import Mongo
 
+from . import cleanmail
 from . import config as bc
+from . import prompts
 from .store import BrainStore, active_property_ids, name_of
 
 EMAIL_FIELDS = {"sha256": 1, "subject": 1, "date": 1, "participants": 1, "body_clean": 1, "body_quoted": 1, "thread_key": 1,
@@ -40,6 +42,35 @@ def clip(text: str, limit: int, *, sha: str = "", what: str = "text") -> str:
     return text[:limit] + f"\n[… cut here: {len(text) - limit:,} more characters of this {what} are not shown. Use {tail} to read the rest.]"
 
 
+_PHONE_LINE = re.compile(r"^(?:(?:cell|mobile|phone|office|tel|direct|fax|m|o|p|t|c)\s*[:.]?\s*)?[\d\s()+\-.x]{7,}$", re.I)
+_CONTACT_LINE = re.compile(r"^(?:[\w.+-]+@[\w-]+\.[\w.-]+|(?:https?://|www\.)\S+)$", re.I)
+_SIGN_OFF = re.compile(r"^(?:thanks|thank you|many thanks|regards|best regards|kind regards|warm regards|best|sincerely|cheers|"
+                       r"sent from my \w+(?: \w+)?|get outlook for \w+)[\s,.!\-]*$", re.I)
+
+
+def says_nothing(art: dict, sender_names: Iterable[str] = ()) -> bool:
+    """True when an email carries no words of its own: an empty body, or nothing
+    but the sender's name, a phone number, an address and a sign-off.
+
+    Such an email — a draw sheet or a PDF sent with only a signature under it —
+    asks nothing, so no reply is drafted for it (admin directive 2026-11-14). The
+    test is deliberately narrow: one word of the sender's own ("Final.") and the
+    question of whether a reply is owed goes to the model as before."""
+    known = set()
+    for n in list(sender_names) + [str(a).split("@")[0] for a in ((art.get("participants") or {}).get("from") or [])]:
+        known.update(w.lower() for w in re.findall(r"[A-Za-z]{2,}", str(n or "")))
+    rest: List[str] = []
+    for line in (art.get("body_clean") or "").splitlines():
+        line = line.strip().strip("*_-–—|·•> ")
+        if not line or _PHONE_LINE.match(line) or _CONTACT_LINE.match(line) or _SIGN_OFF.match(line):
+            continue
+        words = re.findall(r"[A-Za-z][A-Za-z.'-]*", line)
+        if words and len(words) <= 4 and len(line) <= 60 and all(w[0].isupper() for w in words) and any(w.lower().strip(".") in known for w in words):
+            continue                                    # the sender's own name
+        rest.append(line)
+    return sum(c.isalpha() for c in " ".join(rest)) < 3
+
+
 class Records:
     """Read-only access to the corpus, shaped for prompts."""
 
@@ -47,6 +78,7 @@ class Records:
         self.mongo = mongo
         self.art = mongo.artifacts
         self._people: Optional[Dict[str, dict]] = None
+        self.signatures = cleanmail.Signatures(mongo.artifacts)
 
     # ------------------------------------------------------------- people
     def people_by_address(self) -> Dict[str, dict]:
@@ -231,10 +263,10 @@ class Records:
 
 
     # ------------------------------------------------------ the mail itself
-    def _window_start(self, days: int) -> datetime:
+    def _window_start(self, days: int, *, at: Optional[datetime] = None) -> datetime:
         """The window starts on a day boundary, so the text is identical from one
         call to the next until something new arrives — which is what lets it cache."""
-        return (datetime.now(timezone.utc) - timedelta(days=days)).replace(hour=0, minute=0, second=0, microsecond=0)
+        return ((at or datetime.now(timezone.utc)) - timedelta(days=days)).replace(hour=0, minute=0, second=0, microsecond=0)
 
     def window_files(self, pid: str, *, days: int = bc.MAIL_DAYS) -> Dict[str, Any]:
         """Every file of the window: attached to an email, uploaded, or call notes.
@@ -331,21 +363,298 @@ class Records:
                 out.append("(Not shown for space — open before relying on them: "
                            + "; ".join(f"{a.get('filename') or 'file'} [sha={a['sha256'][:12]}]" for a in left_out) + ")")
             out.append("\n\n".join(t for _, t in shown))
-        if pid != bc.GENERAL_ID:
-            # The contractor's own site diary and bills, where the property has a Buildertrend job.
-            try:
-                from .buildertrend import Buildertrend
-                site = Buildertrend(self.mongo).site_block(pid)
-                if site:
-                    out.append(site)
-                    from .sitework import SiteWork
-                    reading = SiteWork(self.mongo).block(pid)
-                    if reading:
-                        out.append(reading)
-            except Exception:
-                from mangotree.core.logging import logger
-                logger.exception("site block failed for %s", pid)
+        site = self.site_text(pid)
+        if site:
+            out.append(site)
         return "\n".join(out)
+
+    def site_text(self, pid: str) -> str:
+        """The contractor's own site diary and bills, and the reading of its photos,
+        where the property has a Buildertrend job. Empty otherwise."""
+        if pid == bc.GENERAL_ID:
+            return ""
+        out: List[str] = []
+        try:
+            from .buildertrend import Buildertrend
+            site = Buildertrend(self.mongo).site_block(pid)
+            if site:
+                out.append(site)
+                from .sitework import SiteWork
+                reading = SiteWork(self.mongo).block(pid)
+                if reading:
+                    out.append(reading)
+        except Exception:
+            from mangotree.core.logging import logger
+            logger.exception("site block failed for %s", pid)
+        return "\n".join(out)
+
+    # ------------------------------------------- what a new record is read against
+    # (2026-11-14) A newly arrived record used to be read with every email AND every
+    # attachment of 14 days in full — 290,000 tokens to log a one-line email on the
+    # busiest file, two thirds of it attachments that had nothing to do with it, and
+    # still nothing older than 14 days. Now it is read with the emails in full, a
+    # one-line list of EVERY document on file, and the means to open or search for
+    # anything else. The parts are separate so that the ones that did not change
+    # since the last record are not paid for again.
+
+    # --------------------------------------------------------- conversations
+    # (2026-11-14) The mail is given as conversations, not as a pile sorted by
+    # date. Each conversation is one unbroken chain, oldest message first, each
+    # message once: its own words, without the signature. What an email quotes
+    # underneath is left out only when that very message is in the chain as an
+    # email of its own; a quote that is not held separately is kept word for
+    # word, so the chain is never broken. (Measured before this: 58% of the email
+    # text in front of the model was older messages quoted again.)
+
+    def _threads(self, keys: Sequence[str], *, as_of: Optional[datetime] = None, per_thread: int = bc.THREAD_MESSAGES) -> Dict[str, List[dict]]:
+        """Every email on file of these conversations, of any age, oldest first."""
+        out: Dict[str, List[dict]] = {}
+        keys = [k for k in dict.fromkeys(keys) if k]
+        if not keys:
+            return out
+        q: Dict[str, Any] = {"source_type": "email", "thread_key": {"$in": keys}}
+        if as_of:
+            q["date"] = {"$lte": as_of}
+        for r in self.art.find(q, EMAIL_FIELDS).sort("date", 1):
+            out.setdefault(r["thread_key"], []).append(r)
+        return {k: v[-per_thread:] for k, v in out.items()}
+
+    def _file_names(self, shas: Sequence[str]) -> Dict[str, List[dict]]:
+        names: Dict[str, List[dict]] = {}
+        if shas:
+            for a in self.art.find({"parent_email_shas": {"$in": list(shas)}, "is_inline_image": {"$ne": True}},
+                                   {"sha256": 1, "filename": 1, "parent_email_shas": 1}):
+                for p in a.get("parent_email_shas") or []:
+                    names.setdefault(p, []).append(a)
+        return names
+
+    def cleaned(self, a: dict, earlier: Sequence[dict]) -> Dict[str, Any]:
+        """One email as it is shown in its conversation (see ``cleanmail``)."""
+        frm = ((a.get("participants") or {}).get("from") or [""])[0]
+        held = [(e.get("body_clean") or "") + "\n" + (e.get("body_quoted") or "") for e in earlier]
+        return cleanmail.clean(a.get("body_clean") or "", a.get("body_quoted") or "", held,
+                               learned=self.signatures.lines(frm), names=[self.name(frm), str(frm).split("@")[0]],
+                               signature_of=self.signatures.lines, drop_repeats=bc.MAIL_DROP_REPEATS)
+
+    def render_message(self, a: dict, *, direction: str, earlier: Sequence[dict], files: Sequence[dict] = (),
+                       with_attachments: bool = False) -> str:
+        c = self.cleaned(a, earlier)
+        body = self._replying_to(a, earlier) + (c["own"] or "(no words of their own in this email — only what is attached or quoted)")
+        label = {"sent": "--- under this email, as it was sent (the chain it carries) ---",
+                 "inside": "--- quoted in this email, WITH WORDS WRITTEN INSIDE IT (answers typed between its lines); given here whole ---",
+                 "not_held": "--- quoted in this email; not held as an email of its own, so given here ---"}
+        last = None
+        for k, why in zip(c["kept"], c["why"]):
+            body += ("\n\n" + label[why] + "\n" if why != last else "\n\n") + k      # one heading for a chain, not one per message in it
+            last = why
+        if with_attachments:
+            # The new record: its attachments follow in full, exactly as before.
+            return self.render_email({**a, "body_clean": body}, direction=direction, with_attachments=True)
+        text = self.email_header(a, direction) + "\n" + clip(body, bc.EMAIL_BODY_CHARS, sha=a["sha256"], what="email")
+        mine = sorted(files or [], key=lambda f: f.get("filename") or "")
+        if mine:
+            text += "\n(files attached, not shown here — open one to read it: " + "; ".join(
+                f"{f.get('filename') or 'file'} [sha={f['sha256'][:12]}]" for f in mine[:15]) + ")"
+        return text
+
+    def _replying_to(self, a: dict, earlier: Sequence[dict]) -> str:
+        """One line saying which message this one answers, from the mail's own
+        reply marker — so the order of a conversation is stated, not left to be
+        worked out. Empty for a message that answers nothing."""
+        ids = [str(x) for x in (a.get("in_reply_to") or []) if x]
+        if not ids:
+            return "(starts the conversation)\n" if not earlier else ""
+        by_id = {m.get("internet_message_id"): m for m in earlier if m.get("internet_message_id")}
+        for x in ids:
+            m = by_id.get(x)
+            if m:
+                frm = ((m.get("participants") or {}).get("from") or [""])[0]
+                return f"(replying to the message of {day(m.get('date'), '%Y-%m-%d %H:%M')} UTC from {self.name(frm)} [sha={m['sha256'][:12]}])\n"
+        return "(replying to a message that is not on file)\n"
+
+    @staticmethod
+    def _subject(a: dict) -> str:
+        return re.sub(r"^\s*((re|fw|fwd)\s*:\s*)+", "", a.get("subject") or "", flags=re.I).strip() or "(no subject)"
+
+    def render_conversation(self, msgs: Sequence[dict], *, dirs: Dict[str, str], names: Dict[str, List[dict]]) -> str:
+        head = (f"--- CONVERSATION: “{self._subject(msgs[0])}” — {len(msgs)} message(s), "
+                f"{day(msgs[0].get('date'), '%Y-%m-%d %H:%M')} to {day(msgs[-1].get('date'), '%Y-%m-%d %H:%M')} UTC, oldest first ---")
+        return head + "\n" + "\n\n".join(self.render_message(m, direction=dirs.get(m["sha256"], "received"), earlier=msgs[:i],
+                                                              files=names.get(m["sha256"]) or []) for i, m in enumerate(msgs))
+
+    def _listed(self, msgs: Sequence[dict]) -> str:
+        last = msgs[-1]
+        people: List[str] = []
+        for m in msgs:
+            for a in ((m.get("participants") or {}).get("from") or [])[:1]:
+                n = self.name(a)
+                if n not in people:
+                    people.append(n)
+        words = " ".join(str(self.cleaned(last, msgs[:-1])["own"]).split())
+        return (f"· [sha={last['sha256'][:12]}] “{self._subject(msgs[0])}” — {len(msgs)} message(s), {day(msgs[0].get('date'))} to {day(last.get('date'))}"
+                f" — written by {', '.join(people[:5])} — latest, from {self.name(((last.get('participants') or {}).get('from') or [''])[0])}: "
+                f"“{words[:180]}{'…' if len(words) > 180 else ''}”")
+
+    def mail_view(self, pid: str, *, new: Optional[dict] = None, days: int = bc.MAIL_DAYS, as_of: Optional[datetime] = None) -> Dict[str, Any]:
+        """The file's mail of the window as conversations, for reading ``new`` against.
+
+        A quiet file: every conversation in full. A busy one (more than
+        ``MAIL_FULL_CHARS`` once cleaned): in full are the conversations active in
+        the last two days and those connected to the new record — the same
+        subject, or the same outside person — newest first while there is room;
+        every other conversation is listed in one line and can be opened.
+
+        ``new``'s own conversation is not here: it is given with the record itself.
+        Returns ``stable`` (conversations with nothing new today, in full — the
+        same text until tomorrow), ``live`` (the rest), and counts."""
+        at = as_of or datetime.now(timezone.utc)
+        start = self._window_start(days, at=at)
+        rows = [r for r in self.recent_mail(pid, days=days, limit=600, since=start) if not as_of or (r.get("date") and r["date"] <= as_of)]
+        new_sha = (new or {}).get("sha256")
+        own_key = (new or {}).get("thread_key")
+        rows = [r for r in rows if r["sha256"] != new_sha]
+        in_window = {r["sha256"] for r in rows}
+        keys = [r.get("thread_key") for r in rows if r.get("thread_key") and r.get("thread_key") != own_key]
+        threads = self._threads(keys, as_of=as_of)
+        for r in rows:                                   # an email with no conversation key stands alone
+            if not r.get("thread_key"):
+                threads["sha:" + r["sha256"]] = [r]
+        convs = [[m for m in msgs if m["sha256"] != new_sha] for msgs in threads.values()]
+        convs = sorted([c for c in convs if c], key=lambda c: (str(c[-1].get("date") or ""), c[-1]["sha256"]))
+        shas = [m["sha256"] for c in convs for m in c]
+        dirs, names = self.directions(shas), self._file_names(shas)
+        text = {id(c): self.render_conversation(c, dirs=dirs, names=names) for c in convs}
+        today = at.replace(hour=0, minute=0, second=0, microsecond=0)
+        total = sum(len(t) for t in text.values())
+        head = (f"=== THE MAIL — the conversations of {name_of(pid)} with an email since {day(start)}, each as one chain, oldest message first ===\n"
+                f"({prompts.MAIL_AS} The text of an attachment is not shown: each is named with its "
+                "tag, stands on THE DOCUMENTS ON FILE, and can be opened.)")
+        info = {"emails": len(in_window), "conversations": len(convs), "listed": 0, "chars": total,
+                "last_day": sum(1 for r in rows if r.get("date") and r["date"] >= at - timedelta(hours=24))}
+        if total <= bc.MAIL_FULL_CHARS:
+            quiet = [text[id(c)] for c in convs if c[-1].get("date") and c[-1]["date"] < today]
+            live = [text[id(c)] for c in convs if not (c[-1].get("date") and c[-1]["date"] < today)]
+            return {**info, "full": len(convs),
+                    "stable": head + "\n\n" + ("\n\n".join(quiet) if quiet else "(no conversation that ended before today)"),
+                    "live": f"=== THE MAIL, CONVERSATIONS WITH AN EMAIL TODAY ({day(today)}) — continues the list above ===\n\n"
+                            + ("\n\n".join(live) if live else "(none besides the new record's own)")}
+        # A busy file: what is connected to the new record in full, the rest by one line each.
+        rkb = {a.lower() for a in self.rkb_addresses()}
+        p = (new or {}).get("participants") or {}
+        who = {a.lower() for a in (p.get("from") or [])} - rkb
+        if not who:                                      # RKB wrote it: the people it was written to
+            who = {a.lower() for a in (p.get("to") or [])[:4]} - rkb
+        subject = self._subject(new or {}).lower() if new else ""
+        recent_from = at - timedelta(hours=48)
+
+        def connected(c: Sequence[dict]) -> bool:
+            if subject and subject != "(no subject)" and any(self._subject(m).lower() == subject for m in c):
+                return True
+            return bool(who) and any(who & {a.lower() for k in ("from", "to", "cc") for a in ((m.get("participants") or {}).get(k) or [])} for m in c)
+
+        chosen: List[Sequence[dict]] = [c for c in convs if c[-1].get("date") and c[-1]["date"] >= recent_from]
+        room = bc.MAIL_CONNECTED_CHARS
+        picked = {id(c) for c in chosen}
+        for c in reversed(convs):                        # newest first
+            if id(c) in picked or not connected(c):
+                continue
+            if len(text[id(c)]) > room:
+                continue
+            room -= len(text[id(c)])
+            chosen.append(c)
+            picked.add(id(c))
+        chosen.sort(key=lambda c: (str(c[-1].get("date") or ""), c[-1]["sha256"]))
+        rest = [c for c in convs if id(c) not in picked]
+        live = head + "\n(This is a busy file. Shown in full: the conversations with an email in the last two days, and those connected to the new record "
+        live += "by subject or by the outside person. Every other conversation of the period is listed after them in one line.)\n\n"
+        live += "\n\n".join(text[id(c)] for c in chosen) if chosen else "(no conversation of the last two days and none connected to the new record)"
+        if rest:
+            live += ("\n\n=== OTHER CONVERSATIONS OF THE PERIOD — one line each, NOT shown in full ===\n"
+                     "(Open one with email_thread('<its sha tag>') when the new record touches it. Do not state what one says from its line.)\n"
+                     + "\n".join(self._listed(c) for c in reversed(rest)))
+        return {**info, "full": len(chosen), "listed": len(rest), "stable": "", "live": live}
+
+    def render_record(self, a: dict, *, direction: Optional[str] = None) -> str:
+        """The new email: the conversation it belongs to so far, as one chain, then
+        the new message itself with its own attachments in full."""
+        before = self.thread_before(a)
+        dirs = self.directions([m["sha256"] for m in before] + [a["sha256"]])
+        names = self._file_names([m["sha256"] for m in before])
+        out: List[str] = []
+        if before:
+            out.append(f"THIS CONVERSATION SO FAR ({len(before)} message(s), oldest first):")
+            out += [self.render_message(m, direction=dirs.get(m["sha256"], "received"), earlier=before[:i], files=names.get(m["sha256"]) or [])
+                    for i, m in enumerate(before)]
+        else:
+            out.append("THIS IS THE FIRST MESSAGE OF ITS CONVERSATION ON FILE.")
+        out.append("THE NEW MESSAGE:")
+        out.append(self.render_message(a, direction=direction or dirs.get(a["sha256"], "received"), earlier=before, with_attachments=True))
+        return "\n\n".join(out)
+
+    _MEDIA = (".jpg", ".jpeg", ".png", ".gif", ".bmp", ".heic", ".webp", ".tif", ".tiff", ".mp4", ".mov", ".avi", ".zip")
+
+    def documents_block(self, pid: str, *, as_of: Optional[datetime] = None) -> str:
+        """Every document held for the file — attached to an email, uploaded, or
+        call notes, of any age — one line each. The line says what the document
+        is, never what it says; the model opens the ones it needs by their tag."""
+        at = as_of or datetime.now(timezone.utc)
+        q: Dict[str, Any] = {"source_type": {"$ne": "email"}, "is_inline_image": {"$ne": True}}
+        q["property_ids"] = {"$nin": active_property_ids()} if pid == bc.GENERAL_ID else pid
+        if as_of:
+            q["created_at"] = {"$lte": as_of}
+        rows = list(self.art.find(q, {"sha256": 1, "filename": 1, "subject": 1, "date": 1, "created_at": 1, "parent_email_shas": 1,
+                                      "doc_class": 1, "meeting.title": 1, "extraction.char_count": 1}))
+        when = lambda a: a.get("date") or a.get("created_at")  # noqa: E731
+        listed, media = [], 0
+        for a in rows:
+            name = str(a.get("filename") or "").lower()
+            chars = int((a.get("extraction") or {}).get("char_count") or 0)
+            if name.endswith(self._MEDIA) and chars < 200:
+                media += 1                       # a logo, a photo with no words, an archive: nothing to read
+                continue
+            listed.append(a)
+        listed.sort(key=lambda a: (str(when(a) or ""), a.get("filename") or "", a["sha256"]))
+        held_back = max(0, len(listed) - bc.DOC_LIST_MAX)
+        listed = listed[held_back:]
+        full_from = at - timedelta(days=bc.DOC_LIST_FULL_DAYS)
+        recent = [a for a in listed if when(a) and when(a) >= full_from]
+        first_page: Dict[str, str] = {}
+        parents: Dict[str, dict] = {}
+        if recent:
+            for c in self.mongo.chunks.find({"artifact_sha": {"$in": [a["sha256"] for a in recent]}, "ordinal": 0}, {"artifact_sha": 1, "tier1": 1}):
+                if c.get("tier1"):
+                    first_page[c["artifact_sha"]] = " ".join(str(c["tier1"]).split())
+            want = list({p for a in recent for p in (a.get("parent_email_shas") or [])[:1]})
+            if want:
+                parents = {e["sha256"]: e for e in self.art.find({"sha256": {"$in": want}}, {"sha256": 1, "subject": 1, "participants.from": 1})}
+        recent_ids = {a["sha256"] for a in recent}
+        lines: List[str] = []
+        for a in listed:
+            name = a.get("filename") or (a.get("meeting") or {}).get("title") or a.get("subject") or a["sha256"][:12]
+            line = f"[sha={a['sha256'][:12]}] {day(when(a))} · {name}"
+            if a.get("doc_class"):
+                line += f" · {str(a['doc_class']).replace('_', ' ')}"
+            if a["sha256"] in recent_ids:
+                chars = int((a.get("extraction") or {}).get("char_count") or 0)
+                if chars:
+                    line += f" · {max(1, round(chars / 1000))}k characters"
+                e = parents.get(((a.get("parent_email_shas") or [None])[0]) or "")
+                if e:
+                    frm = ((e.get("participants") or {}).get("from") or [""])[0]
+                    line += f" · came from {self.name(frm)} with “{str(e.get('subject') or '')[:70]}”"
+                gist = first_page.get(a["sha256"])
+                if gist:
+                    line += " — first page: " + (gist if len(gist) <= bc.DOC_LIST_LINE_CHARS else gist[:bc.DOC_LIST_LINE_CHARS].rsplit(" ", 1)[0] + " …")
+            lines.append(line)
+        head = (f"=== THE DOCUMENTS ON FILE — every document held for {name_of(pid)}, of any age, one line each, oldest first ===\n"
+                f"({len(lines)} document(s). A line says what a document IS — its name, when and with which email it came and, for the last "
+                f"{bc.DOC_LIST_FULL_DAYS} days, a sentence about its first page. It does NOT say what the document says. To rely on a document, "
+                "open it with open_document('<its sha tag>'). Never state a figure, a date, a name or a term from this list alone.)")
+        if held_back:
+            head += f"\n({held_back} older document(s) are not listed for space; find them with list_documents or the search.)"
+        if media:
+            head += f"\n({media} picture, video or archive file(s) with no readable text are left off the list.)"
+        return head + "\n" + ("\n".join(lines) if lines else "(no documents on file)")
 
     def mail_block(self, pid: str, *, days: int = bc.MAIL_DAYS, budget: int = bc.MAIL_BLOCK_CHARS) -> str:
         """Kept for callers of the earlier name: the mail and the files of the window."""

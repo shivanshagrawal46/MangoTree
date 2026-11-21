@@ -187,6 +187,7 @@ def install(app: FastAPI, mongo: Mongo, jobs) -> None:
             sent=lambda: list(store.drafts.find({"status": "sent", "kept_ratio": {"$exists": True}}, {"_id": 0, "kept_ratio": 1, "sent_as_written": 1}).limit(500)),
             enabled=lambda: bool(store.setting(bc.SETTING_ENABLED, True)),
             outlook=lambda: bool(store.setting(bc.SETTING_OUTLOOK_DRAFTS, False)),
+            on_open=lambda: bool(store.setting(bc.SETTING_READ_ON_OPEN, True)),
         )
         files, activity, pending, sent = g["files"], g["activity"], g["pending"], g["sent"]
         drafts = [d for d in g["drafts"] if d.get("status") == "ready"]
@@ -210,7 +211,7 @@ def install(app: FastAPI, mongo: Mongo, jobs) -> None:
         # Records that arrived and have not been read into the files yet are read now,
         # without anyone pressing anything: the page must not show a to-do an email settled.
         reading = any(j.kind == "brain_run" and j.status in ("queued", "running") for j in list(jobs.jobs.values()))
-        if pending and not reading and g["enabled"] and not warming["on"]:
+        if pending and not reading and g["enabled"] and g["on_open"] and not warming["on"]:
             jobs.start("brain_run", {"by": "auto", "why": "unread records when Today was opened"},
                        lambda job: data.clean(updater.run_pending(emit=job.emit)))
             reading = True
@@ -221,7 +222,7 @@ def install(app: FastAPI, mongo: Mongo, jobs) -> None:
             "pending_records": pending, "reading": reading,
             "stats": {"drafts_sent": len(sent), "sent_as_written": sum(1 for s in sent if s.get("sent_as_written")),
                       "avg_kept": round(sum(s.get("kept_ratio") or 0 for s in sent) / len(sent), 2) if sent else None},
-            "settings": {"enabled": g["enabled"], "outlook_drafts": g["outlook"]},
+            "settings": {"enabled": g["enabled"], "outlook_drafts": g["outlook"], "read_on_open": g["on_open"], "run_hours": list(bc.RUN_HOURS)},
         })
 
     @app.get("/brain/counts")
@@ -785,6 +786,11 @@ def install(app: FastAPI, mongo: Mongo, jobs) -> None:
         if not fields:
             return data.clean(_draft_view(d))
         out = store.update_draft(draft_id, fields)
+        # A reply marked sent, or set aside as not needed, takes its "reply to this" to-do off the list with it.
+        if body.status in ("sent", "dismissed") and d.get("status") == "ready":
+            who = user.get("name") or user["user_id"]
+            store.close_reply_items(d.get("reply_to_sha"), by=user["user_id"], status="done" if body.status == "sent" else "dropped",
+                                    note=f"{who} marked the reply sent." if body.status == "sent" else f"{who} set the reply aside: no reply needed.")
         final = (out.get("body") or "").strip()
         if body.status == "sent" and not d.get("learned") and changed_enough(d.get("original_body") or d.get("body") or "", final):
             store.update_draft(draft_id, {"learned": True})
@@ -970,6 +976,7 @@ def install(app: FastAPI, mongo: Mongo, jobs) -> None:
         except Exception:
             pass
         return {"enabled": bool(store.setting(bc.SETTING_ENABLED, True)), "outlook_drafts": bool(store.setting(bc.SETTING_OUTLOOK_DRAFTS, False)),
+                "read_on_open": bool(store.setting(bc.SETTING_READ_ON_OPEN, True)), "run_hours": list(bc.RUN_HOURS),
                 "outlook_ready": can_draft, "model": bc.MODEL}
 
     @app.post("/brain/settings")
@@ -980,4 +987,6 @@ def install(app: FastAPI, mongo: Mongo, jobs) -> None:
             store.set_setting(bc.SETTING_ENABLED, bool(body["enabled"]), user["user_id"])
         if "outlook_drafts" in body:
             store.set_setting(bc.SETTING_OUTLOOK_DRAFTS, bool(body["outlook_drafts"]), user["user_id"])
+        if "read_on_open" in body:
+            store.set_setting(bc.SETTING_READ_ON_OPEN, bool(body["read_on_open"]), user["user_id"])
         return brain_settings(user)

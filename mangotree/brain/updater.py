@@ -21,11 +21,15 @@ from mangotree.core.logging import logger
 from mangotree.storage.mongo import Mongo
 
 from . import config as bc
+from . import eventcheck
 from . import prompts
-from .context import DOC_FIELDS, EMAIL_FIELDS, Records, clip, day, money_lines, property_block, standing_instructions
+from .agent import run_loop
+from .context import DOC_FIELDS, EMAIL_FIELDS, Records, clip, day, money_lines, property_block, says_nothing, standing_instructions
 from .drafts import DraftWriter
-from .llm import BrainRefusal, cost_of, structured, system_blocks
+from .eventcheck import SUBMIT_CHECK
+from .llm import BrainError, BrainRefusal, add_usage, cost_of, structured, system_blocks
 from .store import ITEM_KINDS, OWNERS, BrainStore, active_property_ids, all_file_ids, name_of, now
+from .tools import Toolkit
 
 Emit = Callable[[str, Dict[str, Any]], None]
 
@@ -68,6 +72,58 @@ BOOTSTRAP_SCHEMA = _o({
 })
 
 
+#: How the lean reading hands over its result: the same object, as a tool call that ends the loop.
+SUBMIT_UPDATE = {
+    "name": "submit_update",
+    "description": "Hand over what this record changes on the file. Call exactly once, at the end.",
+    "strict": True,
+    "input_schema": EVENT_SCHEMA,
+}
+
+#: The look-ups a reading may use. Nothing that writes, and not the tool that
+#: loads another property's whole record.
+LOOKUP_TOOLS = ("open_document", "search_records", "recent_mail", "email_thread", "list_documents", "find_exact")
+
+
+class CappedKit:
+    """The chat's look-up tools, limited to a few uses for one record.
+
+    The limit is on look-ups actually made, not on rounds: once it is reached
+    every further call is answered with a plain refusal, so one email can never
+    run up the cost of a long investigation."""
+
+    def __init__(self, kit, limit: int = bc.EVENT_LOOKUPS):
+        self.kit = kit
+        self.limit = int(limit)
+        self.used = 0
+        self.labels: List[str] = []
+
+    def specs(self) -> List[Dict[str, Any]]:
+        return [t for t in self.kit.specs() if t["name"] in LOOKUP_TOOLS]
+
+    def run(self, name: str, args: Dict[str, Any]):
+        if name not in LOOKUP_TOOLS:
+            return f"Unknown tool {name}.", True, name
+        if self.used >= self.limit:
+            return (f"The {self.limit} look-ups for this record are used. Call submit_update now from what you have, and say in the "
+                    "summary what you could not check."), True, "Look-up refused: limit reached"
+        self.used += 1
+        content, is_error, label = self.kit.run(name, args)
+        self.labels.append(label)
+        left = self.limit - self.used
+        return content + f"\n\n({left} look-up{'s' if left != 1 else ''} left for this record.)", is_error, label
+
+
+class _NoLookups:
+    """The second reader's hands: none. It checks what is in front of it."""
+
+    def specs(self) -> List[Dict[str, Any]]:
+        return []
+
+    def run(self, name: str, args: Dict[str, Any]):
+        return "The second reading looks nothing up. Call submit_check now with what you found.", True, "Look-up refused: second reading"
+
+
 def _norm(t: str) -> str:
     return re.sub(r"[^a-z0-9 ]", "", re.sub(r"\s+", " ", (t or "").lower())).strip()
 
@@ -78,6 +134,20 @@ def _similar(a: str, b: str) -> bool:
 
 
 SCAN = 3000                      # how many of the newest records are looked through for unread ones
+
+
+def by_file(rows: List[dict], targets) -> List[dict]:
+    """One file's records back to back, each file's in the order they came (2026-11-21).
+
+    What a reading is handed for a file — its documents, its mail — is kept by the API for
+    five minutes after each reading, and the next record on the same file then reads it at a
+    twentieth of the price. Read in date order across files, every switch of file pays for
+    that part in full again (measured on one Durham email: $0.58 of its $0.92)."""
+    first: Dict[str, int] = {}
+    key = lambda r: (list(targets(r)) or [bc.GENERAL_ID])[0]
+    for n, r in enumerate(rows):
+        first.setdefault(key(r), n)
+    return sorted(rows, key=lambda r: first[key(r)])       # stable: the order within a file is kept
 
 
 class Updater:
@@ -181,8 +251,96 @@ class Updater:
         return {"changed": changed, "items_added": added, "items_closed": closed}
 
     # ---------------------------------------------------------- one record
+    def lean_system(self, pid: str, art: dict, *, as_of: Optional[datetime] = None, page: Optional[str] = None) -> Dict[str, Any]:
+        """What a new record is read against, most stable part first, so that a
+        second record on the same file pays only for what changed in between:
+
+            1. who we are, the list of every document, the site diary   (changes when a file or a log arrives)
+            2. the conversations with nothing new today, in full        (changes once a day; empty on a busy file)
+            3. the live conversations, the property's page, the job     (changes with every record)
+
+        Parts 1 and 2 are kept for an hour on a busy file and five minutes on a
+        quiet one: an hour costs twice the input price to store, and is only
+        worth it when another record is likely to come within it."""
+        mail = self.records.mail_view(pid, new=art if self.is_email(art) else None, as_of=as_of)
+        docs = self.records.documents_block(pid, as_of=as_of)
+        site = self.records.site_text(pid)
+        page = page if page is not None else property_block(self.mongo, self.store, pid)
+        job = prompts.EVENT_LEAN + (prompts.general_note() if pid == bc.GENERAL_ID else "")
+        keep: Dict[str, Any] = {"type": "ephemeral", "ttl": "1h"} if (bc.EVENT_CACHE_HOUR and mail["last_day"] >= bc.BUSY_FILE_EMAILS) else {"type": "ephemeral"}
+        # Always the same sections in the same order: who we are, the documents, the site,
+        # the mail, the property's page, the job. Then the new record, in the user turn.
+        blocks = [{"type": "text", "text": prompts.CORE_LEAN + "\n" + docs + ("\n" + site if site else ""), "cache_control": dict(keep)},
+                  {"type": "text", "text": mail["stable"] or "(The mail follows.)", "cache_control": dict(keep)},
+                  # Stored for five minutes, so the second reading, a minute later, reads it.
+                  {"type": "text", "text": mail["live"] + "\n\n" + page + "\n\n" + job, "cache_control": {"type": "ephemeral"}}]
+        return {"system": blocks, "busy": "ttl" in keep,
+                "chars": {"documents_and_site": len(docs) + len(site), "mail_settled": len(mail["stable"]), "mail_live": len(mail["live"]), "page": len(page),
+                          "emails": mail["emails"], "conversations": mail["conversations"], "in_full": mail["full"], "listed": mail["listed"]}}
+
+    def _read_lean(self, pid: str, art: dict, direction: Optional[str], *, as_of: Optional[datetime] = None,
+                   page: Optional[str] = None) -> Dict[str, Any]:
+        """Read one record with the emails in full, the documents as a list, and up
+        to ``EVENT_LOOKUPS`` look-ups of the model's own choosing."""
+        ctx = self.lean_system(pid, art, as_of=as_of, page=page)
+        if self.is_email(art):
+            record = self.records.render_record(art, direction=direction)
+        else:
+            record = self.records.render_document(art, pid=pid)
+        today = as_of or datetime.now(timezone.utc)
+        user = f"TODAY: {today:%A %d %B %Y}\n\nTHE NEW RECORD for {name_of(pid)}:\n\n{record}"
+        label = f"event {pid} {art['sha256'][:10]}"
+        usage: Dict[str, int] = {}
+        kit = CappedKit(Toolkit(self.mongo, self.store, pid=pid, user={"user_id": "brain", "name": "brain"}, allow_actions=False))
+        # One list of tools for the writer and for the second reader, in one order: the tools are
+        # the first thing in what the API stores, and a different list is a different prompt.
+        tool_list = kit.specs() + [SUBMIT_UPDATE, SUBMIT_CHECK]
+        loop = dict(system=ctx["system"], effort=bc.EVENT_EFFORT, tool_list=tool_list)
+        messages: List[dict] = []
+        res = None
+        for max_tokens in (20_000, 40_000):
+            # The record is a block of its own: the second reader sends the same block, so it is read from store, not paid for again.
+            messages = [{"role": "user", "content": [{"type": "text", "text": user}]}]
+            res = run_loop(messages=messages, toolkit=kit, max_rounds=bc.EVENT_LOOKUPS + 1, max_tokens=max_tokens, terminal_tool=SUBMIT_UPDATE, **loop)
+            add_usage(usage, res.usage)
+            if res.refused:
+                raise BrainRefusal(f"{label}: the model declined this request (category: {res.refusal_category})")
+            if res.terminal or not res.truncated:
+                break
+            logger.warning("%s: cut off at max_tokens=%s; reading once more with room", label, max_tokens)
+        if not res.terminal:
+            raise BrainError(f"{label}: the reading ended without a result (stop: {res.stop_reason or 'none'})")
+        data, rounds, check = res.terminal, res.rounds, {"ran": False}
+        found: List[str] = []
+        if bc.EVENT_CHECK:
+            try:
+                second = run_loop(messages=[{"role": "user", "content": [{"type": "text", "text": user},
+                                                                         {"type": "text", "text": eventcheck.BRIEF + eventcheck.render_entry(data)}]}],
+                                  toolkit=_NoLookups(), max_rounds=1, max_tokens=12_000, terminal_tool=SUBMIT_CHECK, **loop)
+                add_usage(usage, second.usage)
+                if second.terminal:
+                    found = eventcheck.findings(second.terminal)
+                    corrected = False
+                    if found:
+                        messages.append({"role": "user", "content": eventcheck.as_instruction(found)})
+                        again = run_loop(messages=messages, toolkit=kit, max_rounds=bc.EVENT_LOOKUPS + 1, max_tokens=40_000, terminal_tool=SUBMIT_UPDATE, **loop)
+                        add_usage(usage, again.usage)
+                        rounds += again.rounds
+                        if again.terminal:
+                            data, corrected = again.terminal, True
+                    check = eventcheck.summary(second.terminal, corrected=corrected)
+                else:
+                    logger.warning("%s: the second reading gave no result (stop: %s); the entry is filed as written", label, second.stop_reason)
+            except Exception:
+                # The entry is still worth filing; it is marked as not checked.
+                logger.exception("%s: the second reading failed; the entry is filed as written", label)
+        return {"data": data, "usage": usage, "lookups": list(kit.labels), "rounds": rounds, "context": ctx["chars"], "user_chars": len(user),
+                "busy": ctx["busy"], "check": check, "found": found, "first": res.terminal}
+
     def _read(self, pid: str, art: dict, direction: Optional[str]) -> Dict[str, Any]:
-        # Shared order — who we are, the record, the file, then the job — so the
+        if bc.EVENT_MODE == "lean":
+            return self._read_lean(pid, art, direction)
+        # The earlier way. Shared order — who we are, the record, the file, then the job — so the
         # record is cached once and reused by the update, the draft and the check.
         system = system_blocks(prompts.CORE, self.records.record_block(pid), property_block(self.mongo, self.store, pid),
                                prompts.EVENT + (prompts.general_note() if pid == bc.GENERAL_ID else ""))
@@ -212,11 +370,19 @@ class Updater:
             try:
                 r = self._read(pid, art, direction)
                 applied = self._apply(pid, r["data"], art=art, direction=direction)
-                self.store.mark_event(sha, pid, status="done", detail={"usage": r["usage"], "cost_usd": cost_of(r["usage"]),
-                                                                       "elapsed_s": round(time.time() - t0, 1), "relevance": r["data"].get("relevance")})
-                out["properties"][pid] = {**applied, "relevance": r["data"].get("relevance"), "title": r["data"].get("title")}
                 reply = r["data"].get("reply") or {}
-                if reply.get("needed"):
+                # An email with no words of its own — a sheet or a PDF with only a name and a
+                # signature under it — asks nothing, so nothing is drafted for it, whatever
+                # the reading made of the attachment. Every other case is the model's call.
+                wordless = bool(reply.get("needed")) and self.is_email(art) and says_nothing(
+                    art, [self.records.name(a) for a in ((art.get("participants") or {}).get("from") or [])])
+                self.store.mark_event(sha, pid, status="done", detail={
+                    "usage": r["usage"], "cost_usd": cost_of(r["usage"]), "elapsed_s": round(time.time() - t0, 1),
+                    "relevance": r["data"].get("relevance"), "mode": "lean" if "lookups" in r else "full",
+                    "lookups": r.get("lookups") or [], "check": r.get("check"), "reply_wanted": bool(reply.get("needed")),
+                    **({"no_draft": "the email has no words of its own"} if wordless else {})})
+                out["properties"][pid] = {**applied, "relevance": r["data"].get("relevance"), "title": r["data"].get("title")}
+                if reply.get("needed") and not wordless:
                     wants.append({"pid": pid, **reply})
                 if emit:
                     emit("status", {"text": f"{name_of(pid)}: {r['data'].get('title')}", "property_id": pid})
@@ -308,7 +474,7 @@ class Updater:
         if not Updater._run_lock.acquire(blocking=False):
             return {"skipped": "already running"}
         try:
-            rows = self.pending(limit=max_items)
+            rows = by_file(self.pending(limit=max_items), self.targets)
             summary: Dict[str, Any] = {"read": 0, "drafts": 0, "errors": 0, "items": []}
             for r in rows:
                 art = self.mongo.artifacts.find_one({"sha256": r["sha256"]}, {**EMAIL_FIELDS, **DOC_FIELDS})

@@ -49,7 +49,9 @@ export default function TodayPage() {
           <p className="text-[14px] text-muted mt-0.5">{today} · only your own work is on this page</p>
         </div>
         <div className="flex items-center gap-2">
-          {pending > 0 && <Badge tone="high">{pending} new email{pending === 1 ? "" : "s"} being read</Badge>}
+          {pending > 0 && (q.data?.reading || reading
+            ? <Badge tone="high">{pending} new email{pending === 1 ? "" : "s"} being read</Badge>
+            : <Badge>{pending} new email{pending === 1 ? "" : "s"} · read at 6 am and 11 am ET</Badge>)}
           <Button size="sm" onClick={readNow} disabled={!!reading}><RefreshCw size={13} className={cn(reading && "animate-spin")} /> {reading ? reading.slice(0, 48) : "Check for new mail"}</Button>
         </div>
       </div>

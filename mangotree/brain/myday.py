@@ -12,7 +12,7 @@ short list per person:
     the team          Rakesh Sir sees, for each person, what is left and what is late
     give a task       Rakesh Sir writes a task for someone: it lands on their list and
                       an email goes to them from his mailbox
-    the morning email 4:30 am US Eastern, to each person: their first five for the day
+    the morning email 6:30 am US Eastern, to each person: their first five for the day
 
 The order is worked out from plain signals (a task Rakesh Sir gave, a date that has
 passed, money waiting, a reply owed) and, once a day, read over by the model, which
@@ -42,7 +42,10 @@ TEAM: Dict[str, Dict[str, Any]] = {
     "shivansh": {"name": "Shivansh", "first": "Shivansh", "email": "shivansh@mtreh.com", "follow": None},
 }
 NOW = 5                      # how many are shown as "do now"
-MORNING_HOUR, MORNING_MINUTE = 4, 30      # US Eastern (user, 2026-11-18: "a morning email for everyone at 4:30 am est")
+#: US Eastern. 6:30 since 2026-11-21, so the email is made after the 6 am reading of new mail
+#: (admin: yes to "just after it, about 6:30 am"); 4:30 before that.
+MORNING_HOUR, MORNING_MINUTE = 6, 30
+MORNING_UNTIL = 11
 KIND_VERB = {"reply": "Reply", "decision": "Decide", "action": "Do", "waiting": "Waiting"}
 BILL_KINDS = ("approve_bill", "pay_bills", "paid_not_recorded")
 EFFORT = "high"
@@ -484,7 +487,7 @@ class MyDay:
             parts.append(f'<p style="margin:18px 0 0;font-size:13px;color:#555">{_html.escape(line)} <a href="{_html.escape(PUBLIC_URL)}/team" style="color:#0b6b4f">Open the team page</a></p>')
             text += [line, f"Team page: {PUBLIC_URL}/team", ""]
         link = f"{PUBLIC_URL}/"
-        foot = ("Sent every morning at 4:30 am US Eastern. The list on the site is always the current one: what an email, a call or a tick has settled is already gone from it. "
+        foot = ("Sent every morning at 6:30 am US Eastern. The list on the site is always the current one: what an email, a call or a tick has settled is already gone from it. "
                 "Each person marks their own work done.")
         parts += [f'<p style="margin:16px 0"><a href="{_html.escape(link)}" style="color:#0b6b4f">Open my day in MangoTree</a></p>', _p(foot, small=True)]
         text += [f"Open my day: {link}", "", foot]
@@ -529,6 +532,6 @@ def cannot_move(owner: Any, new_owner: Any, user: Dict[str, Any]) -> Optional[st
 
 
 def due_morning(at: Optional[datetime] = None) -> bool:
-    """True from 4:30 am Eastern until 9 am: the scheduler claims the day once inside that window."""
+    """True from 6:30 am Eastern until 11 am: the scheduler claims the day once inside that window."""
     e = eastern.to_et(at or now())
-    return (e.hour, e.minute) >= (MORNING_HOUR, MORNING_MINUTE) and e.hour < 9
+    return (e.hour, e.minute) >= (MORNING_HOUR, MORNING_MINUTE) and e.hour < MORNING_UNTIL
