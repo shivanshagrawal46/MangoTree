@@ -1,10 +1,17 @@
 "use client";
 
-/* Step 1 · Property and deal. Every basic fact of the house and the loan, entered
-   once, in six sections. A section shows what was entered, with "Change"; a section
-   that still lacks an answer opens ready to fill. Anything can be changed, the
-   value after repair and the square footage included: the page keeps what the ARV
-   file said beside the edited figure, with "put back". Nothing here is a paper. */
+/* Step 1 · Property and cost, and step 3 · Remaining details. One form, two pages.
+
+   Page 1 holds only what the quick check needs: the property (which the ARV file
+   fills in), the builder's cost and the mortgage on the house. Page 3, after the
+   quick check, asks everything that was left out: the owner, the rest of the work,
+   the loan, the closing (asked for on 2026-11-21).
+
+   A section shows what was entered, with "Change"; a section that still lacks an
+   answer opens ready to fill. A question still open carries a red "Needed" tag or a
+   green "Optional" one. Anything can be changed, the value after repair and the
+   square footage included: the page keeps what the ARV file said beside the edited
+   figure, with "put back". Nothing here is a paper. */
 
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -12,28 +19,44 @@ import { Plus, X } from "lucide-react";
 import { Button } from "@/components/ui";
 import { cn } from "@/lib/utils";
 import { num, usd, uw, type Assessment, type Facts, type Lien, type UwConfig } from "@/lib/uw";
-import { KV, PageHead, Panel, SectionHead, Status, input, linkBtn } from "./bits";
+import { KV, PageHead, Panel, SectionHead, Status, Tag, input, linkBtn } from "./bits";
 import type { PageProps } from "./workspace";
 
 type Kind = "text" | "money" | "number" | "percent" | "select" | "yesno" | "date" | "long";
 type F = { key: keyof Facts; label: string; kind: Kind; required?: boolean; unit?: string; options?: { key: string; label: string }[]; list?: string[]; show?: (f: Facts) => boolean; hint?: string };
+type Section = { key: string; title: string; fields: F[] };
 
-function sections(cfg: UwConfig | undefined, f: Facts): { key: string; title: string; fields: F[] }[] {
-  const person = f.owner_kind === "individual" || !f.owner_kind;
+const blank = (v: unknown) => v === undefined || v === null || v === "";
+
+/* Page 1: the property, the builder's cost, the mortgage. */
+function first(cfg: UwConfig | undefined, f: Facts): Section[] {
   return [
     { key: "property", title: "The property", fields: [
       { key: "address", label: "Address", kind: "text", required: true },
       { key: "state", label: "State (two letters)", kind: "text", required: true, list: (cfg?.states || []).map((s) => s.code) },
       { key: "county", label: "County or city", kind: "text", required: f.state === "MD", list: f.state === "MD" ? cfg?.md_counties : undefined },
       { key: "arv", label: "Value after repair (ARV)", kind: "money", required: true },
-      /* Kept for the record only: no rule uses it (the foreclosure test is run at the after-repair value). */
-      { key: "as_is_value", label: "Value as it stands today", kind: "money", hint: "not needed" },
       { key: "sqft_above", label: "Square feet above grade", kind: "number", required: true, unit: "sq ft" },
-      { key: "sqft_below", label: "Square feet below grade", kind: "number", required: true, unit: "sq ft", hint: "0 if none" },
-      { key: "measured", label: "Has the area been measured, with a sketch?", kind: "yesno", required: true },
+      { key: "sqft_below", label: "Square feet below grade", kind: "number", unit: "sq ft", hint: "0 if none" },
       { key: "beds", label: "Bedrooms after the work", kind: "number" },
       { key: "baths", label: "Bathrooms after the work", kind: "number" },
+      /* Kept for the record only when the ARV file gave one: no rule uses it (the foreclosure test is run at the after-repair value). */
+      { key: "as_is_value", label: "Value as it stands today", kind: "money", show: (x) => !blank(x.as_is_value) },
     ] },
+    { key: "cost", title: "The builder's cost", fields: [
+      { key: "builder_cost", label: "Builder's cost of the work", kind: "money", required: true },
+      { key: "contract_price", label: "Price to the owner (the note)", kind: "money", hint: "if known: ROI Blocks' commission is worked out from it" },
+    ] },
+    { key: "mortgage", title: "Mortgage on the house", fields: [
+      { key: "has_mortgage", label: "Is there a mortgage on the house?", kind: "yesno", required: true },
+    ] },
+  ];
+}
+
+/* Page 3: everything page 1 left out. */
+function rest(cfg: UwConfig | undefined, f: Facts): Section[] {
+  const person = f.owner_kind === "individual" || !f.owner_kind;
+  return [
     { key: "owner", title: "The owner", fields: [
       { key: "owner_kind", label: "Who owns the house", kind: "select", required: true, options: cfg?.owner_kinds },
       { key: "owner_name", label: "Owner's name as on the deed", kind: "text", required: true },
@@ -42,19 +65,16 @@ function sections(cfg: UwConfig | undefined, f: Facts): { key: string; title: st
       { key: "signer_name", label: "Who signs for the owner", kind: "text", show: () => !person },
       { key: "guarantor_name", label: "Personal guarantor", kind: "text", show: () => f.owner_kind === "llc" },
     ] },
-    { key: "mortgage", title: "Mortgage on the house", fields: [
-      { key: "has_mortgage", label: "Is there a mortgage on the house?", kind: "yesno", required: true },
-    ] },
     { key: "work", title: "The work", fields: [
-      { key: "builder_cost", label: "Builder's cost of the work", kind: "money", required: true },
-      { key: "contingency", label: "Contingency", kind: "money", required: true, hint: "0 if none" },
       { key: "scope", label: "Scope", kind: "select", required: true, options: cfg?.scopes },
+      { key: "contingency", label: "Contingency", kind: "money", required: true, hint: "0 if none" },
+      { key: "measured", label: "Has the area been measured, with a sketch?", kind: "yesno", required: true },
       { key: "contractor_name", label: "Contractor's exact legal name", kind: "text" },
       { key: "contractor_licence", label: "Contractor's licence number", kind: "text" },
       { key: "completion_date", label: "Work complete by", kind: "date" },
     ] },
     { key: "loan", title: "The loan", fields: [
-      { key: "contract_price", label: "Contract price to the owner (the note)", kind: "money", required: true },
+      { key: "contract_price", label: "Price to the owner (the note)", kind: "money", required: true },
       { key: "closing_costs", label: "Closing costs, estimated", kind: "money", required: true, hint: "0 if not known yet" },
       { key: "cash_to_owner", label: "Cash to the owner", kind: "money" },
       { key: "rate", label: "Rate", kind: "percent", unit: "% a year" },
@@ -71,8 +91,8 @@ function sections(cfg: UwConfig | undefined, f: Facts): { key: string; title: st
   ];
 }
 
+/* What the loan runs on when nothing is entered. These count as answered. */
 const DEFAULTS: Partial<Record<keyof Facts, string>> = { rate: "18", points: "2", term_months: "12", interest_free_months: "0", cash_to_owner: "0" };
-const blank = (v: unknown) => v === undefined || v === null || v === "";
 
 function show(field: F, v: unknown, cfg?: UwConfig): React.ReactNode {
   if (blank(v)) return <span className="text-faint font-normal">{DEFAULTS[field.key] !== undefined ? `${DEFAULTS[field.key]}${field.unit ? (field.kind === "percent" ? "" : " ") + field.unit : ""}` : "Not entered"}</span>;
@@ -91,7 +111,7 @@ const LIEN_BLANK: Lien = { holder: "", balance: "", status: "current", payoff_at
    A quarter of the margin at closing, the same again when the house sells. */
 function Commission({ c }: { c: Assessment["money"]["commission"] }) {
   const tag = <span className="text-[11px] text-info font-normal">worked out, not entered</span>;
-  const wait = <span className="text-faint font-normal">Worked out once the contract price and the builder&apos;s cost are in</span>;
+  const wait = <span className="text-faint font-normal">Worked out once the price to the owner and the builder&apos;s cost are in</span>;
   return (
     <>
       <KV k="Paid to ROI Blocks at closing">{c.known ? <><span>{usd(c.at_closing, true)}</span>{tag}</> : wait}</KV>
@@ -108,20 +128,20 @@ function Commission({ c }: { c: Assessment["money"]["commission"] }) {
   );
 }
 
-export function DetailsPage({ f, go, run }: PageProps) {
+function FactsPage({ page, f, go, run }: PageProps & { page: 1 | 3 }) {
   const cfg = useQuery({ queryKey: ["uw", "config"], queryFn: uw.config, staleTime: Infinity }).data;
   const facts = f.facts;
-  const secs = sections(cfg, facts).map((s) => ({ ...s, fields: s.fields.filter((x) => !x.show || x.show(facts)) }));
-  const lacking = (s: { key: string; fields: F[] }) => s.fields.some((x) => x.required && blank(facts[x.key])) || (s.key === "mortgage" && facts.has_mortgage === true && !(facts.liens || []).length);
+  const secs = (page === 1 ? first(cfg, facts) : rest(cfg, facts)).map((s) => ({ ...s, fields: s.fields.filter((x) => !x.show || x.show(facts)) }));
+  const lacking = (s: Section) => s.fields.some((x) => x.required && blank(facts[x.key])) || (s.key === "mortgage" && facts.has_mortgage === true && !(facts.liens || []).length);
   const [open, setOpen] = React.useState<Record<string, boolean>>({});
   const [draft, setDraft] = React.useState<Record<string, Record<string, string | boolean>>>({});
   const [liens, setLiens] = React.useState<Lien[] | null>(null);
   const [busy, setBusy] = React.useState(false);
   const edited = Object.fromEntries((f.edited || []).map((e) => [e.field, e]));
-  const locked = false;   // never locked: a change after the signature is allowed, and the server takes the signature away and says so
   const signed = !!f.gates.signed;
+  const missing = (page === 1 ? f.gates.details_missing : f.gates.more_missing) || [];
 
-  const isOpen = (s: { key: string; fields: F[] }) => open[s.key] ?? lacking(s);
+  const isOpen = (s: Section) => open[s.key] ?? lacking(s);
   const val = (s: string, k: string) => {
     const d = draft[s]?.[k];
     if (d !== undefined) return d;
@@ -130,7 +150,7 @@ export function DetailsPage({ f, go, run }: PageProps) {
   };
   const set = (s: string, k: string, v: string | boolean) => setDraft((d) => ({ ...d, [s]: { ...(d[s] || {}), [k]: v } }));
 
-  async function saveSection(s: { key: string; fields: F[] }) {
+  async function saveSection(s: Section) {
     const out: Record<string, unknown> = {};
     for (const x of s.fields) {
       const v = val(s.key, x.key);
@@ -142,36 +162,45 @@ export function DetailsPage({ f, go, run }: PageProps) {
     if (s.key === "mortgage") out.liens = out.has_mortgage ? (liens ?? facts.liens ?? []).filter((l) => String(l.holder).trim() || Number(l.balance) > 0)
       .map((l) => ({ ...l, balance: Number(String(l.balance).replace(/[$,\s]/g, "")) || 0, monthly_payment: Number(String(l.monthly_payment ?? "").replace(/[$,\s]/g, "")) || 0, arrears: Number(String(l.arrears ?? "").replace(/[$,\s]/g, "")) || 0 })) : [];
     setBusy(true);
-    const before = f.assessment.verdict;
+    const wasMissing = missing.length > 0, verdictWas = f.assessment.verdict;
     const next = await run(uw.setFacts(f.file_id, out as Facts));
     setBusy(false);
     if (!next) return;
     setOpen((o) => ({ ...o, [s.key]: false })); setDraft((d) => ({ ...d, [s.key]: {} })); setLiens(null);
-    if (next.assessment.verdict !== before && !next.gates.details_missing.length) go(2);
+    const g = next.gates;
+    if (page === 1) {
+      // The page has just become complete, or a number changed the answer: show the answer.
+      if (!g.details_missing.length && (wasMissing || next.assessment.verdict !== verdictWas)) go(2, next);
+    } else if (!g.verdict_ok) go(2, next);                       // an answer here stopped the deal: the quick check says why
+    else if (wasMissing && !(g.more_missing || []).length) go(4, next);
   }
 
   const lienRows = liens ?? (facts.liens?.length ? facts.liens : [LIEN_BLANK]);
   const setLien = (i: number, patch: Partial<Lien>) => setLiens(lienRows.map((l, n) => (n === i ? { ...l, ...patch } : l)));
-  const missing = f.gates.details_missing;
+  const nextStep = page === 1 ? 2 : 4;
 
   return (
     <>
-      <PageHead n={1} title="Property and deal" line="Every basic fact of the house and the loan, entered once. Nothing on this page is a paper."
-        holds={<>Holding the next step: <b className="text-fg">{missing.length ? `${missing.length} answer${missing.length === 1 ? "" : "s"}` : "nothing"}</b></>} />
+      {page === 1
+        ? <PageHead n={1} title="Property and cost" line="The property comes from the ARV file. Add the builder's cost and any mortgage on the house; the quick check needs nothing else."
+            holds={<>Holding the quick check: <b className="text-fg">{missing.length ? `${missing.length} answer${missing.length === 1 ? "" : "s"}` : "nothing"}</b></>} />
+        : <PageHead n={3} title="Remaining details" line="What the quick check did not need: the owner, the work, the loan and the closing. The file and the documents are built from these."
+            holds={<>Holding the file: <b className="text-fg">{missing.length ? `${missing.length} answer${missing.length === 1 ? "" : "s"}` : "nothing"}</b></>} />}
       <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,780px)_280px] gap-3 items-start">
         <div className="flex flex-col gap-3">
           {secs.map((s) => {
-            const on = isOpen(s) && !locked;
+            const on = isOpen(s);
             return (
               <Panel key={s.key} className="overflow-hidden">
                 <SectionHead title={<><Status tone={lacking(s) ? "needed" : "done"}>{""}</Status>{s.title}</>}
                   right={on ? <span className="flex gap-1.5"><Button size="sm" disabled={busy} onClick={() => { setOpen((o) => ({ ...o, [s.key]: false })); setDraft((d) => ({ ...d, [s.key]: {} })); setLiens(null); }}>Cancel</Button><Button size="sm" variant="primary" disabled={busy} onClick={() => saveSection(s)}>Save</Button></span>
-                    : !locked && <button type="button" className={linkBtn} onClick={() => setOpen((o) => ({ ...o, [s.key]: true }))}>Change</button>} />
+                    : <button type="button" className={linkBtn} onClick={() => setOpen((o) => ({ ...o, [s.key]: true }))}>Change</button>} />
                 {s.fields.map((x) => {
                   const e = edited[x.key as string];
                   const fromArv = f.from_arv && !blank(f.from_arv[x.key]) && !e;
+                  const empty = blank(facts[x.key]) && DEFAULTS[x.key] === undefined;
                   return (
-                    <KV key={x.key} k={<>{x.label}{x.required && on && <span className="text-faint"> · needed</span>}</>}>
+                    <KV key={x.key} k={<span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1">{x.label}{empty && <Tag kind={x.required ? "needed" : "optional"} />}</span>}>
                       {on ? (
                         x.kind === "yesno" ? (
                           <span className="inline-flex border border-line rounded-lg overflow-hidden">
@@ -195,7 +224,7 @@ export function DetailsPage({ f, go, run }: PageProps) {
                         <>
                           <span>{show(x, facts[x.key], cfg)}</span>
                           {e && <span className="text-[11.5px] text-high font-normal">Edited · the ARV file said {x.kind === "money" ? usd(e.arv_file as number) : num(e.arv_file as number) || String(e.arv_file)}
-                            {!locked && <> · <button type="button" className="underline" onClick={() => run(uw.setFacts(f.file_id, { [x.key]: e.arv_file } as Facts))}>put back</button></>}</span>}
+                            {" · "}<button type="button" className="underline" onClick={() => run(uw.setFacts(f.file_id, { [x.key]: e.arv_file } as Facts))}>put back</button></span>}
                           {fromArv && <span className="text-[11px] text-info font-normal">from the ARV file</span>}
                         </>
                       )}
@@ -236,19 +265,22 @@ export function DetailsPage({ f, go, run }: PageProps) {
         </div>
         <div className="flex flex-col gap-2.5 lg:sticky lg:top-3">
           <Panel className="px-3.5 py-3">
-            <h3 className="font-semibold mb-1.5">{missing.length ? "Still needed on this page" : "Page 1 is complete"}</h3>
-            {missing.length ? <ul className="flex flex-col gap-1">{missing.map((m) => <li key={m}><Status tone="needed">{m}</Status></li>)}</ul>
+            <h3 className="font-semibold mb-1.5">{missing.length ? "Still needed on this page" : page === 1 ? "Page 1 is complete" : "This page is complete"}</h3>
+            {missing.length ? <ul className="flex flex-col gap-1.5">{missing.map((m) => <li key={m} className="flex items-start gap-2"><Tag kind="needed" className="shrink-0" /><span>{m}</span></li>)}</ul>
               : secs.map((s) => <div key={s.key} className="py-0.5"><Status tone="done">{s.title}</Status></div>)}
-            <p className="text-[12px] text-muted mt-2">The quick check opens when every answer is in.</p>
+            <p className="text-[12px] text-muted mt-2">{page === 1 ? "The quick check opens when these are in. Everything else is asked after it." : "The file opens when these are in. A line tagged Optional never holds it."}</p>
           </Panel>
-          {(f.edited || []).length > 0 && (
+          {page === 1 && (f.edited || []).length > 0 && (
             <Panel className="px-3.5 py-3"><h3 className="font-semibold mb-1">{f.edited.length} figure{f.edited.length === 1 ? "" : "s"} changed from the ARV file</h3>
               <p className="text-[12px] text-muted">The file keeps what the ARV file said, who changed it and when. Rakesh Sir sees the list at review.</p></Panel>
           )}
           {signed && <Panel className="px-3.5 py-3 text-[12px] text-high">Rakesh Sir has signed this file. A change on this page takes his signature and the document approvals away.</Panel>}
-          <Button variant="primary" disabled={!f.gates.steps[1].open} onClick={() => go(2)}>Go to the quick check</Button>
+          <Button variant="primary" disabled={!f.gates.steps[nextStep - 1]?.open} onClick={() => go(nextStep)}>{page === 1 ? "Go to the quick check" : "Go to the file"}</Button>
         </div>
       </div>
     </>
   );
 }
+
+export function DetailsPage(p: PageProps) { return <FactsPage page={1} {...p} />; }
+export function MorePage(p: PageProps) { return <FactsPage page={3} {...p} />; }

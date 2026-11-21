@@ -1,9 +1,9 @@
 "use client";
 
-/* The few pieces every underwriting page is built from, so the six pages read as
+/* The few pieces every underwriting page is built from, so the seven pages read as
    one: a page head that says what holds the next step, a status that is a mark
-   and a word (never a button), a key/value row, and the money table.
-   Red is used for one thing only: a line that was sent back. */
+   and a word (never a button), the Needed / Optional / Done tag, a key/value row,
+   and the money table. */
 
 import * as React from "react";
 import { cn } from "@/lib/utils";
@@ -24,6 +24,29 @@ export function Status({ tone, children, className }: { tone: Tone; children?: R
     <span className={cn("inline-flex items-center gap-1.5 whitespace-nowrap text-[12.5px]", TEXT[tone], className)}>
       <i className={cn("not-italic h-3.5 w-3.5 rounded-full grid place-items-center text-[10px] font-bold shrink-0", DOT[tone])}>{MARK[tone]}</i>
       {children ?? WORD[tone]}
+    </span>
+  );
+}
+
+/* The tag on a line of the file, and on a question of pages 1 and 3 (asked for on 2026-11-21):
+   red "Needed" while a compulsory thing is open, green "Optional" for what never holds the file,
+   green "Done" once the paper is uploaded and verified. Sent back is a filled red, so it cannot
+   be mistaken for a line nobody has touched yet. */
+export type TagKind = LineState | "optional";
+const TAG: Record<TagKind, { word: string; cls: string; mark?: string }> = {
+  needed: { word: "Needed", cls: "bg-critical-soft text-critical border-critical/40" },
+  optional: { word: "Optional", cls: "bg-good-soft text-good border-good/40" },
+  check: { word: "Being checked", cls: "bg-high-soft text-high border-high/40", mark: "…" },
+  back: { word: "Sent back", cls: "bg-critical text-white border-critical", mark: "!" },
+  done: { word: "Done", cls: "bg-good text-white border-good", mark: "✓" },
+  confirmed: { word: "Done · confirmed by RKB", cls: "bg-good text-white border-good", mark: "✓" },
+};
+
+export function Tag({ kind, children, className }: { kind: TagKind; children?: React.ReactNode; className?: string }) {
+  const t = TAG[kind];
+  return (
+    <span className={cn("inline-flex items-center gap-1 whitespace-nowrap rounded-md border px-1.5 h-[22px] text-[11.5px] font-semibold leading-none", t.cls, className)}>
+      {t.mark && <i className="not-italic font-bold">{t.mark}</i>}{children ?? t.word}
     </span>
   );
 }

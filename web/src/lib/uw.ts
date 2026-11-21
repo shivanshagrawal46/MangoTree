@@ -32,7 +32,8 @@ export type Assessment = {
     rate: number; points: number; term_months: number; interest_free_months: number };
   /* One case only, at the after-repair value. The house's value today is not used. */
   foreclosure: { passed: boolean; finished: ForcedSale; state_route: string; estimate: boolean; worst_case?: boolean };
-  budget: { passed: boolean; looks: string[]; per_sqft: number | null; range: [number, number] | null; area: number; scope: string | null; contingency_share: number | null };
+  /* `pending` = what the budget test still waits for (asked on the remaining-details page). Not a finding. */
+  budget: { passed: boolean; looks: string[]; pending?: string[]; per_sqft: number | null; range: [number, number] | null; area: number; scope: string | null; contingency_share: number | null };
 };
 export type Field = { key: string; label: string; type: string };
 export type Paper = { sha256: string; filename: string; size?: number; uploaded_at?: string; uploaded_by_name?: string; error?: string | null;
@@ -46,7 +47,7 @@ export type Item = {
 };
 export type Named = { key: string; party: string; name: string; label: string; status: string };
 export type Gates = {
-  step: number; steps: { n: number; name: string; done: boolean; open: boolean }[]; verdict_ok: boolean; details_missing: string[]; file_complete: boolean;
+  step: number; steps: { n: number; name: string; done: boolean; open: boolean }[]; verdict_ok: boolean; details_missing: string[]; more_missing?: string[]; file_complete: boolean;
   documents: { total: number; approved: number }; ready_to_sign: boolean; signed: boolean; can_fund: boolean;
   waiting_file: Named[]; waiting_closing: Named[]; waiting_after: Named[]; optional_open: Named[]; counts: Record<string, number>; confirmed_on_rkbs_word: Named[];
   foreclosure_file: { total: number; held: number; missing: Named[]; complete: boolean }; by_party: Record<string, { total: number; done: number; compulsory_left: number }>;

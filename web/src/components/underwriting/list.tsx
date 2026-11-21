@@ -17,8 +17,9 @@ import { Panel, Status, input, td, th, type Tone } from "./bits";
 
 function verdict(r: UwRow): { tone: Tone; word: string } {
   const a = r.assessment || {};
-  if (r.gates && r.gates.details_missing.length) return { tone: "needed", word: "Details to finish" };
-  if (a.verdict === "fits") return { tone: "pass", word: `Fits · ${pct(a.rule_65?.ratio)}` };
+  if (r.gates && r.gates.details_missing.length) return { tone: "needed", word: "Builder's cost or mortgage to enter" };
+  if (a.verdict === "fits" && !a.new_state) return { tone: "pass", word: `RKB can fund · ${pct(a.rule_65?.ratio)}` };
+  if (a.new_state) return { tone: "needed", word: "New state: not set up" };
   if (a.verdict === "exception") return { tone: "look", word: "For Rakesh Sir" };
   if (a.rejected_second_mortgage) return { tone: "fail", word: "Rejected: second mortgage" };
   if (a.verdict === "does_not_fit") return { tone: "fail", word: "Does not fit" };
@@ -67,7 +68,7 @@ export function UnderwritingList() {
                   <td className={cn(td, "text-muted")}>{[r.assessment?.kind_label, r.facts.state].filter(Boolean).join(" · ")}</td>
                   <td className={td}><Status tone={v.tone}>{v.word}</Status></td>
                   <td className={cn(td, "tnum")}>{r.assessment?.money?.principal ? usd(r.assessment.money.principal) : ""}</td>
-                  <td className={td}>{g ? (g.steps[5].done ? <Status tone="done">Closed and complete</Status> : <span>{g.step} · {s?.name}</span>) : ""}</td>
+                  <td className={td}>{g ? (g.steps[g.steps.length - 1].done ? <Status tone="done">Closed and complete</Status> : <span>{g.step} · {s?.name}</span>) : ""}</td>
                   <td className={cn(td, "text-muted")}>{r.created_by_name}{r.created_side === "contractor" ? " · ROI Blocks" : ""}</td>
                   <td className={cn(td, "text-muted whitespace-nowrap")}>{day(r.updated_at)}</td>
                   {canDelete && (

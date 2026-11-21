@@ -152,7 +152,7 @@ def install(app, mongo, jobs) -> None:
         """The quick check, without saving anything: facts in, the three tests and the verdict out."""
         facts = {**_arv_facts(body.arv_analysis_id, user), **st.clean_facts(body.facts)}
         a = E.assess(facts)
-        return data.clean({"facts": facts, "assessment": a, "details_missing": E.details_missing(facts),
+        return data.clean({"facts": facts, "assessment": a, "details_missing": E.details_missing(facts), "more_missing": E.more_missing(facts),
                            "items": [{"party": i["party"], "label": i["label"], "when": i["when"], "required": i["required"]} for i in C.build(facts, a)]})
 
     @app.get("/uw/files")

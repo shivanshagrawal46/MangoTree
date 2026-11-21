@@ -294,18 +294,20 @@ def _left(items: List[Dict[str, Any]], when: str) -> List[Dict[str, Any]]:
     return [i for i in items if i["when"] == when and i.get("required", True) and i.get("status") not in DONE]
 
 
-STEPS = ("Property and deal", "Quick check", "The file", "Documents", "Review and sign", "Closing")
+STEPS = ("Property and cost", "Quick check", "Remaining details", "The file", "Documents", "Review and sign", "Closing")
 
 
 def gates(items: List[Dict[str, Any]], assessment: Dict[str, Any], *, details_missing: Optional[List[str]] = None,
-          documents: Optional[Dict[str, int]] = None, signed: bool = False) -> Dict[str, Any]:
-    """Where the file stands on the six steps, and exactly what holds each one.
+          more_missing: Optional[List[str]] = None, documents: Optional[Dict[str, int]] = None, signed: bool = False) -> Dict[str, Any]:
+    """Where the file stands on the seven steps, and exactly what holds each one.
 
-    1 Property and deal: every basic fact entered.   2 Quick check: the rules pass.
-    3 The file: every compulsory line done.           4 Documents: every one ticked by Rakesh Sir.
-    5 Review and sign: signed.                        6 Closing: recorded, and the papers back.
+    1 Property and cost: the property, the builder's cost, the mortgage.   2 Quick check: the rules pass.
+    3 Remaining details: the owner, the work, the loan, the closing.       4 The file: every compulsory line done.
+    5 Documents: every one ticked by Rakesh Sir.   6 Review and sign: signed.   7 Closing: recorded, and the papers back.
 
-    Review and sign opens only when steps 1 to 4 are complete; closing only after the signature."""
+    The file and the documents open once the remaining details are in (the list of papers depends on
+    who owns the house). Review and sign opens only when steps 1 to 5 are complete; closing only
+    after the signature."""
     def names(xs):
         return [{"key": i["key"], "party": i["party"], "name": i.get("name") or i["label"], "label": i["label"], "status": i.get("status")} for i in xs]
     docs = documents or {"total": 0, "approved": 0}
@@ -314,12 +316,13 @@ def gates(items: List[Dict[str, Any]], assessment: Dict[str, Any], *, details_mi
     verdict_ok = assessment.get("verdict") in (E.FITS, E.EXCEPTION) and not assessment.get("new_state")
     done = [not (details_missing or [])]
     done.append(done[0] and verdict_ok)
-    done.append(done[1] and not file_left)
-    done.append(done[2] and docs["total"] > 0 and docs["approved"] == docs["total"])
-    done.append(done[3] and signed)
-    done.append(done[4] and not closing_left and not after_left)
-    step = next((n + 1 for n, d in enumerate(done) if not d), 6)
-    opens = [True, done[0], done[1], done[1], done[3], done[4]]
+    done.append(done[1] and not (more_missing or []))
+    done.append(done[2] and not file_left)
+    done.append(done[3] and docs["total"] > 0 and docs["approved"] == docs["total"])
+    done.append(done[4] and signed)
+    done.append(done[5] and not closing_left and not after_left)
+    step = next((n + 1 for n, d in enumerate(done) if not d), len(STEPS))
+    opens = [True, done[0], done[1], done[2], done[2], done[4], done[5]]
     kit = [i for i in items if i.get("foreclosure")]
     kit_left = [i for i in kit if i.get("status") != OK]
     by_party: Dict[str, Dict[str, int]] = {}
@@ -332,9 +335,9 @@ def gates(items: List[Dict[str, Any]], assessment: Dict[str, Any], *, details_mi
         p["compulsory_left"] += 1 if i.get("required", True) and i.get("status") not in DONE else 0
     counts = {s: sum(1 for i in items if i["when"] == FILE and i.get("status") == s) for s in (OPEN, RECEIVED, OK, REJECTED)}
     on_word = [i for i in items if (i.get("confirmed") or {}).get("without_paper")]
-    return {"step": step, "steps": [{"n": n + 1, "name": STEPS[n], "done": done[n], "open": opens[n]} for n in range(6)],
-            "verdict_ok": verdict_ok, "details_missing": details_missing or [], "file_complete": done[2], "documents": docs,
-            "ready_to_sign": done[3], "signed": signed, "can_fund": done[4] and not closing_left,
+    return {"step": step, "steps": [{"n": n + 1, "name": STEPS[n], "done": done[n], "open": opens[n]} for n in range(len(STEPS))],
+            "verdict_ok": verdict_ok, "details_missing": details_missing or [], "more_missing": more_missing or [], "file_complete": done[3], "documents": docs,
+            "ready_to_sign": done[4], "signed": signed, "can_fund": done[5] and not closing_left,
             "waiting_file": names(file_left), "waiting_closing": names(closing_left), "waiting_after": names(after_left),
             "optional_open": names([i for i in items if not i.get("required", True) and i.get("status") not in DONE]),
             "counts": counts, "confirmed_on_rkbs_word": names(on_word),

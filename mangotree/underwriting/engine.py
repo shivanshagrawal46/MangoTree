@@ -73,8 +73,10 @@ KIND_LABEL = {KIND_A: "First lien", KIND_B: "Second lien", KIND_C: "Pay off the 
 
 FITS, EXCEPTION, DOES_NOT_FIT, INCOMPLETE = "fits", "exception", "does_not_fit", "incomplete"
 
-#: What the quick check cannot run without.
-ESSENTIAL = (("state", "the state"), ("arv", "the after-repair value"), ("builder_cost", "the builder's cost"), ("owner_kind", "who owns the house"))
+#: What the quick check cannot run without. Who owns the house is asked after the quick check
+#: (2026-11-21: "the user should only add the builder cost and if any mortgages ... then can do a
+#: quick check"), so it is not here; the check is run again when it comes in.
+ESSENTIAL = (("state", "the state"), ("arv", "the after-repair value"), ("builder_cost", "the builder's cost"))
 
 
 def _n(v: Any) -> float:
@@ -235,10 +237,15 @@ def budget_test(facts: Dict[str, Any], m: Dict[str, Any]) -> Dict[str, Any]:
     area = above + below
     work = m["work"]
     looks: List[str] = []
+    # Not answered yet (asked on the remaining-details page, after the quick check). Not a finding:
+    # nobody is sent to look at a budget because a question has not been reached.
+    pending: List[str] = []
     scope = facts.get("scope") if facts.get("scope") in SCOPE_TIERS else None
     psf = work / area if area > 0 and work > 0 else None
     low = high = None
-    if not facts.get("measured"):
+    if facts.get("measured") in (None, ""):
+        pending.append("whether the area has been measured")
+    elif not facts.get("measured"):
         looks.append("The area has not been measured. A signed measurement with a sketch is on Wes's list.")
     if psf is None:
         looks.append("Area or builder's cost is missing, so cost per square foot cannot be checked.")
@@ -251,11 +258,13 @@ def budget_test(facts: Dict[str, Any], m: Dict[str, Any]) -> Dict[str, Any]:
         elif psf > high:
             looks.append("$%.0f a square foot is above the usual $%d to $%d for a %s in this state. Which lines carry the difference?" % (psf, low, high, tier["label"].lower()))
     else:
-        looks.append("The scope (cosmetic, moderate, full gut, addition) is not chosen, so there is no range to compare with.")
+        pending.append("the scope of the work")
     need = work * MIN_CONTINGENCY
-    if work > 0 and m["contingency"] + 0.005 < need:
+    if facts.get("contingency") in (None, ""):
+        pending.append("the contingency")
+    elif work > 0 and m["contingency"] + 0.005 < need:
         looks.append("Contingency is %s; at least 10%% of the work (%s) should sit on its own line." % (_money(m["contingency"]), _money(need)))
-    return {"passed": not looks, "looks": looks, "per_sqft": round(psf, 2) if psf is not None else None, "range": [low, high] if low else None,
+    return {"passed": not looks and not pending, "looks": looks, "pending": pending, "per_sqft": round(psf, 2) if psf is not None else None, "range": [low, high] if low else None,
             "area": area, "scope": scope, "contingency_share": (m["contingency"] / work) if work > 0 else None}
 
 
@@ -353,7 +362,7 @@ def assess(facts: Dict[str, Any]) -> Dict[str, Any]:
         INCOMPLETE: "Still needed: " + ", ".join(missing) + ".",
         DOES_NOT_FIT: "Rejected: the house has a second mortgage." if rejected_second else "Does not fit RKB's rules as entered.",
         EXCEPTION: "The 65%% rule and the foreclosure test pass, but %s. Rakesh Sir's decision." % "; and ".join(why),
-        FITS: "Fits RKB's rules. %s of room under the 65%% limit." % _money(r65["room"]),
+        FITS: "RKB can fund the deal. %s of room under the 65%% limit." % _money(r65["room"]),
     }[verdict]
     return {"verdict": verdict, "headline": headline, "reasons": reasons, "notices": notices, "missing": missing,
             "rejected_second_mortgage": rejected_second, "new_state": new_state,
@@ -381,9 +390,11 @@ def moved(before: Dict[str, Any], after: Dict[str, Any]) -> List[Dict[str, Any]]
 
 
 def details_missing(facts: Dict[str, Any]) -> List[str]:
-    """Page one: every basic fact of the property and the deal. Nothing here is a
-    paper; it is what a person knows or the ARV file already holds. An empty list
-    means page one is complete and the quick check can be read."""
+    """Page one: the property (which the ARV file fills in), the builder's cost and the
+    mortgage on the house. That is all the quick check needs (2026-11-21: "when ARV details
+    get automatically entered then the user should only add the builder cost and if any
+    mortgages as well, that's it, then can do a quick check"). An empty list means page one
+    is complete and the quick check can be read."""
     f = facts or {}
     need: List[str] = []
 
@@ -396,20 +407,32 @@ def details_missing(facts: Dict[str, Any]) -> List[str]:
         want(bool((f.get("county") or "").strip()), "County (Maryland recording tax is by county)")
     want(_n(f.get("arv")) > 0, "Value after repair (ARV)")
     want(_n(f.get("sqft_above")) > 0, "Square feet above grade")
-    want(f.get("sqft_below") not in (None, ""), "Square feet below grade (0 if none)")
-    want(f.get("measured") in (True, False), "Whether the area has been measured")
-    want(f.get("owner_kind") in S.OWNER_KINDS, "Who owns the house")
-    want(bool((f.get("owner_name") or "").strip()), "Owner's name as on the deed")
-    want(f.get("owner_lives_there") in (True, False), "Whether the owner lives in the house")
+    want(_n(f.get("builder_cost")) > 0, "Builder's cost of the work")
     want(f.get("has_mortgage") in (True, False), "Whether there is a mortgage on the house")
     if f.get("has_mortgage"):
         liens = _liens(f)
         want(bool(liens), "The mortgage: lender and balance")
         for l in liens:
             want(l["balance"] > 0 and l["holder"] != "Lender not named", "The mortgage: lender's name and balance")
-    want(_n(f.get("builder_cost")) > 0, "Builder's cost of the work")
-    want(f.get("contingency") not in (None, ""), "Contingency (0 if none)")
-    want(f.get("scope") in SCOPE_TIERS, "Scope of the work")
-    want(_n(f.get("contract_price")) > 0, "Contract price to the owner (the note)")
-    want(f.get("closing_costs") not in (None, ""), "Closing costs, estimated (0 if not known yet)")
     return list(dict.fromkeys(need))
+
+
+def more_missing(facts: Dict[str, Any]) -> List[str]:
+    """The remaining-details page, after the quick check: the owner, the rest of the work,
+    the loan. Everything the file and the documents are built from that the quick check did
+    not need. An empty list means the page is complete and the file can open."""
+    f = facts or {}
+    need: List[str] = []
+
+    def want(ok: bool, label: str) -> None:
+        if not ok:
+            need.append(label)
+    want(f.get("owner_kind") in S.OWNER_KINDS, "Who owns the house")
+    want(bool((f.get("owner_name") or "").strip()), "Owner's name as on the deed")
+    want(f.get("owner_lives_there") in (True, False), "Whether the owner lives in the house")
+    want(f.get("scope") in SCOPE_TIERS, "Scope of the work")
+    want(f.get("contingency") not in (None, ""), "Contingency (0 if none)")
+    want(f.get("measured") in (True, False), "Whether the area has been measured")
+    want(_n(f.get("contract_price")) > 0, "Price to the owner (the note)")
+    want(f.get("closing_costs") not in (None, ""), "Closing costs, estimated (0 if not known yet)")
+    return need

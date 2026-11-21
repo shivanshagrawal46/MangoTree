@@ -149,7 +149,7 @@ def refresh(doc: Dict[str, Any]) -> Dict[str, Any]:
     doc["assessment"] = a
     doc["items"] = items
     docs = doc.get("documents") or []
-    doc["gates"] = C.gates(items, a, details_missing=E.details_missing(facts),
+    doc["gates"] = C.gates(items, a, details_missing=E.details_missing(facts), more_missing=E.more_missing(facts),
                            documents={"total": len(docs), "approved": sum(1 for d in docs if (d.get("approved") or {}).get("at"))},
                            signed=bool((doc.get("signed") or {}).get("at")))
     doc["edited"] = edited_from_arv(doc)
@@ -373,6 +373,8 @@ def make_documents(doc: Dict[str, Any], user: Dict[str, Any]) -> Dict[str, Any]:
     refresh(doc)
     if not doc["gates"]["verdict_ok"]:
         raise Refused("The documents are written once the quick check passes.")
+    if doc["gates"]["more_missing"]:
+        raise Refused("The documents are written once the remaining details are in: " + "; ".join(doc["gates"]["more_missing"][:5]))
     first = not doc.get("documents")
     doc["documents"] = D.refresh(doc)
     log(doc, user, "%s the %d documents" % ("Wrote" if first else "Rewrote", len(doc["documents"])))
@@ -454,6 +456,8 @@ def sign(doc: Dict[str, Any], user: Dict[str, Any]) -> Dict[str, Any]:
             raise Refused("Page one is not complete: " + "; ".join(g["details_missing"][:5]))
         if not g["verdict_ok"]:
             raise Refused("The quick check does not pass: " + doc["assessment"]["headline"])
+        if g["more_missing"]:
+            raise Refused("The remaining details are not complete: " + "; ".join(g["more_missing"][:5]))
         if g["waiting_file"]:
             raise Refused("The file is not complete: " + "; ".join(w["label"] for w in g["waiting_file"][:5]))
         raise Refused("Every document must be approved first: %d of %d are." % (g["documents"]["approved"], g["documents"]["total"]))

@@ -1,6 +1,6 @@
 "use client";
 
-/* Step 4 · Documents. The set for this state and this kind of owner, written from
+/* Step 5 · Documents. The set for this state and this kind of owner, written from
    the file. Left: the documents, one line each. Right: the selected one laid out as
    the paper it will be. Rakesh Sir reads it, corrects the wording in place if
    needed (a correction makes a new version), downloads it as Word, and ticks it.
@@ -84,7 +84,7 @@ export function DocumentsPage({ f, run, go }: PageProps) {
   if (!docs.length) {
     return (
       <>
-        <PageHead n={4} title="Documents" line="The loan papers for this state and this kind of owner, written from the file." holds={<>Holding the next step: <b className="text-fg">the documents are not written yet</b></>} />
+        <PageHead n={5} title="Documents" line="The loan papers for this state and this kind of owner, written from the file." holds={<>Holding the next step: <b className="text-fg">the documents are not written yet</b></>} />
         <Panel className="px-4 py-6 flex flex-col items-start gap-3">
           <div><b className="font-semibold">Write the documents from the file.</b><p className="text-muted mt-0.5 max-w-[70ch]">The commitment letter can go out at once: it lists every compulsory line still open. The other documents are written at the same time and fill in as the file fills; a value the file does not hold yet is printed as [what is missing].</p></div>
           <Button variant="primary" disabled={busy} onClick={async () => { setBusy(true); await run(uw.makeDocuments(f.file_id), "The documents are written."); setBusy(false); }}>Write the documents</Button>
@@ -99,13 +99,13 @@ export function DocumentsPage({ f, run, go }: PageProps) {
   const mayTick = f.me.can_sign && (cur?.early || f.gates.file_complete) && !(cur?.missing || []).length;
   return (
     <>
-      <PageHead n={4} title="Documents" line={`The set for ${f.assessment.state_name}, ${f.assessment.kind_label.toLowerCase()}. Written from the file. Rakesh Sir reads each one, corrects it if needed, and ticks it.`}
+      <PageHead n={5} title="Documents" line={`The set for ${f.assessment.state_name}, ${f.assessment.kind_label.toLowerCase()}. Written from the file. Rakesh Sir reads each one, corrects it if needed, and ticks it.`}
         holds={<>Holding the next step: <b className="text-fg">{done === docs.length ? "nothing" : `${docs.length - done} document${docs.length - done === 1 ? "" : "s"} to approve`}</b></>} />
       <Panel className="px-3.5 py-2.5 flex flex-wrap items-center gap-x-4 gap-y-2">
         <span className="font-semibold">{done} of {docs.length} approved.</span>
         <span className="flex h-2 rounded-full overflow-hidden bg-sunken min-w-[140px] flex-1"><span className="bg-good" style={{ width: `${(100 * done) / docs.length}%` }} /></span>
-        <span className="text-[12px] text-muted">{waiting ? `${waiting} compulsory line${waiting === 1 ? "" : "s"} of the file are still open: only the commitment letter can be approved until the file is complete.` : "Only Rakesh Sir's tick approves a document. A correction, or a change on page 1, takes the tick away."}</span>
-        {done === docs.length && <Button variant="primary" size="sm" className="h-8" onClick={() => go(5)}>Go to review and sign</Button>}
+        <span className="text-[12px] text-muted">{waiting ? `${waiting} needed line${waiting === 1 ? "" : "s"} of the file are still open: only the commitment letter can be approved until the file is complete.` : "Only Rakesh Sir's tick approves a document. A correction, or a change on page 1, takes the tick away."}</span>
+        {done === docs.length && <Button variant="primary" size="sm" className="h-8" onClick={() => go(6)}>Go to review and sign</Button>}
       </Panel>
       <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,5fr)_minmax(0,8fr)] gap-3 mt-3 items-start">
         <Panel className="overflow-x-auto">
@@ -139,7 +139,7 @@ export function DocumentsPage({ f, run, go }: PageProps) {
             {(cur.missing.length > 0 || cur.behind_the_file || cur.approved?.voided_because || draft) && (
               <div className="px-3 py-2 border-b border-line text-[12.5px] flex flex-col gap-1">
                 {draft && <span className="text-info">Correcting. Change the wording in the boxes; saving makes a new version and takes the tick away.</span>}
-                {cur.missing.length > 0 && <span className="text-high"><b>Still to come from the file:</b> {cur.missing.join("; ")}. Enter them on page 1 or on the file page and this document fills itself.</span>}
+                {cur.missing.length > 0 && <span className="text-high"><b>Still to come from the file:</b> {cur.missing.join("; ")}. Enter them on the remaining-details page or on the file page and this document fills itself.</span>}
                 {cur.behind_the_file && <span className="text-high">This document was corrected by hand, and the file has changed since. Check its figures, or write it again from the file.</span>}
                 {cur.approved?.voided_because && <span className="text-high">To be approved again: {cur.approved.voided_because}.</span>}
               </div>

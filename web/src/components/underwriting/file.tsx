@@ -1,10 +1,11 @@
 "use client";
 
-/* Step 3 · The file. Everything owed before closing, in ONE table for the whole
+/* Step 4 · The file. Everything owed before closing, in ONE table for the whole
    file. One sentence on top says where it stands; the count buttons filter the
    table; lines are grouped by the person who owes them (or by status). A row is
-   one line high and carries a short name; "Optional" is written in grey after the
-   name and every other line is compulsory. A line that was sent back shows its
+   one line high and carries a short name and a tag: red "Needed" while a compulsory
+   line is open, green "Optional" for a line that never holds the file, green "Done"
+   once the paper is uploaded and verified. A line that was sent back shows its
    reason in one red line. Clicking a line opens its detail on the right: what is
    asked, why, what the system checks on the paper, the paper, and RKB's
    confirmation, which works with or without a paper and always asks for RKB's
@@ -18,10 +19,14 @@ import { subscribeJob } from "@/lib/api";
 import { Button } from "@/components/ui";
 import { cn } from "@/lib/utils";
 import { LINE_ORDER, PARTY, PARTY_ORDER, day, isDone, lineState, uw, type Item, type UwFile } from "@/lib/uw";
-import { Lab, PageHead, Panel, Status, input, linkBtn, td, th } from "./bits";
+import { Lab, PageHead, Panel, Tag, input, linkBtn, td, th, type TagKind } from "./bits";
 import type { PageProps } from "./workspace";
 
 type Filter = "needed" | "back" | "check" | "done" | "optional" | null;
+
+/* The tag a line carries: red "Needed" while a compulsory line is open, green "Optional" while an
+   optional one is, and green "Done" once its paper is uploaded and verified (or its record is in). */
+const tagOf = (i: Item): TagKind => { const k = lineState(i); return k === "needed" && !i.required ? "optional" : k; };
 
 function last(i: Item): string {
   const p = (i.files || [])[(i.files || []).length - 1];
@@ -75,7 +80,7 @@ export function LinePanel({ f, item, onClose, run, save }: { f: UwFile; item: It
     <Panel className="p-3.5 flex flex-col gap-3 lg:sticky lg:top-3 max-h-[calc(100vh-1.5rem)] overflow-y-auto">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0"><h3 className="text-[14px] font-semibold">{item.name}</h3>
-          <div className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1"><Status tone={k} /><span className="text-[12px] text-muted">{PARTY[item.party]} · {item.required ? "Compulsory" : "Optional"}{item.foreclosure ? " · Foreclosure file" : ""}</span></div></div>
+          <div className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1"><Tag kind={tagOf(item)} /><span className="text-[12px] text-muted">{PARTY[item.party]}{item.foreclosure ? " · Foreclosure file" : ""}</span></div></div>
         <button type="button" aria-label="Close" className="h-7 w-7 grid place-items-center rounded-lg text-muted hover:bg-sunken" onClick={onClose}><X size={15} /></button>
       </div>
       {k === "back" && <div className="bg-critical-soft text-critical rounded-lg px-2.5 py-2 text-[12.5px]"><b>Sent back.</b>{" "}
@@ -160,10 +165,10 @@ export function FilePage({ f, run, save, go }: PageProps) {
 
   return (
     <>
-      <PageHead n={3} title="The file" line="Everything owed before closing, in one list. A paper is read by the system and passes, or comes back with the reason. Click a line for its detail."
-        holds={<>Holding the next step: <b className="text-fg">{left ? `${left} compulsory line${left === 1 ? "" : "s"}` : "nothing"}</b></>} />
+      <PageHead n={4} title="The file" line="Everything owed before closing, in one list. A paper is read by the system and passes, or comes back with the reason. Click a line for its detail."
+        holds={<>Holding the next step: <b className="text-fg">{left ? `${left} needed line${left === 1 ? "" : "s"}` : "nothing"}</b></>} />
       <Panel className="px-3.5 py-2.5 flex flex-wrap items-center gap-x-4 gap-y-2.5">
-        <span className="font-semibold">{n("done")} of {comp.length} compulsory lines done. {n("back")} sent back, {n("check")} being checked.</span>
+        <span className="font-semibold">{n("done")} of {comp.length} needed lines done. {n("back")} sent back, {n("check")} being checked.</span>
         <span className="flex h-2 rounded-full overflow-hidden bg-sunken min-w-[140px] flex-1"><span className="bg-good" style={{ width: w("done") }} /><span className="bg-high" style={{ width: w("check") }} /><span className="bg-critical" style={{ width: w("back") }} /></span>
         <span className="flex flex-wrap gap-1.5">
           {cards.map(([k, l, v]) => <button key={k} type="button" aria-pressed={filter === k} onClick={() => setFilter(filter === k ? null : k)}
@@ -172,13 +177,13 @@ export function FilePage({ f, run, save, go }: PageProps) {
         <span className="inline-flex border border-line rounded-lg overflow-hidden">
           {(["person", "status"] as const).map((g) => <button key={g} type="button" onClick={() => setGroup(g)} className={cn("px-2.5 py-1 border-r border-line last:border-r-0", group === g ? "bg-accent-soft text-accent font-semibold" : "text-muted")}>{g === "person" ? "By person" : "By status"}</button>)}
         </span>
-        {left === 0 && <Button variant="primary" size="sm" className="h-8" onClick={() => go(4)}>Go to the documents</Button>}
+        {left === 0 && <Button variant="primary" size="sm" className="h-8" onClick={() => go(5)}>Go to the documents</Button>}
       </Panel>
       <div className={cn("grid gap-3 mt-3 items-start", item ? "grid-cols-1 lg:grid-cols-[minmax(0,1fr)_370px]" : "grid-cols-1")}>
         <Panel className="overflow-x-auto">
           <table className={cn("w-full border-collapse", !item && "min-w-[720px]")}>
             <thead><tr>
-              <th className={th}>Line <span className="normal-case tracking-normal font-normal">· compulsory unless marked optional</span></th>
+              <th className={th}>Line</th>
               {group === "status" && <th className={th}>Owed by</th>}<th className={th}>Status</th>
               {!item && <><th className={th}>Last</th><th className={th}>Paper</th></>}
               <th className={cn(th, "text-right")}>{filter && <button type="button" className={cn(linkBtn, "normal-case tracking-normal")} onClick={() => setFilter(null)}>Clear the filter</button>}</th>
@@ -197,10 +202,10 @@ export function FilePage({ f, run, save, go }: PageProps) {
                       const k = lineState(i), p = (i.files || [])[(i.files || []).length - 1];
                       return (
                         <tr key={i.key} onClick={() => setSel(sel === i.key ? null : i.key)} className={cn("cursor-pointer", sel === i.key ? "bg-accent-soft" : "hover:bg-sunken")}>
-                          <td className={td}><span className="font-medium">{i.name}</span>{!i.required && <span className="text-faint ml-1.5">Optional</span>}
+                          <td className={td}><span className="font-medium">{i.name}</span>
                             {k === "back" && <span className="block text-critical text-[12px] truncate max-w-[52ch]">{i.reason}</span>}</td>
                           {group === "status" && <td className={cn(td, "text-muted")}>{PARTY[i.party]}</td>}
-                          <td className={td}><Status tone={k} /></td>
+                          <td className={td}><Tag kind={tagOf(i)} /></td>
                           {!item && <><td className={cn(td, "text-muted text-[12px] whitespace-nowrap")}>{last(i)}</td>
                             <td className={td}>{p && <span className="flex items-center gap-1 text-muted text-[12px] max-w-[26ch]"><Paperclip size={12} className="shrink-0" /><span className="truncate">{p.filename}</span></span>}</td></>}
                           <td className={cn(td, "text-right whitespace-nowrap")}>

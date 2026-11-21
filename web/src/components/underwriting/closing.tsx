@@ -1,6 +1,6 @@
 "use client";
 
-/* Step 6 · Closing. Three tables in the order things happen:
+/* Step 7 · Closing. Three tables in the order things happen:
    A · at the closing table (the money stays locked until all are done),
    B · the papers that must come back afterwards (from whom, to whom),
    C · the foreclosure file: everything a foreclosure will ask for, held or not, and where.
@@ -42,8 +42,8 @@ export function ClosingPage({ f, run, save }: PageProps) {
   const pick = (k: string) => setSel(sel === k ? null : k);
   return (
     <>
-      <PageHead n={6} title="Closing" line="What must happen at the table, what must come back, and what RKB must hold if it ever has to foreclose."
-        holds={<>Holding this step: <b className="text-fg">{g.steps[5].done ? "nothing" : g.waiting_closing.length ? `${g.waiting_closing.length} at the table` : g.waiting_after.length ? `${g.waiting_after.length} paper${g.waiting_after.length === 1 ? "" : "s"} to come back` : "nothing"}</b></>} />
+      <PageHead n={7} title="Closing" line="What must happen at the table, what must come back, and what RKB must hold if it ever has to foreclose."
+        holds={<>Holding this step: <b className="text-fg">{g.steps[6].done ? "nothing" : g.waiting_closing.length ? `${g.waiting_closing.length} at the table` : g.waiting_after.length ? `${g.waiting_after.length} paper${g.waiting_after.length === 1 ? "" : "s"} to come back` : "nothing"}</b></>} />
       <Panel className="px-3.5 py-2.5 flex flex-wrap items-center gap-1.5">
         {flow.map(([l, ok], n) => <React.Fragment key={l}>{n > 0 && <span className="text-faint">→</span>}<span className={cn("px-2.5 py-0.5 rounded-full text-[12px]", ok ? "bg-good-soft text-good font-semibold" : "bg-sunken text-muted")}>{ok ? "✓ " : ""}{l}</span></React.Fragment>)}
       </Panel>

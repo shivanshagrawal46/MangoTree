@@ -137,7 +137,7 @@ def test_a_state_rkb_has_not_lent_in_runs_on_the_worst_case_and_keeps_the_file_s
     assert a["foreclosure"]["finished"]["months"] == 14 and a["foreclosure"]["finished"]["foreclosure_cost"] == 12000
     assert any("has not lent in" in n for n in a["notices"]) and E.details_missing(f) == []
     g = C.gates(C.build(f, a), a, details_missing=[])
-    assert g["step"] == 2 and [x["open"] for x in g["steps"]] == [True, True, False, False, False, False]
+    assert g["step"] == 2 and [x["open"] for x in g["steps"]] == [True, True, False, False, False, False, False]
 
 
 def test_a_late_mortgage_that_stays_is_rakesh_sirs_decision_and_the_note_must_cover_what_rkb_pays():
@@ -164,7 +164,7 @@ def test_cash_to_the_owner_always_goes_to_rakesh_sir():
 
 def test_missing_essentials_is_incomplete_not_a_refusal():
     a = E.assess({"address": "x"})
-    assert a["verdict"] == E.INCOMPLETE and len(a["missing"]) == 4
+    assert a["verdict"] == E.INCOMPLETE and len(a["missing"]) == 3
 
 
 # ------------------------------------------------------------------ the foreclosure test
@@ -276,7 +276,36 @@ def test_page_one_says_exactly_what_is_still_missing():
     assert any("County" in m for m in E.details_missing(dict(E21, county="")))
     assert "Whether there is a mortgage on the house" in E.details_missing({k: v for k, v in E21.items() if k != "has_mortgage"})
     assert any("lender" in m for m in E.details_missing(dict(E21, has_mortgage=True)))
-    assert len(E.details_missing({})) >= 15
+    assert E.details_missing({}) == ["Property address", "State", "Value after repair (ARV)", "Square feet above grade", "Builder's cost of the work",
+                                     "Whether there is a mortgage on the house"]
+
+
+def test_page_one_asks_only_for_the_builders_cost_and_the_mortgage_and_the_rest_comes_after_the_quick_check():
+    # "when ARV details get automatically entered then the user should only add the builder cost and if any
+    # mortgages as well, that's it, then can do a quick check ... then another screen in which we ask the
+    # left out details" (2026-11-21)
+    from_arv = {"address": "308 E 21st St, Baltimore, MD 21218", "state": "MD", "county": "Baltimore City", "arv": 235000, "sqft_above": 1375, "scope": "moderate", "arv_analysis_id": "arv_x"}
+    assert E.details_missing(from_arv) == ["Builder's cost of the work", "Whether there is a mortgage on the house"]
+    two = dict(from_arv, builder_cost=83743.10, has_mortgage=False)
+    assert E.details_missing(two) == []
+    a = E.assess(two)
+    assert a["verdict"] == E.FITS and a["headline"].startswith("RKB can fund the deal") and not a["money"]["commission"]["known"]
+    # what has not been asked yet is not a finding: nobody is sent to look at the budget for it
+    assert a["budget"]["pending"] == ["whether the area has been measured", "the contingency"] and not a["budget"]["looks"] and not a["person_checks"]
+    assert E.more_missing(two) == ["Who owns the house", "Owner's name as on the deed", "Whether the owner lives in the house", "Contingency (0 if none)",
+                                   "Whether the area has been measured", "Price to the owner (the note)", "Closing costs, estimated (0 if not known yet)"]
+    assert E.more_missing(E21) == []
+    s = st.UwStore(FakeMongo())
+    doc = st.create(s, two, WES)
+    assert doc["gates"]["step"] == 3 and [x["open"] for x in doc["gates"]["steps"]] == [True, True, True, False, False, False, False]
+    with pytest.raises(st.Refused, match="remaining details"):
+        st.make_documents(doc, RAKESH)
+    # the remaining details come in: the check is run again on everything, and the file opens
+    doc = st.set_facts(doc, {k: E21[k] for k in ("owner_kind", "owner_name", "owner_lives_there", "contingency", "measured", "contract_price", "closing_costs")}, WES)
+    assert doc["gates"]["step"] == 4 and doc["gates"]["more_missing"] == [] and doc["assessment"]["money"]["commission"]["known"]
+    # an answer on that page can still stop the deal: the owner living in the house
+    stopped = st.set_facts(doc, {"owner_kind": "individual", "owner_lives_there": True}, WES)
+    assert stopped["assessment"]["verdict"] == E.DOES_NOT_FIT and stopped["gates"]["step"] == 2
 
 
 # ------------------------------------------------------------------ the file, the people and the locks
@@ -297,20 +326,21 @@ def _steps(doc):
     return [(x["done"], x["open"]) for x in doc["gates"]["steps"]]
 
 
-def test_a_new_file_stands_on_step_three_and_later_steps_are_locked():
+def test_a_new_file_stands_on_step_four_and_later_steps_are_locked():
     s, doc = _file()
-    assert doc["assessment"]["verdict"] == E.FITS and doc["gates"]["step"] == 3
-    assert _steps(doc) == [(True, True), (True, True), (False, True), (False, True), (False, False), (False, False)]
+    assert doc["assessment"]["verdict"] == E.FITS and doc["gates"]["step"] == 4
+    assert [x["name"] for x in doc["gates"]["steps"]] == ["Property and cost", "Quick check", "Remaining details", "The file", "Documents", "Review and sign", "Closing"]
+    assert _steps(doc) == [(True, True), (True, True), (True, True), (False, True), (False, True), (False, False), (False, False)]
     assert st.item_of(doc, "arv")["status"] == C.OK and s.get(doc["file_id"])["created_side"] == "contractor"
     half = st.create(s, {"address": "1 A St"}, WES)
-    assert half["gates"]["step"] == 1 and [x["open"] for x in half["gates"]["steps"]] == [True, False, False, False, False, False]
+    assert half["gates"]["step"] == 1 and [x["open"] for x in half["gates"]["steps"]] == [True, False, False, False, False, False, False]
 
 
 def test_optional_lines_never_hold_the_file():
     s, doc = _file()
     _finish(doc, C.FILE)
     assert doc["gates"]["file_complete"] and {w["key"] for w in doc["gates"]["optional_open"]} == set(C.OPTIONAL)
-    assert doc["gates"]["step"] == 4
+    assert doc["gates"]["step"] == 5
 
 
 def test_a_contractor_given_underwriting_works_as_rkb_does_except_the_tick_and_the_signature():
@@ -437,11 +467,11 @@ def test_documents_are_ticked_by_rakesh_sir_and_an_edit_takes_the_tick_away():
     st.approve_document(doc, "commitment_letter", RAKESH)              # the commitment letter may go out early
     _finish(doc, C.FILE)
     st.approve_document(doc, "note", RAKESH)
-    assert doc["gates"]["documents"] == {"total": 2, "approved": 2} and doc["gates"]["ready_to_sign"] and doc["gates"]["step"] == 5
+    assert doc["gates"]["documents"] == {"total": 2, "approved": 2} and doc["gates"]["ready_to_sign"] and doc["gates"]["step"] == 6
     st.edit_document(doc, "note", [{"t": "p", "text": "corrected"}], SHIV)
     d = st.document_of(doc, "note")
     assert d["version"] == 2 and d["versions"][0]["blocks"] == [{"t": "p", "text": "x"}] and not d["approved"].get("at")
-    assert not doc["gates"]["ready_to_sign"] and doc["gates"]["step"] == 4
+    assert not doc["gates"]["ready_to_sign"] and doc["gates"]["step"] == 5
     with pytest.raises(st.Refused) as e:
         st.sign(doc, RAKESH)
     assert "Every document must be approved first: 1 of 2" in str(e.value)
@@ -455,14 +485,14 @@ def test_review_and_sign_opens_only_when_every_step_before_it_is_complete():
         st.sign(doc, RAKESH)
     assert "The file is not complete" in str(e.value)
     _finish(doc, C.FILE)
-    assert _steps(doc)[4] == (False, False)                              # the file is done, the documents are not: still locked
+    assert _steps(doc)[5] == (False, False)                              # the file is done, the documents are not: still locked
     for d in ("commitment_letter", "note"):
         st.approve_document(doc, d, RAKESH)
-    assert _steps(doc)[4] == (False, True) and _steps(doc)[5] == (False, False)
+    assert _steps(doc)[5] == (False, True) and _steps(doc)[6] == (False, False)
     with pytest.raises(st.Refused):
         st.sign(doc, SHIV)
     st.sign(doc, RAKESH)
-    assert doc["signed"]["by"] == "rakesh" and round(doc["signed"]["ratio"] * 100, 1) == 38.1 and doc["gates"]["step"] == 6
+    assert doc["signed"]["by"] == "rakesh" and round(doc["signed"]["ratio"] * 100, 1) == 38.1 and doc["gates"]["step"] == 7
     assert not doc["gates"]["can_fund"]                                  # recording, no-work and the no-lien covenant still hold the money
     assert {w["key"] for w in doc["gates"]["waiting_closing"]} == {"no_work", "no_lien", "recording"}
     _finish(doc, C.CLOSING)
@@ -481,7 +511,7 @@ def test_a_change_to_the_facts_voids_the_ticks_and_the_signature():
     st.sign(doc, RAKESH)
     st.set_facts(doc, {"builder_cost": 99000}, WES)
     assert not doc["signed"].get("at") and "Builder's cost" in doc["signed"]["voided_because"]
-    assert doc["gates"]["documents"]["approved"] == 0 and doc["gates"]["step"] == 4
+    assert doc["gates"]["documents"]["approved"] == 0 and doc["gates"]["step"] == 5
     what = [e["what"] for e in doc["events"]]
     assert any("Builder's cost changed from 83,743.1 to 99,000" in w for w in what) and any("moved by more than 7%" in w for w in what)
     assert any("must be made and approved again" in w for w in what)
