@@ -18,6 +18,16 @@ export function fmtDay(v?: string | null, f = "MMM d") {
   try { return format(parseISO(String(v).slice(0, 10)), f); } catch { return String(v).slice(0, 10); }
 }
 
+/** A moment on the firm's clock, US Eastern, with EST or EDT after it — "Sat, Nov 21, 12:19 PM EST".
+ *  Times a person reads are given in Eastern whatever the viewer's own time zone (admin, 2026-11-21). */
+export function fmtET(v?: string | null, opts: { weekday?: boolean; year?: boolean } = {}) {
+  if (!v) return "—";
+  try {
+    return new Date(v).toLocaleString("en-US", { timeZone: "America/New_York", weekday: opts.weekday === false ? undefined : "short", month: "short", day: "numeric",
+      year: opts.year ? "numeric" : undefined, hour: "numeric", minute: "2-digit", timeZoneName: "short" });
+  } catch { return String(v).slice(0, 16); }
+}
+
 export function ago(v?: string | null) {
   if (!v) return "";
   try { return formatDistanceToNowStrict(parseISO(v), { addSuffix: true }); } catch { return ""; }

@@ -26,7 +26,7 @@ import { useEvidence } from "@/components/evidence";
 import { Button, Card, Dialog, DialogContent, Input, Select, Skeleton, Textarea } from "@/components/ui";
 import { DraftCard } from "@/components/brain/draft";
 import type { Alerts } from "@/components/brain/followups";
-import { cn } from "@/lib/utils";
+import { cn, fmtET } from "@/lib/utils";
 import { errText, type DayBoard, type DayCard, type DayCheck, type Draft, type TeamRow } from "@/lib/brain";
 
 const usd = (n: number) => n.toLocaleString("en-US", { style: "currency", currency: "USD" });
@@ -238,7 +238,7 @@ function Notices() {
   const showLogs = logs > 0 && seen.logs !== sig.logs;
   const showBills = fresh.length > 0 && seen.bills !== sig.bills;
   if (!showLogs && !showBills) return null;
-  const read = a.read_at ? new Date(a.read_at).toLocaleString("en-US", { timeZone: "America/New_York", weekday: "short", hour: "numeric", minute: "2-digit" }) : "";
+  const read = a.read_at ? fmtET(a.read_at) : "";
   const bar = "grid grid-cols-[16px_minmax(0,1fr)_auto_auto] items-center gap-2.5 rounded-[4px] border border-l-[3px] px-3 py-[7px] text-[13px]";
   const shortName = (p: string) => p.replace(/^\d+\s+/, "");
   return (
@@ -250,7 +250,7 @@ function Notices() {
             <b className="font-semibold">{count(logs, "new daily log", "new daily logs")}</b>
             <span className="ml-2 text-fg/75">
               {a.new_logs.map((l, i) => <React.Fragment key={l.property_id}>{i > 0 && " · "}<Link href={`/property/${l.property_id}?tab=site`} className="hover:text-money-in hover:underline">{shortName(l.property)} ({l.count})</Link></React.Fragment>)}
-              {read && <span className="text-muted"> · Buildertrend read {read} ET</span>}
+              {read && <span className="text-muted"> · Buildertrend read {read}</span>}
             </span>
           </div>
           <span />
@@ -278,12 +278,12 @@ function Notices() {
 /* What the last daily run settled: one line, and the to-dos it took off the list on request. */
 function CheckLine({ k }: { k: DayCheck }) {
   const [open, setOpen] = React.useState(false);
-  const when = new Date(k.at).toLocaleString("en-US", { timeZone: "America/New_York", weekday: "short", hour: "numeric", minute: "2-digit" });
+  const when = fmtET(k.at);
   const e = k.emails;
   return (
     <div className="mt-3 rounded-md border border-line bg-elev px-4 py-2 text-[12.5px] text-muted">
       <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5">
-        <b className="font-semibold text-fg">Last check: {when} ET</b>
+        <b className="font-semibold text-fg">Last check: {when}</b>
         {e && (e.read === 0 ? <span>No new email.</span>
           : <span>{count(e.read, "new email", "new emails")} read: {count(e.reply_needed, "needs", "need")} a reply, {count(e.no_reply_needed, "needs", "need")} none{e.found_answered > 0 ? `; ${count(e.found_answered, "waiting reply was", "waiting replies were")} found already sent` : ""}.</span>)}
         <span>Your to-dos: {k.n_closed > 0 ? `${k.n_closed} taken off` : "none taken off"}, <b className="font-semibold text-fg tnum">{k.left}</b> left.</span>

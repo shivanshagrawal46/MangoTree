@@ -35,7 +35,7 @@ from mangotree.storage.mongo import Mongo
 
 from . import config as bc
 from . import prompts
-from .context import EMAIL_FIELDS, Records, day, property_block
+from .context import day, EMAIL_FIELDS, et, property_block, Records
 from .llm import cost_of, structured, system_blocks
 from .store import BrainStore, name_of, now
 
@@ -129,7 +129,7 @@ class Owed:
             frm = ((a.get("participants") or {}).get("from") or [""])[0]
             words = " ".join(str(a.get("body_clean") or "").split())[:700]
             raised = "  ← the email that raised this item" if a["sha256"] == item.get("source_sha") else ""
-            listed.append(f"[{a['sha256'][:12]}] {day(a.get('date'), '%Y-%m-%d %H:%M')} UTC | from {self.records.who(frm)} | {a.get('subject') or '(no subject)'}{raised}\n    {words}")
+            listed.append(f"[{a['sha256'][:12]}] {et(a.get('date'))} | from {self.records.who(frm)} | {a.get('subject') or '(no subject)'}{raised}\n    {words}")
         due = f", due {day(item.get('due'))}" if item.get("due") else ""
         user = (f"TODAY: {today:%A %d %B %Y}\n\n{property_block(self.mongo, self.store, pid)}\n\n"
                 f"=== EMAILS RECEIVED ON THIS FILE SINCE {today - timedelta(days=MAIL_DAYS):%Y-%m-%d} ({len(listed)}) ===\n" + ("\n".join(listed) or "(none)") +

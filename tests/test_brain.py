@@ -1499,7 +1499,7 @@ def test_a_new_record_is_read_with_the_emails_in_full_and_the_documents_as_a_lis
     text = r.render_record(new, direction="received")
     assert "THIS CONVERSATION SO FAR (1 message(s), oldest first):" in text and "Here is the Cornerstone draw spreadsheet." in text   # the chain, unbroken
     assert "(starts the conversation)\nHere is the Cornerstone" in text                              # each message says where it stands in the chain …
-    assert "(replying to the message of 2026-11-10 15:29 UTC from kelly@roiblocks.com [sha=aaaaaaaaaaaa])" in text   # … and which message it answers
+    assert "(replying to the message of 2026-11-10 10:29 EST from kelly@roiblocks.com [sha=aaaaaaaaaaaa])" in text   # … and which message it answers
     assert "(replying to a message that is not on file)" in r.render_message({**new, "in_reply_to": ["<gone@x>"]}, direction="received", earlier=[])
     assert "Lodestone Draws.xlsx [sha=dddddddddddd]" in text and "DRAW ONE LINE BY LINE" not in text   # an earlier message's file is named, not pasted
     assert "(no words of their own in this email" in text and "(678) 778-7915" not in text          # a signature is not words

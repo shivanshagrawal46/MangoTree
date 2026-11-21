@@ -11,7 +11,7 @@ import { Check, Copy, ExternalLink, Mail, MailOpen, RefreshCw, X } from "lucide-
 import { api, subscribeJob } from "@/lib/api";
 import { Badge, Button, Input } from "@/components/ui";
 import { useEvidence } from "@/components/evidence";
-import { ago, cn, fmtDate } from "@/lib/utils";
+import { ago, cn, fmtDate, fmtET } from "@/lib/utils";
 import { errText, type Draft, type Person, type Verification } from "@/lib/brain";
 import { copyText } from "@/components/email-draft";
 
@@ -48,7 +48,7 @@ function Incoming({ o, onOpen }: { o: NonNullable<Draft["original"]>; onOpen: ()
       <div className="rounded-md border border-line bg-sunken/50">
         <div className="border-b border-line px-3 py-1.5 text-[12.5px]">
           <span className="font-semibold">{o.from || "—"}</span>
-          <span className="text-muted"> · {fmtDate(o.date, "EEE d MMM yyyy, HH:mm")}</span>
+          <span className="text-muted"> · {fmtET(o.date, { year: true })}</span>
           <div className="truncate text-muted">{o.subject || "(no subject)"}</div>
         </div>
         <div className={cn("whitespace-pre-wrap px-3 py-2 text-[13px] leading-[1.6]", !all && "max-h-[190px] overflow-y-auto")}>{text || "(This email has no words of its own. Open the whole email to see what it carried.)"}</div>
@@ -127,7 +127,7 @@ export function DraftCard({ draft, compact, onChange, showProperty = true }: { d
           <div className="text-[13.5px] font-semibold leading-snug truncate">{subject || "(no subject)"}</div>
           {d.in_reply_to?.subject && (
             <div className="text-xs mt-0.5 truncate"><span className="font-medium text-fg">Answers the email from {d.in_reply_to.from_name || (d.in_reply_to.from || [])[0] || "—"}</span>
-              <span className="text-muted"> of {fmtDate(d.in_reply_to.date, "EEE d MMM, HH:mm")} — “{d.in_reply_to.subject}”</span></div>
+              <span className="text-muted"> of {fmtET(d.in_reply_to.date)} — “{d.in_reply_to.subject}”</span></div>
           )}
           <div className="text-xs text-muted mt-0.5 truncate">To {people(d.to) || "—"}{d.cc?.length ? ` · cc ${people(d.cc)}` : ""}</div>
           <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-faint">

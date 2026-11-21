@@ -15,6 +15,8 @@ from mangotree.storage.mongo import Mongo
 
 from . import cleanmail
 from . import config as bc
+from mangotree.core import eastern
+
 from . import prompts
 from .store import BrainStore, active_property_ids, name_of
 
@@ -31,6 +33,20 @@ def day(d: Any, fmt: str = "%Y-%m-%d") -> str:
         return d.strftime(fmt) if d else "undated"
     except Exception:
         return str(d)[:10]
+
+
+def et(d: Any, fmt: str = "%Y-%m-%d %H:%M") -> str:
+    """A recorded moment on the firm's clock — US Eastern — with EST or EDT after it.
+
+    Everything a person at RKB reads gives times in Eastern (admin, 2026-11-21: "why utc time is
+    given, i said to have time in EST"). The records were shown to the model stamped in UTC, so its
+    notes, to-dos and summaries came out in UTC too; they are now shown to it in Eastern.
+    NOT for a due date: that is a calendar day kept at 00:00 UTC and must never be shifted (``day``)."""
+    try:
+        m = eastern.to_et(d) if d else None
+        return f"{m.strftime(fmt)} {m.tzname() or 'ET'}" if m else "undated"
+    except Exception:
+        return str(d)[:16]
 
 
 def clip(text: str, limit: int, *, sha: str = "", what: str = "text") -> str:
@@ -134,7 +150,7 @@ class Records:
         to = ", ".join(self.who(x) for x in (p.get("to") or [])[:8])
         cc = ", ".join(self.who(x) for x in (p.get("cc") or [])[:8])
         kind = "EMAIL SENT BY RKB" if direction == "sent" else "EMAIL RECEIVED"
-        line = f"[sha={a['sha256'][:12]}] {kind} {day(a.get('date'), '%Y-%m-%d %H:%M')} UTC | from: {frm} | to: {to}"
+        line = f"[sha={a['sha256'][:12]}] {kind} {et(a.get('date'))} | from: {frm} | to: {to}"
         if cc:
             line += f" | cc: {cc}"
         line += f" | subject: {a.get('subject') or '(no subject)'}"
@@ -309,7 +325,7 @@ class Records:
             if srcs:
                 first = min((by_sha[p] for p in srcs), key=lambda r: r.get("date") or start)
                 frm = ((first.get("participants") or {}).get("from") or [""])[0]
-                origin = f"attached to the email of {day(first.get('date'), '%Y-%m-%d %H:%M')} from {self.name(frm)} (“{first.get('subject') or ''}”)"
+                origin = f"attached to the email of {et(first.get('date'))} from {self.name(frm)} (“{first.get('subject') or ''}”)"
                 if len(srcs) > 1:
                     origin += f" and {len(srcs) - 1} other email(s)"
             else:
@@ -469,7 +485,7 @@ class Records:
             m = by_id.get(x)
             if m:
                 frm = ((m.get("participants") or {}).get("from") or [""])[0]
-                return f"(replying to the message of {day(m.get('date'), '%Y-%m-%d %H:%M')} UTC from {self.name(frm)} [sha={m['sha256'][:12]}])\n"
+                return f"(replying to the message of {et(m.get('date'))} from {self.name(frm)} [sha={m['sha256'][:12]}])\n"
         return "(replying to a message that is not on file)\n"
 
     @staticmethod
@@ -478,7 +494,7 @@ class Records:
 
     def render_conversation(self, msgs: Sequence[dict], *, dirs: Dict[str, str], names: Dict[str, List[dict]]) -> str:
         head = (f"--- CONVERSATION: “{self._subject(msgs[0])}” — {len(msgs)} message(s), "
-                f"{day(msgs[0].get('date'), '%Y-%m-%d %H:%M')} to {day(msgs[-1].get('date'), '%Y-%m-%d %H:%M')} UTC, oldest first ---")
+                f"{et(msgs[0].get('date'))} to {et(msgs[-1].get('date'))}, oldest first ---")
         return head + "\n" + "\n\n".join(self.render_message(m, direction=dirs.get(m["sha256"], "received"), earlier=msgs[:i],
                                                               files=names.get(m["sha256"]) or []) for i, m in enumerate(msgs))
 
@@ -668,15 +684,15 @@ class Records:
         last = self.art.find_one(q, {"date": 1}, sort=[("date", -1)]) if pid else self.art.find_one({"source_type": "email"}, {"date": 1}, sort=[("date", -1)])
         run = self.mongo.db["scheduled_runs"].find_one({"job": "intake", "ok": True}, {"at": 1}, sort=[("at", -1)])
         now_ = datetime.now(timezone.utc)
-        lines = [f"NOW: {now_:%A %d %B %Y, %H:%M} UTC."]
+        lines = [f"NOW: {et(now_, '%A %d %B %Y, %H:%M')}."]
         if run and run.get("at"):
             mins = int((now_ - run["at"]).total_seconds() // 60)
-            lines.append(f"HOW CURRENT THE RECORDS ARE: the mailboxes were last read at {run['at']:%d %b %H:%M} UTC ({mins} minute(s) ago)."
+            lines.append(f"HOW CURRENT THE RECORDS ARE: the mailboxes were last read at {et(run['at'], '%d %b %H:%M')} ({mins} minute(s) ago)."
                          + (" THAT IS OVER AN HOUR AGO — anything since is not in front of you; say so when it matters." if mins > 60 else ""))
         else:
             lines.append("HOW CURRENT THE RECORDS ARE: unknown — no record of the mailboxes being read. Say so when it matters.")
         if last and last.get("date"):
-            lines.append(f"The newest email on file for {name_of(pid) if pid else 'any property'} is dated {last['date']:%d %b %Y %H:%M} UTC.")
+            lines.append(f"The newest email on file for {name_of(pid) if pid else 'any property'} is dated {et(last['date'], '%d %b %Y %H:%M')}.")
         return " ".join(lines)
 
 
@@ -728,7 +744,7 @@ def property_block(mongo: Mongo, store: BrainStore, pid: str, *, file: Optional[
     file = file if file is not None else (store.get_file(pid) or {})
     p = PROPERTY_INDEX.get(pid)
     title = f"{name_of(pid)}" + (f", {p.city}, {p.state} {p.postal}" if p else "")
-    lines = [f"=== PROPERTY FILE — {title} (id: {pid}) — last updated {day(file.get('updated_at'), '%Y-%m-%d %H:%M')} UTC ==="]
+    lines = [f"=== PROPERTY FILE — {title} (id: {pid}) — last updated {et(file.get('updated_at'))} ==="]
     if p:
         if p.aliases:
             lines.append(f"Also called: {', '.join(list(p.aliases)[:6])}")

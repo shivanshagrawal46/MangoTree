@@ -27,7 +27,7 @@ from . import prompts
 from . import verify
 from .agent import run_loop
 from .answered import RULE, Answered, replied
-from .context import EMAIL_FIELDS, Records, day, property_block
+from .context import day, EMAIL_FIELDS, et, property_block, Records
 from .lessons import Lessons, changed_enough
 from .llm import add_usage, cost_of, system_blocks
 from .store import BrainStore, name_of, now
@@ -154,7 +154,7 @@ class DraftWriter:
         already = self.answered.check(art)
         if replied(already):
             by = (already.get("by") or [{}])[-1]
-            note = (f"Already answered: {by.get('who') or 'RKB'} replied on {day(by.get('at'), '%d %b %Y %H:%M')} UTC. {already.get('what_rkb_said') or ''}"
+            note = (f"Already answered: {by.get('who') or 'RKB'} replied on {et(by.get('at'), '%d %b %Y %H:%M')}. {already.get('what_rkb_said') or ''}"
                     + _left_open(already)).strip()
             if replaces:
                 existing = self.store.get_draft(replaces)
@@ -336,7 +336,7 @@ class DraftWriter:
         after_draft = bool(sent_on and made and sent_on >= made)
         fields: Dict[str, Any] = {
             "status": "sent", "auto_closed": True, "sent_sha": by.get("sha"), "sent_at": by.get("at"), "sent_by": by.get("who"), "stale": None,
-            "closed_at": now(), "closed_note": (f"{by.get('who') or 'RKB'} replied on {day(by.get('at'), '%d %b %Y %H:%M')} UTC"
+            "closed_at": now(), "closed_note": (f"{by.get('who') or 'RKB'} replied on {et(by.get('at'), '%d %b %Y %H:%M')}"
                                                + (f" (“{by.get('subject')}”)" if by.get("subject") else "") + f". {verdict.get('what_rkb_said') or ''}"
                                                + _left_open(verdict)).strip(),
             "answer_check": {k: verdict.get(k) for k in ("status", "latest", "checked_at", "what_rkb_said", "still_owed", "candidates", "rule")},
@@ -395,7 +395,7 @@ class DraftWriter:
             if verdict["status"] == "partly_answered":
                 by = (verdict.get("by") or [{}])[-1]
                 fields["stale"] = {"since": by.get("at"), "sha": by.get("sha"), "kind": "partly_answered",
-                                   "why": (f"Part of this has already been dealt with. {by.get('who') or 'RKB'} wrote on {day(by.get('at'), '%d %b %H:%M')} UTC: "
+                                   "why": (f"Part of this has already been dealt with. {by.get('who') or 'RKB'} wrote on {et(by.get('at'), '%d %b %H:%M')}: "
                                            f"{verdict.get('what_rkb_said') or ''} Still owed: {'; '.join(verdict.get('still_owed') or []) or 'see the email'}.").strip()}
             elif verdict["status"] == "unknown":
                 fields["stale"] = {"kind": "unchecked", "why": "RKB has written to this person since this email came in, and the check of whether "
@@ -412,7 +412,7 @@ class DraftWriter:
             if newer and (draft.get("stale") or {}).get("sha") != newer["sha256"]:
                 frm = ((newer.get("participants") or {}).get("from") or [""])[0]
                 fields["stale"] = {"since": newer.get("date"), "sha": newer["sha256"], "kind": "newer_message",
-                                   "why": f"{self.records.name(frm)} wrote again in this conversation on {newer['date']:%d %b %H:%M} UTC, after the email this draft answers."}
+                                   "why": f"{self.records.name(frm)} wrote again in this conversation on {et(newer['date'], '%d %b %H:%M')}, after the email this draft answers."}
         return (self.store.update_draft(draft["draft_id"], fields) or draft) if fields else draft
 
     def needs_check(self, draft: Dict[str, Any]) -> bool:

@@ -47,7 +47,7 @@ from mangotree.core.logging import logger
 from mangotree.storage.mongo import Mongo
 
 from .answered import Answered, replied
-from .context import EMAIL_FIELDS, day
+from .context import day, EMAIL_FIELDS, et
 from .store import BrainStore, now
 
 OWN_LINKS = ("same_conversation", "direct_reply")
@@ -80,7 +80,7 @@ def owed_note(verdict: Dict[str, Any]) -> str:
     """What a to-do says once RKB has replied in part: who wrote, when, and what is still owed."""
     by = (verdict.get("by") or [{}])[-1]
     owed = [str(x) for x in (verdict.get("still_owed") or []) if x]
-    return (f"{by.get('who') or 'RKB'} replied on {day(by.get('at'), '%d %b %Y %H:%M')} UTC. {verdict.get('what_rkb_said') or ''}".strip()
+    return (f"{by.get('who') or 'RKB'} replied on {et(by.get('at'), '%d %b %Y %H:%M')}. {verdict.get('what_rkb_said') or ''}".strip()
             + (" Still owed: " + "; ".join(owed) + "." if owed else ""))
 
 

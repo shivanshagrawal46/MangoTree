@@ -613,7 +613,7 @@ class MoneySheet:
         bold, grey = Font(bold=True), PatternFill("solid", fgColor="EEF1F5")
         ws.append([s.get("address") or pid])
         ws["A1"].font = Font(bold=True, size=13)
-        ws.append([f"Made {now().strftime('%d %b %Y %H:%M')} UTC from Buildertrend and RKB's records. Internal to RKB."])
+        ws.append([f"Made {_et_stamp(now(), '%d %b %Y %H:%M')} from Buildertrend and RKB's records. Internal to RKB."])
         ws.append([])
         for f in s["figures"].values():
             v = f["value"]
@@ -684,3 +684,9 @@ class MoneySheet:
         buf = io.BytesIO()
         wb.save(buf)
         return buf.getvalue()
+
+def _et_stamp(d, fmt="%Y-%m-%d %H:%M"):
+    """A recorded moment on the firm's clock (US Eastern), with EST or EDT after it."""
+    from mangotree.core import eastern
+    m = eastern.to_et(d) if d else None
+    return f"{m.strftime(fmt)} {m.tzname() or 'ET'}" if m else "?"

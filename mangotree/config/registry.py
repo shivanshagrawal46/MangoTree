@@ -121,7 +121,7 @@ PEOPLE: List[Person] = [
         side=Side.EXTERNAL,
         org=Org.LP_REMODEL,
         role="Construction (Wes's brother)",
-        addresses=("kelly@lpremodel.com",),
+        addresses=("kelly@lpremodel.com", "kelly@roiblocks.com"),      # she writes from roiblocks.com since Oct 2026; nine of her emails were left out in Nov for want of it
     ),
     Person(
         person_id="panos",
@@ -553,7 +553,7 @@ PROPERTIES: List[Property] = [
         property_id="50th_pl",
         canonical_address="844 50th Pl NE",
         city="Washington", state="DC", postal="20019",
-        aliases=("844 50th Pl", "844 50th Place", "50th Pl NE", "50th St", "430 Monroe LLC"),
+        aliases=("844 50th Pl", "844 50th Place", "50th Pl NE", "50th Pl", "50th Place", "50th St", "430 Monroe LLC"),
         disk_folder="844 50th Pl. NE, Washington, DC 20019",
         notes="Owner entity: 430 Monroe LLC",
     ),
@@ -680,7 +680,7 @@ PROPERTIES: List[Property] = [
         city="Baltimore", state="MD", postal="21213",
         aliases=(
             "1631 North Durham", "1631 N Durham", "1631 N. Durham",
-            "North Durham St", "N Durham St", "Durham St", "Durham Street",
+            "North Durham St", "N Durham St", "Durham St", "Durham Street", "Durham",
         ),
         disk_folder="1631 N Durham St Baltimore",
         status="deal",

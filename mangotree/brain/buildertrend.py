@@ -618,7 +618,7 @@ class Buildertrend:
         d = lambda x, f="%Y-%m-%d": x.strftime(f) if x else "?"  # noqa: E731
         out = [f"\n=== THE SITE — Buildertrend daily logs for {name_of(pid)}, last {days} days, word for word, oldest first ===",
                f"(Buildertrend is the contractor's own system. A daily log is what the crew or the contractor's staff wrote that day — it is their "
-               f"report, not RKB's inspection. Buildertrend was last read on {d(s['pulled_at'], '%Y-%m-%d %H:%M')} UTC; anything written there since is not "
+               f"report, not RKB's inspection. Buildertrend was last read on {_et_stamp(s['pulled_at'])}; anything written there since is not "
                f"here. {s['logs_total']} logs on file in all, from {d(s['first_log'])} to {d(s['last_log'])}. Cite a log as “Buildertrend daily log of <date>”.)"]
         recent = self.logs_of(pid, days=days)[::-1]
         if not recent:
@@ -800,3 +800,9 @@ class Buildertrend:
             return None
         p = self.photos.find_one({"file_id": int(file_id), "where": "server"}, {"sha256": 1})
         return store.presigned_url(p["sha256"], expires=900) if p else None
+
+def _et_stamp(d, fmt="%Y-%m-%d %H:%M"):
+    """A recorded moment on the firm's clock (US Eastern), with EST or EDT after it."""
+    from mangotree.core import eastern
+    m = eastern.to_et(d) if d else None
+    return f"{m.strftime(fmt)} {m.tzname() or 'ET'}" if m else "?"

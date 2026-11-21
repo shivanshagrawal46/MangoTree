@@ -33,7 +33,7 @@ from mangotree.storage.mongo import Mongo
 
 from . import config as bc
 from . import prompts
-from .context import EMAIL_FIELDS, Records, day
+from .context import day, EMAIL_FIELDS, et, Records
 from .llm import BrainError, cost_of, structured
 
 BRIEF = """YOUR JOB NOW: HAS THIS EMAIL ALREADY BEEN ANSWERED?
@@ -163,7 +163,7 @@ class Answered:
         if not cands:
             return {**base, "status": "not_answered"}
         frm = ", ".join(self.records.who(a) for a in ((art.get("participants") or {}).get("from") or [])[:2])
-        incoming = (f"THE INCOMING EMAIL [sha={art['sha256'][:12]}] received {day(art.get('date'), '%Y-%m-%d %H:%M')} UTC from {frm}\n"
+        incoming = (f"THE INCOMING EMAIL [sha={art['sha256'][:12]}] received {et(art.get('date'))} from {frm}\n"
                     f"Subject: {art.get('subject') or '(no subject)'}\n"
                     + (f"Files attached: {', '.join(str(n) for n in (art.get('attachment_names') or [])[:10])}\n" if art.get("attachment_names") else "")
                     + f"\n{(art.get('body_clean') or '').strip()[:bc.EMAIL_BODY_CHARS] or '(empty body)'}")
@@ -171,7 +171,7 @@ class Answered:
         for c in cands:
             who = ", ".join(self.records.name(a) for a in ((c.get("participants") or {}).get("from") or [])[:1])
             to = ", ".join(self.records.name(a) for a in ((c.get("participants") or {}).get("to") or [])[:6])
-            later.append(f"[sha={c['sha256'][:12]}] SENT BY {who} on {day(c.get('date'), '%Y-%m-%d %H:%M')} UTC to {to} — {LINK_LABEL[c['link']]}\n"
+            later.append(f"[sha={c['sha256'][:12]}] SENT BY {who} on {et(c.get('date'))} to {to} — {LINK_LABEL[c['link']]}\n"
                          f"Subject: {c.get('subject') or '(no subject)'}\n\n{(c.get('body_clean') or '').strip()[:bc.EMAIL_BODY_CHARS] or '(empty body)'}")
         user = incoming + f"\n\n\nWHAT RKB SENT AFTERWARDS ({len(cands)} email(s), oldest first):\n\n" + "\n\n---\n\n".join(later)
         try:
