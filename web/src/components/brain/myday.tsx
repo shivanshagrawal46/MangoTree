@@ -5,7 +5,7 @@
    Laid out as an admin page (2026-11-21): flat notices for what came in from the sites (new daily
    logs, new bills), one line on what the last daily check settled, one row of plain numbers, then
    one table per kind of work, never mixed:
-     · Replies    — a written draft ("Review draft") or a reply still to write ("Mark done").
+     · Replies    — only replies that are written and ready ("Review draft").
      · Decisions  — overdue first, then by due date.
      · To do      — the same.
    (JP Sir and Manjunath Sir also have "Bills and site checks".) Five rows of each show; "View all"
@@ -185,7 +185,7 @@ function TableRow({ c, cols, lead }: { c: DayCard; cols: Col[]; lead: (c: DayCar
 }
 
 /* One kind of work as a table: its name and count, column heads, five rows, and the rest on request. */
-function WorkTable({ title, hint, lead, leadHead, cards, cols, empty }: { title: string; hint: string; lead: (c: DayCard) => string; leadHead: string; cards: DayCard[]; cols: Col[]; empty: string }) {
+function WorkTable({ title, hint, lead, leadHead, cards, cols, empty, order = "overdue first, then by due date" }: { title: string; hint: string; lead: (c: DayCard) => string; leadHead: string; cards: DayCard[]; cols: Col[]; empty: string; order?: string }) {
   const [all, setAll] = React.useState(false);
   const rows = all ? cards : cards.slice(0, ROWS);
   return (
@@ -212,7 +212,7 @@ function WorkTable({ title, hint, lead, leadHead, cards, cols, empty }: { title:
       )}
       {cards.length > ROWS && (
         <div className="flex items-center justify-between border-t border-line bg-sunken/50 px-4 py-1.5 text-[12px] text-muted">
-          <span>Showing {rows.length} of {cards.length} · overdue first, then by due date</span>
+          <span>Showing {rows.length} of {cards.length} · {order}</span>
           <button type="button" onClick={() => setAll((v) => !v)} className="font-medium text-accent hover:underline">{all ? "Show fewer" : `View all ${cards.length}`}</button>
         </div>
       )}
@@ -319,11 +319,13 @@ export function MyDay() {
   const d = q.data;
   const cards = [...d.now, ...d.later];
   const drafted = (c: DayCard) => c.type === "reply" && !!c.draft_id;
-  // A reply is a written draft, or a to-do whose whole point is to answer someone. Overdue first, then what is written and ready to send.
-  const replyRank = (c: DayCard) => (c.overdue ? 0 : drafted(c) ? 1 : 2);
-  const replies = byUrgency(cards.filter((c) => c.type === "reply" || (c.type === "todo" && c.kind === "reply"))).map((c, i) => ({ c, i })).sort((x, y) => replyRank(x.c) - replyRank(y.c) || x.i - y.i).map((x) => x.c);
-  const decisions = byUrgency(cards.filter((c) => c.type === "todo" && c.kind === "decision"));
-  const todos = byUrgency(cards.filter((c) => c.type === "todo" && c.kind !== "decision" && c.kind !== "reply"));
+  // Replies holds only what is written and ready to read and send (2026-11-21). A reply owed with nothing written
+  // is written at the next daily run, or becomes a to-do saying what is missing; until then it waits under To do.
+  const replies = byUrgency(cards.filter(drafted));
+  // Decisions and things to do: the newest first, then the older ones (asked for on 2026-11-21). The Status column still says what is overdue.
+  const newest = (list: DayCard[]) => list.map((c, i) => ({ c, i })).sort((x, y) => (Date.parse(y.c.opened_at || "") || 0) - (Date.parse(x.c.opened_at || "") || 0) || x.i - y.i).map((x) => x.c);
+  const decisions = newest(cards.filter((c) => c.type === "todo" && c.kind === "decision"));
+  const todos = newest(cards.filter((c) => c.type === "todo" && c.kind !== "decision"));
   const work = cards.filter((c) => c.type === "bill" || c.type === "check");
   const late = cards.filter((c) => c.overdue);
   const week = (list: DayCard[]) => list.filter((c) => c.due && !c.overdue && daysLate(c) >= -7).length;
@@ -336,16 +338,14 @@ export function MyDay() {
   const due: Col = { head: "Due", width: 84, cell: (c) => <span className="tnum">{dueShort(c) || "—"}</span> };
   const standing: Col = { head: "Status", width: 142, cell: (c) => <Standing c={c} /> };
   const replyCols: Col[] = [property, due, standing,
-    { head: "Draft", width: 148, cell: (c) => (!drafted(c) ? <span className="text-muted">Not drafted</span> : c.stale ? <State tone="amber">Changed, read again</State> : <State tone="green">Ready</State>) },
-    { head: "", width: 128, right: true, cell: (c) => (drafted(c)
-      ? <button type="button" className={c.stale ? BTN_PLAIN : BTN_MAIN} onClick={() => c.draft_id && a.openDraft(c.draft_id)}>{c.stale ? "Read again" : "Review draft"}</button>
-      : done(c)) }];
+    { head: "Draft", width: 148, cell: (c) => (c.stale ? <State tone="amber">Changed, read again</State> : <State tone="green">Ready</State>) },
+    { head: "", width: 128, right: true, cell: (c) => <button type="button" className={c.stale ? BTN_PLAIN : BTN_MAIN} onClick={() => c.draft_id && a.openDraft(c.draft_id)}>{c.stale ? "Read again" : "Review draft"}</button> }];
   const todoCols: Col[] = [property, raised, due, standing, { head: "", width: 128, right: true, cell: done }];
   const workCols: Col[] = [property,
     { head: "Amount", width: 110, cell: (c) => <span className="tnum">{c.amount != null ? usd(c.amount) : "—"}</span> },
     standing,
     { head: "", width: 128, right: true, cell: (c) => <Link href={c.href} className={BTN_PLAIN}>Open <ArrowRight size={12} /></Link> }];
-  const replyLead = (c: DayCard) => (drafted(c) ? `${c.from_name || "Reply"} — ${c.subject || c.title}` : c.title);
+  const replyLead = (c: DayCard) => `${c.from_name || "Reply"} — ${c.subject || c.title}`;
 
   return (
     <>
@@ -353,7 +353,7 @@ export function MyDay() {
       {d.check && <CheckLine k={d.check} />}
 
       <div className={cn("mt-3 grid grid-cols-2 overflow-hidden rounded-md border border-line bg-elev", work.length > 0 ? "lg:grid-cols-5" : "lg:grid-cols-4")}>
-        <Figure label="Replies" value={replies.length} hint={`${replies.filter(drafted).length} drafted · ${replies.filter((c) => !drafted(c)).length} not drafted`} />
+        <Figure label="Replies" value={replies.length} hint={replies.length ? (replies.some((c) => c.stale) ? `${replies.filter((c) => c.stale).length} changed since written` : "all written and ready") : "none waiting"} />
         <Figure label="Decisions" value={decisions.length} hint={week(decisions) ? `${week(decisions)} due this week` : "none due this week"} />
         <Figure label="To do" value={todos.length} hint={`${week(todos) ? `${week(todos)} due this week` : "none due this week"} · ${d.done_today.length} done today`} />
         {work.length > 0 && <Figure label="Bills and site checks" value={work.length} hint={`${count(work.filter((c) => c.type === "bill").length, "bill", "bills")} · ${count(work.filter((c) => c.type === "check").length, "site check", "site checks")}`} />}
@@ -362,8 +362,8 @@ export function MyDay() {
 
       <WorkTable title="Replies" hint="People waiting to hear from you" leadHead="Subject" lead={replyLead} cards={replies} cols={replyCols} empty="Nobody is waiting for a reply from you." />
       {work.length > 0 && <WorkTable title="Bills and site checks" hint="From Buildertrend" leadHead="Item" lead={(c) => c.title} cards={work} cols={workCols} empty="No bill or site check is waiting." />}
-      <WorkTable title="Decisions" hint="Waiting for your decision" leadHead="Decision" lead={(c) => c.title} cards={decisions} cols={todoCols} empty="No decision is waiting for you." />
-      <WorkTable title="To do" hint="Things for you to do or have done" leadHead="Task" lead={(c) => c.title} cards={todos} cols={todoCols} empty="Nothing is waiting for you. New things appear here as emails, calls and bills come in." />
+      <WorkTable title="Decisions" hint="Waiting for your decision" leadHead="Decision" lead={(c) => c.title} cards={decisions} cols={todoCols} order="newest first" empty="No decision is waiting for you." />
+      <WorkTable title="To do" hint="Things for you to do or have done" leadHead="Task" lead={(c) => c.title} cards={todos} cols={todoCols} order="newest first" empty="Nothing is waiting for you. New things appear here as emails, calls and bills come in." />
 
       <Dialog open={!!draft} onOpenChange={(o) => !o && setDraft(null)}>
         <DialogContent wide className="max-h-[90vh] overflow-y-auto" title="Reply">

@@ -684,6 +684,17 @@ class Scheduler:
                                   "cost_usd": sw["cost_usd"], "failed": len(sw["failed"])}
             except Exception:
                 logger.exception("reading the to-dos over failed")
+            # A reply owed with nothing written (promised on a call, or its draft set aside) is written now,
+            # or — when it cannot be written yet — becomes the next step. The list of replies holds only
+            # what is written and ready (2026-11-21).
+            try:
+                from mangotree.brain.owed import Owed
+                ow = Owed(self.mongo, store).run(limit=6)
+                total["owed"] = {"waiting": ow["waiting"], "drafted": len(ow["drafted"]), "moved": len(ow["moved"]), "left": len(ow["left"]),
+                                 "failed": len(ow["failed"]), "cost_usd": ow["cost_usd"]}
+                total["drafts"] += len(ow["drafted"])
+            except Exception:
+                logger.exception("settling the replies owed failed")
             redone = sweeper.rewrite_outdated(limit=5)
             total.update({"replies_rewritten": len(redone["rewritten"]), "replies_closed": len(redone["closed"]), "rewrite_failed": len(redone["failed"])})
             try:

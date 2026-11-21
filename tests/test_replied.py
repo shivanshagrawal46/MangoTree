@@ -310,3 +310,74 @@ def test_a_run_says_for_each_person_what_it_found_done_and_what_is_left():
     assert [c["how"] for c in p["jp"]["closed"]] == ["found done", "said twice"] and p["jp"]["left"] == 0
     assert p["manjunath"]["n_closed"] == 0 and p["shivansh"] == {"left": 0, "replies_left": 0, "closed": [], "n_closed": 0}
     assert "names the property" in GENERAL
+
+
+def _owed_setup():
+    from mangotree.brain.owed import Owed
+    from mangotree.brain.store import BrainStore
+
+    class M:
+        db = mongomock.MongoClient().db
+        artifacts = db["artifacts"]
+
+    store = BrainStore(M())
+    when = datetime.now(timezone.utc) - timedelta(days=2)
+    M.artifacts.insert_many([
+        {"sha256": "a" * 64, "source_type": "email", "date": when, "subject": "RE: DATA TAPE NEEDED", "property_ids": ["marmon"], "thread_key": "t1",
+         "participants": {"from": ["mg@kcwilson.com"], "to": ["rakesh@mtreh.com"]}, "body_clean": "We need only the recorded mortgage."},
+        {"sha256": "b" * 64, "source_type": "email", "date": when, "subject": "Re: Bills entered today", "property_ids": ["marmon"], "thread_key": "t2",
+         "participants": {"from": ["wes@roiblocks.com"], "to": ["rakesh@mtreh.com"]}, "body_clean": "Can you pay by next-day ACH?"}])
+    store.files.insert_one({"property_id": "marmon", "name": "3704 Marmon Ave", "open_items": [
+        {"id": "i1", "owner": "rakesh", "kind": "reply", "status": "open", "title": "Tell KC Wilson the recorded DOT will follow", "detail": "It is with the title company.", "source_sha": "granola-n1"},
+        {"id": "i2", "owner": "rakesh", "kind": "reply", "status": "open", "title": "Tell Wes the bank's answer on next-day ACH", "detail": "He left the bank a message.", "source_sha": "b" * 64},
+        {"id": "i3", "owner": "wes", "kind": "reply", "status": "open", "title": "Wes to answer the lender"},                      # not someone who sends RKB's replies
+        {"id": "i4", "owner": "rakesh", "kind": "action", "status": "open", "title": "Order the survey"}]})
+    wrote = []
+
+    class Writer:
+        def write(self, sha, **kw):
+            wrote.append((sha, kw))
+            d = store.create_draft({"reply_to_sha": sha, "property_ids": kw["pids"], "subject": "RE: DATA TAPE NEEDED", "body": "Dear Margarita", "sender": kw["sender"], "origin": "auto"})
+            return {**d, "cost_usd": 2.5}
+
+    def decide(pid, item, mails):
+        assert {m["sha256"][:1] for m in mails} == {"a", "b"}             # the emails received on the file are what it chooses from
+        if item["id"] == "i1":
+            return {"decision": "write", "answers": "[" + "a" * 12 + "]", "points": ["The deed of trust is with Mid-Atlantic Title."], "why": "The file says where it is.",
+                    "becomes": "action", "title": None, "cost_usd": 0.2}
+        return {"decision": "wait", "answers": None, "points": [], "why": "The bank has not answered yet.", "becomes": "action",
+                "title": "Get the bank's answer on next-day ACH", "cost_usd": 0.2}
+
+    o = Owed(M(), store, writer=Writer(), decide=decide)
+    o.records.direction = lambda sha: "received"
+    o.records.recent_mail = lambda pid, **k: list(M.artifacts.find({"property_ids": pid}))
+    return o, store, wrote
+
+
+def test_a_reply_owed_with_nothing_written_is_written_or_becomes_the_next_step():
+    o, store, wrote = _owed_setup()
+    assert [w["item"]["id"] for w in o.waiting()] == ["i1", "i2"]
+    out = o.run()
+    item = {i["id"]: i for i in store.get_file("marmon")["open_items"]}
+    # written: by the usual writer, answering the email the reading chose; the to-do is tied to that email, so both leave together
+    assert [d["item_id"] for d in out["drafted"]] == ["i1"] and wrote[0][0] == "a" * 64 and wrote[0][1]["sender"] == "rakesh"
+    assert "settles an open item" in wrote[0][1]["instruction"] and wrote[0][1]["points"] == ["The deed of trust is with Mid-Atlantic Title."]
+    assert (item["i1"]["kind"], item["i1"]["source_sha"], item["i1"]["owed"]["outcome"]) == ("reply", "a" * 64, "drafted")
+    # cannot be written yet: it is no longer a reply, it is the next step, and it says what is missing
+    assert [d["item_id"] for d in out["moved"]] == ["i2"]
+    assert (item["i2"]["kind"], item["i2"]["title"]) == ("action", "Get the bank's answer on next-day ACH")
+    assert item["i2"]["detail"].startswith("No reply is written yet: The bank has not answered yet.") and "He left the bank a message." in item["i2"]["detail"]
+    assert out["cost_usd"] == 2.9 and (item["i3"]["kind"], item["i4"]["kind"]) == ("reply", "action")
+    assert o.waiting() == [] and o.run()["waiting"] == 0 and len(wrote) == 1                 # nothing is written or paid for twice
+
+
+def test_a_reply_the_writer_finds_already_answered_is_left_and_not_tried_again_for_a_week():
+    o, store, wrote = _owed_setup()
+    o._writer.write = lambda sha, **kw: {"needed": False, "already_answered": True, "note": "Already answered: JP Sir replied on 18 Nov.", "cost_usd": 0.06}
+    out = o.run(limit=1)
+    assert [(d["item_id"], d["note"]) for d in out["left"]] == [("i1", "Already answered: JP Sir replied on 18 Nov.")] and out["waiting"] == 2
+    assert [w["item"]["id"] for w in o.waiting()] == ["i2"]
+    assert [w["item"]["id"] for w in o.waiting(today=datetime.now(timezone.utc) + timedelta(days=8))] == ["i1", "i2"]
+    # a person's own ruling: this one is not to be written
+    out = o.run(force={"i2": "wait"})
+    assert [d["item_id"] for d in out["moved"]] == ["i2"]
