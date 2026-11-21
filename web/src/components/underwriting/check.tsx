@@ -16,7 +16,7 @@ import { Button } from "@/components/ui";
 import { cn } from "@/lib/utils";
 import { num, pct, usd, type Assessment } from "@/lib/uw";
 import { MoneyTable, PageHead, Panel, Status, linkBtn, type Tone } from "./bits";
-import { Celebrate } from "./celebrate";
+import { Celebrate, celebrated } from "./celebrate";
 import { NewState } from "./newstate";
 import type { PageProps } from "./workspace";
 
@@ -104,11 +104,11 @@ function Waterfall({ a }: { a: Assessment }) {
   );
 }
 
-/* Celebrate once for each answer: the same file with the same figure does not throw paper again in this browser session. */
+/* Celebrate once for each quick check: coming back to the same answer does not throw paper again in this
+   browser session. A change saved on page 1 makes the next quick check a fresh one (see details.tsx). */
 function useFirstTime(fileId: string, good: boolean, mark: string): boolean {
-  const key = `uw-can-fund-${fileId}`;
-  const [first] = React.useState(() => { if (!good) return false; try { return window.sessionStorage.getItem(key) !== mark; } catch { return true; } });
-  React.useEffect(() => { try { if (good) window.sessionStorage.setItem(key, mark); else window.sessionStorage.removeItem(key); } catch { /* storage switched off: it celebrates each time */ } }, [key, good, mark]);
+  const [first] = React.useState(() => good && !celebrated.is(fileId, mark));
+  React.useEffect(() => { if (good) celebrated.set(fileId, mark); else celebrated.forget(fileId); }, [fileId, good, mark]);
   return first;
 }
 

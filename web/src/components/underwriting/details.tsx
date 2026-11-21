@@ -18,8 +18,9 @@ import { useQuery } from "@tanstack/react-query";
 import { Plus, X } from "lucide-react";
 import { Button } from "@/components/ui";
 import { cn } from "@/lib/utils";
-import { num, usd, uw, type Assessment, type Facts, type Lien, type UwConfig } from "@/lib/uw";
+import { num, usd, uw, type Assessment, type Facts, type Lien, type UwConfig, type UwFile } from "@/lib/uw";
 import { KV, PageHead, Panel, SectionHead, Status, Tag, input, linkBtn } from "./bits";
+import { celebrated } from "./celebrate";
 import type { PageProps } from "./workspace";
 
 type Kind = "text" | "money" | "number" | "percent" | "select" | "yesno" | "date" | "long";
@@ -27,6 +28,9 @@ type F = { key: keyof Facts; label: string; kind: Kind; required?: boolean; unit
 type Section = { key: string; title: string; fields: F[] };
 
 const blank = (v: unknown) => v === undefined || v === null || v === "";
+/* The facts as one string for telling whether a save changed anything: blanks dropped, keys in order,
+   so "not entered" before and "not entered" after do not count as a change. */
+const same = (facts: Facts) => JSON.stringify(Object.entries(facts).filter(([, v]) => !blank(v) && !(Array.isArray(v) && !v.length)).sort(([a], [b]) => a.localeCompare(b)));
 
 /* Page 1: the property, the builder's cost, the mortgage. */
 function first(cfg: UwConfig | undefined, f: Facts): Section[] {
@@ -162,18 +166,26 @@ function FactsPage({ page, f, go, run }: PageProps & { page: 1 | 3 }) {
     if (s.key === "mortgage") out.liens = out.has_mortgage ? (liens ?? facts.liens ?? []).filter((l) => String(l.holder).trim() || Number(l.balance) > 0)
       .map((l) => ({ ...l, balance: Number(String(l.balance).replace(/[$,\s]/g, "")) || 0, monthly_payment: Number(String(l.monthly_payment ?? "").replace(/[$,\s]/g, "")) || 0, arrears: Number(String(l.arrears ?? "").replace(/[$,\s]/g, "")) || 0 })) : [];
     setBusy(true);
-    const wasMissing = missing.length > 0, verdictWas = f.assessment.verdict;
+    const wasMissing = missing.length > 0;
     const next = await run(uw.setFacts(f.file_id, out as Facts));
     setBusy(false);
     if (!next) return;
     setOpen((o) => ({ ...o, [s.key]: false })); setDraft((d) => ({ ...d, [s.key]: {} })); setLiens(null);
+    settle(next, wasMissing);
+  }
+
+  /* After a save. On page 1 any change brings up the quick check, worked out again, and it celebrates
+     again if RKB can fund the deal (asked for on 2026-11-21). A save that changed nothing stays here. */
+  function settle(next: UwFile, wasMissing: boolean) {
     const g = next.gates;
+    const changed = same(next.facts) !== same(facts);
+    if (changed) celebrated.forget(f.file_id);                   // the next quick check is a fresh one
     if (page === 1) {
-      // The page has just become complete, or a number changed the answer: show the answer.
-      if (!g.details_missing.length && (wasMissing || next.assessment.verdict !== verdictWas)) go(2, next);
+      if (!g.details_missing.length && (changed || wasMissing)) go(2, next);
     } else if (!g.verdict_ok) go(2, next);                       // an answer here stopped the deal: the quick check says why
     else if (wasMissing && !(g.more_missing || []).length) go(4, next);
   }
+  const putBack = async (key: keyof Facts, value: number | string) => { const next = await run(uw.setFacts(f.file_id, { [key]: value } as Facts)); if (next) settle(next, missing.length > 0); };
 
   const lienRows = liens ?? (facts.liens?.length ? facts.liens : [LIEN_BLANK]);
   const setLien = (i: number, patch: Partial<Lien>) => setLiens(lienRows.map((l, n) => (n === i ? { ...l, ...patch } : l)));
@@ -224,7 +236,7 @@ function FactsPage({ page, f, go, run }: PageProps & { page: 1 | 3 }) {
                         <>
                           <span>{show(x, facts[x.key], cfg)}</span>
                           {e && <span className="text-[11.5px] text-high font-normal">Edited · the ARV file said {x.kind === "money" ? usd(e.arv_file as number) : num(e.arv_file as number) || String(e.arv_file)}
-                            {" · "}<button type="button" className="underline" onClick={() => run(uw.setFacts(f.file_id, { [x.key]: e.arv_file } as Facts))}>put back</button></span>}
+                            {" · "}<button type="button" className="underline" onClick={() => putBack(x.key, e.arv_file)}>put back</button></span>}
                           {fromArv && <span className="text-[11px] text-info font-normal">from the ARV file</span>}
                         </>
                       )}

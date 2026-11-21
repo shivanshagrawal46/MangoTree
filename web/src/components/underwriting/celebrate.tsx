@@ -10,6 +10,16 @@ import * as React from "react";
 const COLORS = ["#15803d", "#4ade80", "#f59e0b", "#1f6f5f", "#facc15", "#38bdf8", "#fb7185"];
 const LIFE = 3200;   // ms
 
+/* Where the browser remembers which answer it has already celebrated for a file, so that looking at
+   the same quick check twice does not throw paper twice. A change saved on page 1 forgets it: the
+   quick check that follows is a fresh one and celebrates again. */
+const seenKey = (fileId: string) => `uw-can-fund-${fileId}`;
+export const celebrated = {
+  is: (fileId: string, mark: string) => { try { return window.sessionStorage.getItem(seenKey(fileId)) === mark; } catch { return false; } },
+  set: (fileId: string, mark: string) => { try { window.sessionStorage.setItem(seenKey(fileId), mark); } catch { /* storage switched off: it celebrates each time */ } },
+  forget: (fileId: string) => { try { window.sessionStorage.removeItem(seenKey(fileId)); } catch { /* nothing to forget */ } },
+};
+
 type Bit = { x: number; y: number; vx: number; vy: number; w: number; h: number; rot: number; spin: number; color: string; round: boolean };
 
 export function Celebrate({ fire }: { fire: boolean }) {
