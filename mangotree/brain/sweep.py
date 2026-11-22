@@ -24,6 +24,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Sequence
 
+from mangotree.core import eastern
 from mangotree.core.logging import logger
 from mangotree.storage.mongo import Mongo
 
@@ -174,7 +175,7 @@ class Sweep:
                 came = "OLD HISTORY (taken from the older record when the file was opened)"
             due = f", due {day(i.get('due'))}" if i.get("due") else ""
             lines.append(f"- [{i['id']}] ({i.get('owner')}, {i.get('kind')}{due}; came from: {came}) {i.get('title')}" + (f" — {i['detail']}" if i.get("detail") else ""))
-        user = (f"TODAY: {today:%Y-%m-%d}   THE LAST SEVEN DAYS BEGIN: {week:%Y-%m-%d}\n\n{property_block(self.mongo, self.store, pid, file=file)}\n\n"
+        user = (f"TODAY: {eastern.to_et(today):%Y-%m-%d}   THE LAST SEVEN DAYS BEGIN: {eastern.to_et(week):%Y-%m-%d}\n\n{property_block(self.mongo, self.store, pid, file=file)}\n\n"
                 f"=== CALLS ABOUT THIS PROPERTY SINCE {today - timedelta(days=21):%Y-%m-%d} ===\n{self._calls_text(pid, today - timedelta(days=21))}\n\n"
                 + (portfolio_block(self.store) + "\n\n" if pid == bc.GENERAL_ID else "") +
                 f"=== THE OPEN ITEMS TO READ OVER ({len(items)}) ===\n" + "\n".join(lines))

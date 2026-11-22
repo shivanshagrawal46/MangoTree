@@ -534,7 +534,7 @@ class Calls:
                     return settled(pid, {"skipped": "nothing decided in the trial"})
                 usage = None
             else:
-                user = (f"TODAY: {datetime.now(timezone.utc):%Y-%m-%d}\n\n{self._file_text(pid)}\n\n=== WHAT THE CALL SAID ABOUT THIS PROPERTY ===\n"
+                user = (f"TODAY: {eastern.to_et(datetime.now(timezone.utc)):%Y-%m-%d}\n\n{self._file_text(pid)}\n\n=== WHAT THE CALL SAID ABOUT THIS PROPERTY ===\n"
                         f"{self.section_text(call, parts)}")
                 try:
                     r = structured(system=system_blocks(prompts.CORE, (prompts.general_note() if pid == bc.GENERAL_ID else "") + "\n" + APPLY),

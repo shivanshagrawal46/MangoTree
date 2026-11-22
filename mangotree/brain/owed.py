@@ -30,6 +30,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
+from mangotree.core import eastern
 from mangotree.core.logging import logger
 from mangotree.storage.mongo import Mongo
 
@@ -131,7 +132,7 @@ class Owed:
             raised = "  ← the email that raised this item" if a["sha256"] == item.get("source_sha") else ""
             listed.append(f"[{a['sha256'][:12]}] {et(a.get('date'))} | from {self.records.who(frm)} | {a.get('subject') or '(no subject)'}{raised}\n    {words}")
         due = f", due {day(item.get('due'))}" if item.get("due") else ""
-        user = (f"TODAY: {today:%A %d %B %Y}\n\n{property_block(self.mongo, self.store, pid)}\n\n"
+        user = (f"TODAY: {eastern.to_et(today):%A %d %B %Y}\n\n{property_block(self.mongo, self.store, pid)}\n\n"
                 f"=== EMAILS RECEIVED ON THIS FILE SINCE {today - timedelta(days=MAIL_DAYS):%Y-%m-%d} ({len(listed)}) ===\n" + ("\n".join(listed) or "(none)") +
                 f"\n\n=== THE ITEM ===\n[{item['id']}] (owner {item.get('owner')}{due}) {item.get('title')}\n{item.get('detail') or ''}")
         job = (prompts.general_note() if pid == bc.GENERAL_ID else "") + "\n" + JOB

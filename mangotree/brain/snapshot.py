@@ -23,6 +23,7 @@ import re
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+from mangotree.core import eastern
 from mangotree.core.logging import logger
 from mangotree.storage.mongo import Mongo
 
@@ -325,7 +326,7 @@ def refresh_stage(mongo: Mongo, store: BrainStore, pid: str) -> Optional[Dict[st
     bt = Buildertrend(mongo)
     site = bt.site_block(pid, days=45)[:90_000] or "(This property has no Buildertrend job.)"
     last_log = bt.summary(pid).get("last_log")
-    user = (f"TODAY: {datetime.now(timezone.utc):%Y-%m-%d}\nPROPERTY: {name_of(pid)}\n\nRKB WORKBOOK ROWS:\n{wb}\n\n"
+    user = (f"TODAY: {eastern.to_et(datetime.now(timezone.utc)):%Y-%m-%d}\nPROPERTY: {name_of(pid)}\n\nRKB WORKBOOK ROWS:\n{wb}\n\n"
             f"WHERE IT STANDS: {file.get('headline')}\n\nSTATUS:\n{file.get('status')}\n\nKEY FACTS:\n{facts}\n\n"
             f"KEEP IN VIEW:\n" + "\n".join(f"- {w}" for w in file.get("watch") or []) + f"\n\nLAST 30 DAYS:\n{acts}\n{site}")
     try:

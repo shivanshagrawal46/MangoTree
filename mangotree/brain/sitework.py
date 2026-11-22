@@ -30,6 +30,7 @@ import io
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
+from mangotree.core import eastern
 from mangotree.core.logging import logger
 from mangotree.storage.mongo import Mongo
 
@@ -229,7 +230,7 @@ class SiteWork:
         total_photos = sum(len(l.get("photos") or []) for l in logs)
         shown: List[int] = []
         content: List[Dict[str, Any]] = [{"type": "text", "text": (
-            f"TODAY: {now():%d %b %Y}\nPROPERTY: {name_of(pid)}\n{self._scope(pid)}\n\n"
+            f"TODAY: {eastern.to_et(now()):%d %b %Y}\nPROPERTY: {name_of(pid)}\n{self._scope(pid)}\n\n"
             f"THE LAST {days} DAYS IN BUILDERTREND: {st['logs']} daily logs on {st['days_with_a_log']} different days; longest stretch with no log {st['longest_gap_days']} days; "
             f"last log {st['days_since_last_log']} day(s) ago. {total_photos} photos were posted with these logs; you are shown {sum(len(v) for v in chosen.values())} of them "
             f"(every log is represented; the newest logs most fully).\n\nThe logs follow, oldest first. Each photo is preceded by its id.")}]

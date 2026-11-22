@@ -6,9 +6,33 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+const EASTERN = "America/New_York";
+const _etParts = new Intl.DateTimeFormat("en-US", { timeZone: EASTERN, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" });
+const _etZone = new Intl.DateTimeFormat("en-US", { timeZone: EASTERN, timeZoneName: "short" });
+
+/** A moment as US Eastern wall-clock time, in a Date whose own fields carry it, so date-fns can lay it out. */
+function inEastern(d: Date): Date {
+  const p: Record<string, number> = {};
+  for (const x of _etParts.formatToParts(d)) if (x.type !== "literal") p[x.type] = Number(x.value);
+  return new Date(p.year, p.month - 1, p.day, p.hour, p.minute, p.second);
+}
+/** "EST" in winter, "EDT" in summer, for that moment. */
+export const easternZone = (d: Date) => _etZone.formatToParts(d).find((x) => x.type === "timeZoneName")?.value || "ET";
+
+/** Every date and time on a screen is on the firm's clock, US Eastern, whatever the viewer's own time zone
+ *  (admin, 2026-11-22: "every email time date and everything should be in EST"). A layout that shows a time
+ *  has EST or EDT put after it. A calendar day — a date with no time, or one kept at 00:00 UTC, as a due date
+ *  or an invoice date is — is shown as that day and never shifted. */
 export function fmtDate(v?: string | null, f = "MMM d, yyyy") {
   if (!v) return "—";
-  try { return format(parseISO(v), f); } catch { return String(v).slice(0, 10); }
+  try {
+    const s = String(v);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s) || /T00:00:00(\.0+)?(Z|[+-]00:00)?$/.test(s)) return format(parseISO(s.slice(0, 10)), f);
+    // The server keeps moments in UTC; one that arrives with no zone written on it is UTC too, not the viewer's local time.
+    const d = parseISO(/[zZ]$|[+-]\d{2}:?\d{2}$/.test(s) || !s.includes("T") ? s : s + "Z");
+    const out = format(inEastern(d), f);
+    return /[Hh]/.test(f.replace(/'[^']*'/g, "")) ? `${out} ${easternZone(d)}` : out;
+  } catch { return String(v).slice(0, 10); }
 }
 
 /** A calendar day (a due date is kept at 00:00 UTC): shown as that day whatever the viewer's time zone.

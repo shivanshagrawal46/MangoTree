@@ -14,6 +14,7 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
+from mangotree.core import eastern
 from mangotree.core.logging import logger
 from mangotree.storage.mongo import Mongo
 
@@ -156,7 +157,8 @@ class ChatEngine:
         pid = thread.get("property_id")
         records = Records(self.mongo)
         prior = self.store.thread_messages(thread_id, limit=bc.CHAT_HISTORY_MESSAGES)
-        stamp = datetime.now(timezone.utc).strftime("%a %d %b %Y, %H:%M UTC")
+        asked = eastern.to_et(datetime.now(timezone.utc))
+        stamp = f"{asked:%a %d %b %Y, %H:%M} {asked.tzname() or 'ET'}"          # the firm's clock: the answer speaks of times as this does
         model_text = f"[{speaker(user)} · {stamp}]\n{text.strip()}"
         user_msg = self.store.add_message(thread_id, {"role": "user", "text": text.strip(), "model_text": model_text,
                                                       "by": user.get("user_id"), "by_name": user.get("name"), "files": list(files)})

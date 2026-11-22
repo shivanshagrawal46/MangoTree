@@ -36,6 +36,7 @@ import re
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
+from mangotree.core import eastern
 from mangotree.core.logging import logger
 from mangotree.storage.mongo import Mongo
 
@@ -564,7 +565,7 @@ class BillCheck:
         chosen = pick_photos(logs, have, MAX_PHOTOS) if have else {}
         posted = sum(len(l.get("photos") or []) for l in logs)
         gross = round((main.get("amount") or 0) + ((held or {}).get("amount") or 0), 2)
-        head = [f"TODAY: {now():%d %b %Y}", f"PROPERTY: {name_of(pid)}", "",
+        head = [f"TODAY: {eastern.to_et(now()):%d %b %Y}", f"PROPERTY: {name_of(pid)}", "",
                 f"THE BILL: “{stem(main.get('title'))}” ({main.get('number')}), dated {_when(main)[0]:%d %b %Y}, entered by {main.get('created_by') or 'the contractor'}, "
                 f"pay to {main.get('pay_to') or 'not stated'}. Request {usd(gross)} in all" + (f", of which {usd(held.get('amount'))} is the 10% hold-back." if held else ".")]
         note = re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", str(main.get("description") or "")))).strip()

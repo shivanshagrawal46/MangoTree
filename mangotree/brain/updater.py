@@ -17,6 +17,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
+from mangotree.core import eastern
 from mangotree.core.logging import logger
 from mangotree.storage.mongo import Mongo
 
@@ -288,7 +289,7 @@ class Updater:
         else:
             record = self.records.render_document(art, pid=pid)
         today = as_of or datetime.now(timezone.utc)
-        user = f"TODAY: {today:%A %d %B %Y}\n\nTHE NEW RECORD for {name_of(pid)}:\n\n{record}"
+        user = f"TODAY: {eastern.to_et(today):%A %d %B %Y}\n\nTHE NEW RECORD for {name_of(pid)}:\n\n{record}"
         label = f"event {pid} {art['sha256'][:10]}"
         usage: Dict[str, int] = {}
         kit = CappedKit(Toolkit(self.mongo, self.store, pid=pid, user={"user_id": "brain", "name": "brain"}, allow_actions=False))
@@ -345,7 +346,7 @@ class Updater:
         system = system_blocks(prompts.CORE, self.records.record_block(pid), property_block(self.mongo, self.store, pid),
                                prompts.EVENT + (prompts.general_note() if pid == bc.GENERAL_ID else ""))
         record = self.records.render_thread(art, direction=direction) if self.is_email(art) else self.records.render_document(art, pid=pid)
-        user = (f"TODAY: {datetime.now(timezone.utc):%A %d %B %Y}\n\n"
+        user = (f"TODAY: {eastern.to_et(datetime.now(timezone.utc)):%A %d %B %Y}\n\n"
                 f"THE NEW RECORD for {name_of(pid)}:\n\n{record}")
         return structured(system=system, user=user, schema=EVENT_SCHEMA, effort=bc.EFFORT_EVENT, max_tokens=20_000,
                           label=f"event {pid} {art['sha256'][:10]}")
@@ -557,7 +558,7 @@ class Updater:
         say("status", {"text": f"{name_of(pid)}: reading the record…", "property_id": pid})
         mat = self._material(pid)
         brief = prompts.CORE + "\n" + prompts.BOOTSTRAP + (prompts.general_note() if pid == bc.GENERAL_ID else "")
-        user = f"TODAY: {datetime.now(timezone.utc):%A %d %B %Y}\nPROPERTY: {name_of(pid)} (id: {pid})\n\n{mat['text']}"
+        user = f"TODAY: {eastern.to_et(datetime.now(timezone.utc)):%A %d %B %Y}\nPROPERTY: {name_of(pid)} (id: {pid})\n\n{mat['text']}"
         r = structured(system=brief, user=user, schema=BOOTSTRAP_SCHEMA, effort=bc.EFFORT_BOOTSTRAP, max_tokens=40_000, label=f"bootstrap {pid}")
         d = r["data"]
         items = []

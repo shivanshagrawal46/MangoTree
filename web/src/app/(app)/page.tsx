@@ -34,7 +34,8 @@ export default function TodayPage() {
       }, () => { setReading(null); refresh(); });
     }).catch((e) => { toast.error(e.message); setReading(null); });
   };
-  const today = new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  // The firm's day, US Eastern — not the day on the viewer's own computer.
+  const today = new Date().toLocaleDateString("en-GB", { timeZone: "America/New_York", weekday: "long", day: "numeric", month: "long", year: "numeric" });
 
   return (
     <div className="px-6 lg:px-10 py-7 max-w-[1280px] mx-auto">

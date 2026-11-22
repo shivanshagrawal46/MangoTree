@@ -23,6 +23,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Sequence
 
+from mangotree.core import eastern
 from mangotree.core.logging import logger
 from mangotree.storage.mongo import Mongo
 
@@ -98,7 +99,7 @@ class Judge:
             to = ", ".join(t.get("name") or t.get("email") or "" for t in d.get("to") or [])
             dl.append(f"[{d['draft_id']}] to {to} — \"{d.get('subject')}\" (written {day(d.get('created_at'))}"
                       + (", already marked as needing a second look" if d.get("stale") else "") + f")\n{str(d.get('body') or '')[:2500]}")
-        user = (f"TODAY: {today:%Y-%m-%d}\nPROPERTY: {name_of(pid)}\n\n=== WHAT WAS SAID ON THE CALLS (last 21 days) ===\n{self._calls(pid, today - timedelta(days=21))}\n\n"
+        user = (f"TODAY: {eastern.to_et(today):%Y-%m-%d}\nPROPERTY: {name_of(pid)}\n\n=== WHAT WAS SAID ON THE CALLS (last 21 days) ===\n{self._calls(pid, today - timedelta(days=21))}\n\n"
                 f"WHERE IT STANDS: {file.get('headline') or ''}\n\n=== OPEN TO-DOS ({len(items)}) ===\n" + ("\n".join(lines) or "(none)")
                 + f"\n\n=== REPLIES WRITTEN AND WAITING ({len(drafts)}) ===\n" + ("\n\n".join(dl) or "(none)"))
         # The record is the large part and is the same for the "before" and the "after" run of a property,

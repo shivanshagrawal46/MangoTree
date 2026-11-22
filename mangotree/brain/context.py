@@ -29,8 +29,15 @@ DOC_FIELDS = {"sha256": 1, "filename": 1, "subject": 1, "date": 1, "text": 1, "d
 
 
 def day(d: Any, fmt: str = "%Y-%m-%d") -> str:
+    """The day of a date. A moment (an email, a to-do being raised) is given as its day on the firm's
+    clock, US Eastern: an email that came at 8 pm Eastern is that day's, not the next day's as it is
+    in UTC. A calendar day — a due date, kept at 00:00 UTC — is given as it stands, never shifted."""
     try:
-        return d.strftime(fmt) if d else "undated"
+        if not d:
+            return "undated"
+        if isinstance(d, datetime) and (d.hour, d.minute, d.second) != (0, 0, 0):
+            d = eastern.to_et(d)
+        return d.strftime(fmt)
     except Exception:
         return str(d)[:10]
 
