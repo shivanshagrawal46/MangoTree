@@ -188,3 +188,35 @@ def test_a_bill_entered_here_shows_on_rkbs_bills_page_and_money_sheet_like_any_o
     sheet_rows, notes = MoneySheet(m)._rows(m.db["bt_estimates"].find_one({"property_id": PID}), bills, set())
     plumbing = next(r for r in sheet_rows if r["title"].startswith("Plumbing"))
     assert plumbing["kind"] == "proposal" and round(plumbing["billed"], 2) == 1500.0 and not notes                             # on its own proposal line, by the line's own tie
+
+
+DUWAYNE = {"user_id": "duwayne", "name": "Duwayne Tutt", "side": "contractor", "role": "contractor", "org": "tutt_painting", "org_name": "Tutt Painting and Remodeling LLC",
+           "property_ids": [PID], "can": ["logs"]}
+
+
+def test_a_site_persons_account_enters_daily_logs_and_sees_nothing_else():
+    from mangotree.api.auth import PORTAL_PARTS, ensure_contractor, public_user
+    from mangotree.portal.sheets import contractor_orgs, contractor_tasks
+    m, e = setup()
+    pics = [e.add_file(DUWAYNE, PID, role="photo", name=f"s{i}.jpg", blob=b"site-%d" % i)["file_id"] for i in range(3)]
+    out = e.add_log(DUWAYNE, PID, {"tags": ["Framing"], "notes": "Framed the half bath on the main level.", "files": pics})
+    assert m.db["bt_daily_logs"].find_one({"log_id": out["log_id"]})["by"] == "Duwayne Tutt" and e.logs_of(DUWAYNE, PID)["logs"][0]["here"]
+    e.check_file(DUWAYNE, PID, "photo")                                                               # a photo of the site may be opened
+    kellys = e.save_bill(KELLY, PID, {"kind": "work", "lines": {"501": 1500}, "invoice_total": 1500})
+    paper = e.add_file(KELLY, PID, role="invoice", name="inv.pdf", blob=b"%PDF-1.4 invoice")
+    for refused in (lambda: e.home(DUWAYNE, PID),                                                     # the proposal and what is left on it
+                    lambda: e.bills_of(DUWAYNE, PID), lambda: e.bill(DUWAYNE, kellys["entry_id"]), lambda: e.save_bill(DUWAYNE, PID, {"kind": "work"}),
+                    lambda: e.send_bill(DUWAYNE, kellys["entry_id"]), lambda: e.change_orders_of(DUWAYNE, PID), lambda: e.add_change_order(DUWAYNE, PID, {}),
+                    lambda: e.add_file(DUWAYNE, PID, role="invoice", name="i.pdf", blob=b"%PDF-1.4"), lambda: e.check_file(DUWAYNE, PID, paper["role"])):
+        with pytest.raises(PermissionError):
+            refused()
+    assert e.bill(KELLY, kellys["entry_id"])["status"] == "draft"                                    # the office account is as it was
+    # No next-steps sheet is ever made for a site account's company, and the account is told what it has.
+    kelly = ensure_contractor(m, user_id="kelly", login_name="kelly", name="Kelly", full_name="Kelly Stone", org="roi_blocks", org_name="ROI Blocks", person_id="kelly", property_ids=[PID])
+    site = ensure_contractor(m, user_id="duwayne", login_name="duwayne", name="Duwayne", full_name="Duwayne Tutt", org="tutt_painting", org_name="Tutt Painting and Remodeling LLC",
+                             person_id="duwayne_tutt", property_ids=[PID], can=["logs"])
+    assert kelly["can"] == list(PORTAL_PARTS) and site["can"] == ["logs"] and public_user(m.db["users"].find_one({"user_id": "duwayne"}))["can"] == ["logs"]
+    assert set(contractor_orgs(m)) == {"roi_blocks"} and contractor_tasks(m, site) == []
+    assert not m.db["users"].find_one({"user_id": "duwayne"}).get("password_hash")                    # made without a password: nobody can sign in yet
+    with pytest.raises(ValueError):
+        ensure_contractor(m, user_id="x", login_name="x", name="X", full_name="X", org="o", org_name="O", person_id="x", property_ids=[PID], can=["everything"])

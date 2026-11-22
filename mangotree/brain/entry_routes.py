@@ -150,7 +150,7 @@ def install(app, mongo: Mongo, jobs) -> None:
         f = entry.file(file_id)
         if not f:
             raise HTTPException(404, "not on file")
-        guard(entry.check, user, f["property_id"])
+        guard(entry.check_file, user, f["property_id"], f.get("role") or "invoice")
         blob = entry.file_bytes(file_id)
         if not blob:
             raise HTTPException(404, "the file could not be read")

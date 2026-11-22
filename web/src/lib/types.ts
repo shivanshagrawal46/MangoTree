@@ -4,6 +4,8 @@ export type User = {
   side?: "rkb" | "contractor"; org?: string; org_name?: string; person_id?: string; property_ids?: string[];
   /** RKB systems opened to a contractor account ("arv"); empty = portal only. */
   tools?: string[];
+  /** The parts of the portal a contractor account has: "steps", "bills", "logs", "change_orders". A site person's account has only "logs". */
+  can?: string[];
 };
 
 /* ------------------------------------------------------- contractor portal */

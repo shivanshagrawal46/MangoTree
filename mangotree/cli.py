@@ -1219,6 +1219,34 @@ def cmd_outlook_draft(args) -> int:
     return 0
 
 
+def cmd_portal_password(args) -> int:
+    """Set a contractor account's password. The person at the keyboard types it, twice; it is not
+    shown, not logged, and never passed on the command line."""
+    import getpass
+    from mangotree.api.auth import hash_password
+    mongo = get_mongo()
+    name = args.login.strip().lower()
+    doc = mongo.db["users"].find_one({"$or": [{"login": name}, {"user_id": name}], "side": "contractor"},
+                                     {"_id": 0, "user_id": 1, "login": 1, "full_name": 1, "org_name": 1, "password_hash": 1})
+    if not doc:
+        rows = [u.get("login") or u["user_id"] for u in mongo.db["users"].find({"side": "contractor"}, {"user_id": 1, "login": 1})]
+        print(f"no contractor account '{name}'. Contractor accounts here: {rows or 'none'}")
+        return 1
+    print(f"{doc.get('full_name') or doc['user_id']} ({doc.get('org_name')}): "
+          + ("has a password now; this replaces it." if doc.get("password_hash") else "has no password yet."))
+    first = getpass.getpass("New password (at least 10 characters; it is not shown): ")
+    again = getpass.getpass("The same again: ")
+    if first != again:
+        print("The two are not the same. Nothing was changed.")
+        return 1
+    if len(first) < 10:
+        print("A password needs at least 10 characters. Nothing was changed.")
+        return 1
+    mongo.db["users"].update_one({"user_id": doc["user_id"]}, {"$set": {"password_hash": hash_password(first), "updated_at": datetime.now(timezone.utc)}})
+    print(f"Done. They sign in with the name '{doc.get('login') or doc['user_id']}' and that password.")
+    return 0
+
+
 def cmd_portal_tools(args) -> int:
     """Grant or revoke RKB systems on a contractor account (admin directive
     2026-10-27: the ARV system for Wes's login, nothing else)."""
@@ -1553,6 +1581,10 @@ def main(argv=None) -> int:
     p_tools.add_argument("user_id", help="the contractor account's user_id (see portal-admin/accounts)")
     p_tools.add_argument("--grant", nargs="*", default=None, help="tools to open, e.g. --grant arv ; no value = close everything")
     p_tools.set_defaults(func=cmd_portal_tools)
+
+    p_pw = sub.add_parser("portal-password", help="set a contractor login's password; you type it, it is not shown")
+    p_pw.add_argument("login", help="the name the person signs in with, e.g. kelly")
+    p_pw.set_defaults(func=cmd_portal_password)
 
     p_rec = sub.add_parser("recurring", help="a fixed email sent every day at a local time until stopped")
     p_rec.add_argument("action", choices=["add", "list", "stop", "send-now"])

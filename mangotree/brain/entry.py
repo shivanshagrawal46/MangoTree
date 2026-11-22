@@ -37,6 +37,8 @@ from mangotree.core import eastern
 from mangotree.core.logging import logger
 from mangotree.storage.mongo import Mongo
 
+from mangotree.api.auth import portal_parts
+
 from .buildertrend import Buildertrend, photo_store
 from .store import BrainStore, name_of, now
 
@@ -107,6 +109,9 @@ def photo_facts(blob: bytes) -> Dict[str, Any]:
     return out
 
 
+NOT_YOURS = "Your account is not set up for this."
+
+
 class Entry:
     def __init__(self, mongo: Mongo, store: Optional[BrainStore] = None, bt: Optional[Buildertrend] = None, files=None):
         self.mongo = mongo
@@ -130,9 +135,21 @@ class Entry:
                 out.append({"property_id": pid, "name": name_of(pid)})
         return out
 
-    def check(self, user: Dict[str, Any], pid: str) -> None:
+    def check(self, user: Dict[str, Any], pid: str, part: Optional[str] = None) -> None:
+        """The job must be the account's own and open for entry; and, where a part is named ("bills", "logs",
+        "change_orders"), the account must have that part. A site person's account has only "logs"."""
         if pid not in {j["property_id"] for j in self.jobs_of(user)}:
             raise PermissionError("This job is not open to your account.")
+        if part and part not in portal_parts(user):
+            raise PermissionError(NOT_YOURS)
+
+    def check_file(self, user: Dict[str, Any], pid: str, role: str) -> None:
+        """A photo belongs to whoever enters anything. A paper (invoice, receipt, waiver, approved change order)
+        belongs only to an account that enters bills or change orders — so a site account cannot add or open one."""
+        self.check(user, pid)
+        can = set(portal_parts(user)) & {"bills", "logs", "change_orders"}
+        if not can or (role != "photo" and not can & {"bills", "change_orders"}):
+            raise PermissionError(NOT_YOURS)
 
     def job_id(self, pid: str) -> Optional[int]:
         j = self.bt.jobs.find_one({"property_id": pid}, {"job_id": 1})
@@ -157,7 +174,7 @@ class Entry:
     def add_file(self, user: Dict[str, Any], pid: str, *, role: str, name: str, blob: bytes) -> Dict[str, Any]:
         """Keep one paper or photo. It is stored at once, by what it contains; it becomes part of a
         bill, a log or a change order when that record names it."""
-        self.check(user, pid)
+        self.check_file(user, pid, role)
         if role not in ROLES:
             raise EntryError("That is not a kind of file a record can carry.")
         if not blob:
@@ -293,19 +310,19 @@ class Entry:
         return {"stands": STATUS[stage], "stage": stage, "can_withdraw": not steps, "steps": steps}
 
     def bills_of(self, user: Dict[str, Any], pid: str) -> List[Dict[str, Any]]:
-        self.check(user, pid)
+        self.check(user, pid, "bills")
         return [self._bill_view(d) for d in self.bills.find({"property_id": pid, "status": {"$in": ["draft", "sent"]}}, {"_id": 0}).sort("created_at", -1)]
 
     def bill(self, user: Dict[str, Any], entry_id: str) -> Dict[str, Any]:
         d = self.bills.find_one({"entry_id": entry_id}, {"_id": 0})
         if not d:
             raise EntryError("That bill is not on file.")
-        self.check(user, d["property_id"])
+        self.check(user, d["property_id"], "bills")
         return self._bill_view(d)
 
     def save_bill(self, user: Dict[str, Any], pid: str, body: Dict[str, Any], entry_id: Optional[str] = None) -> Dict[str, Any]:
         """Keep a bill as it is being written. Nothing reaches RKB until it is sent."""
-        self.check(user, pid)
+        self.check(user, pid, "bills")
         kind = body.get("kind") if body.get("kind") in KINDS else "work"
         fields = {"kind": kind, "pay_to": str(body.get("pay_to") or "").strip()[:160], "invoice_no": str(body.get("invoice_no") or "").strip()[:60],
                   "invoice_date": str(body.get("invoice_date") or "")[:10] or None, "invoice_total": _r2(body.get("invoice_total")),
@@ -380,7 +397,7 @@ class Entry:
         d = self.bills.find_one({"entry_id": entry_id}, {"_id": 0})
         if not d:
             raise EntryError("That bill is not on file.")
-        self.check(user, d["property_id"])
+        self.check(user, d["property_id"], "bills")
         if d.get("status") != "sent":
             raise EntryError("This bill has not been sent.")
         if not self._standing(d)["can_withdraw"]:
@@ -397,13 +414,13 @@ class Entry:
     def discard_bill(self, user: Dict[str, Any], entry_id: str) -> None:
         d = self.bills.find_one({"entry_id": entry_id}, {"_id": 0})
         if d and d.get("status") == "draft":
-            self.check(user, d["property_id"])
+            self.check(user, d["property_id"], "bills")
             self.bills.update_one({"entry_id": entry_id}, {"$set": {"status": "discarded", "updated_at": now()}})
 
     # ------------------------------------------------------------ a daily log
     def add_log(self, user: Dict[str, Any], pid: str, body: Dict[str, Any]) -> Dict[str, Any]:
         """One day's log from the site: what was done, with photos. It is on RKB's site page at once."""
-        self.check(user, pid)
+        self.check(user, pid, "logs")
         today = eastern.to_et(now()).date()
         day = _day(body.get("date")) or datetime(today.year, today.month, today.day, tzinfo=timezone.utc)
         if day.date() > today:
@@ -439,7 +456,7 @@ class Entry:
         return {"log_id": log_id, "date": doc["date"], "tags": tags, "photos": len(photos)}
 
     def logs_of(self, user: Dict[str, Any], pid: str, *, limit: int = 20) -> Dict[str, Any]:
-        self.check(user, pid)
+        self.check(user, pid, "logs")
         rows = [{"log_id": l["log_id"], "date": l.get("date"), "by": l.get("by") or "", "title": l.get("title") or "", "notes": (l.get("notes") or "")[:400],
                  "photos": len(l.get("photos") or []), "here": l.get("source") == "contractor"}
                 for l in self.bt.logs.find({"property_id": pid}, {"_id": 0}).sort("date", -1).limit(limit)]
@@ -459,7 +476,7 @@ class Entry:
     def add_change_order(self, user: Dict[str, Any], pid: str, body: Dict[str, Any]) -> Dict[str, Any]:
         """Extra work that is not in the proposal. The homeowner has approved it in Buildertrend
         (the approved copy is attached); RKB now agrees to pay for it, or says why not."""
-        self.check(user, pid)
+        self.check(user, pid, "change_orders")
         title = str(body.get("title") or "").strip()
         why = str(body.get("why") or "").strip()
         lines = [{"title": str(l.get("title") or "").strip()[:200], "kind": l.get("kind") if l.get("kind") in ("labour", "materials") else "labour",
@@ -492,7 +509,7 @@ class Entry:
     def change_orders_of(self, user: Optional[Dict[str, Any]], pid: str) -> Dict[str, Any]:
         """The change orders on a job: the approved ones on file (from Buildertrend, or agreed here), and those waiting for RKB."""
         if user is not None:
-            self.check(user, pid)
+            self.check(user, pid, "change_orders")
         book = {l["key"]: l for l in self.lines(pid)["lines"]}
         agreed_here = {c["bt_co_id"] for c in self.cos.find({"property_id": pid, "status": "agreed"}, {"bt_co_id": 1}) if c.get("bt_co_id")}
         approved = []
@@ -544,7 +561,7 @@ class Entry:
 
     # ------------------------------------------------------------ the first screen
     def home(self, user: Dict[str, Any], pid: str) -> Dict[str, Any]:
-        self.check(user, pid)
+        self.check(user, pid, "bills")
         book = self.lines(pid)
         return {"property_id": pid, "property": name_of(pid), "jobs": self.jobs_of(user), "totals": book["totals"], "held": book["held"], "lines": book["lines"],
                 "pay_to": self.pay_to(pid), "kinds": [{"key": k, "name": v, "holdback": HOLDBACK if k == "work" else 0.0} for k, v in KINDS.items()],

@@ -15,7 +15,7 @@ from pydantic import BaseModel
 from mangotree.config.registry import PROPERTY_INDEX
 from mangotree.core.logging import logger
 
-from .auth import CurrentContractor, CurrentUser, ensure_contractor
+from .auth import CurrentContractor, CurrentUser, ensure_contractor, portal_parts
 
 #: A person answering a sheet writes a handful of replies; a misbehaving client
 #: must not be able to flood the log or the corpus.
@@ -48,6 +48,8 @@ class ContractorAccount(BaseModel):
     active: bool = True
     #: RKB systems opened to this account ("arv"). None = leave as is.
     tools: Optional[List[str]] = None
+    #: The parts of the portal this account has (auth.PORTAL_PARTS). None = leave as is.
+    can: Optional[List[str]] = None
 
 
 def _ip(request: Request) -> Optional[str]:
@@ -69,6 +71,8 @@ def install(app, mongo) -> None:
     from mangotree.portal import sheets as S
 
     def sheet_for(user) -> Optional[Dict[str, Any]]:
+        if "steps" not in portal_parts(user):
+            return None
         sheet = S.latest_sheet(mongo, user["org"])
         if not sheet:
             return None
@@ -195,7 +199,7 @@ def install(app, mongo) -> None:
         try:
             out = ensure_contractor(mongo, user_id=body.user_id.strip().lower(), login_name=body.login, name=body.name, full_name=body.full_name,
                                     org=body.org, org_name=body.org_name, person_id=body.person_id, property_ids=body.property_ids, password=body.password,
-                                    tools=body.tools)
+                                    tools=body.tools, can=body.can)
         except ValueError as exc:
             raise HTTPException(400, str(exc))
         mongo.db["users"].update_one({"user_id": body.user_id.strip().lower()}, {"$set": {"active": body.active}})

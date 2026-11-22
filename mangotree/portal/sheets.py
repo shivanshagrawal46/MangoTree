@@ -47,7 +47,10 @@ def contractor_orgs(mongo: Mongo) -> Dict[str, Dict[str, Any]]:
     """Organisations with at least one active contractor account, with the
     union of their people's property scopes."""
     out: Dict[str, Dict[str, Any]] = {}
+    from mangotree.api.auth import portal_parts
     for u in mongo.db["users"].find({"side": "contractor", "active": {"$ne": False}}, {"_id": 0, "password_hash": 0}):
+        if "steps" not in portal_parts(u):
+            continue                            # a site person's account: no sheet is ever made for it
         org = u.get("org") or "contractor"
         o = out.setdefault(org, {"org": org, "org_name": u.get("org_name") or org, "property_ids": set(), "persons": set()})
         o["property_ids"].update(u.get("property_ids") or [])
@@ -234,9 +237,10 @@ def contractor_tasks(mongo: Mongo, user: Dict[str, Any]) -> List[Dict[str, Any]]
     """Tasks owned by this contractor's persona on the properties in scope —
     the same list Rakesh Sir's board shows under "Wes" (suggested + open),
     minus RKB's reasoning. Dismissing a task on the board removes it here."""
+    from mangotree.api.auth import portal_parts
     from mangotree.tasks.store import TaskStore
     owner = PERSONA_TASK_OWNER.get(user.get("person_id") or "")
-    if not owner:
+    if not owner or "steps" not in portal_parts(user):
         return []
     scope = set(user.get("property_ids") or [])
     rows = TaskStore(mongo).list(owner=owner, statuses=("suggested", "open"), limit=300)

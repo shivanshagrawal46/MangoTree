@@ -14,6 +14,7 @@
 import * as React from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { useUser } from "@/components/providers";
 import { Camera, Check, Loader2, Paperclip, X } from "lucide-react";
 import { api } from "@/lib/api";
 import { cn, fmtDate } from "@/lib/utils";
@@ -543,6 +544,8 @@ function ChangeOrders({ pid, property }: { pid: string; property: string }) {
 
 export function WorkPage() {
   const qc = useQueryClient();
+  // The tabs this account has. A site person's account has the daily logs and nothing else.
+  const can = useUser().user?.can || ["bills", "logs", "change_orders"];
   const jobs = useQuery({ queryKey: ["portal-work", "jobs"], queryFn: () => api.get<{ jobs: { property_id: string; name: string }[] }>("/portal/work") });
   const [pid, setPid] = React.useState<string>("");
   // A link can open a tab directly: /portal/work#logs on the crew's phones, #cos for change orders.
@@ -551,16 +554,20 @@ export function WorkPage() {
     return h === "logs" || h === "cos" ? h : "bills";
   });
   const job = pid || jobs.data?.jobs[0]?.property_id || "";
-  const home = useQuery({ queryKey: ["portal-work", job, "home"], queryFn: () => api.get<Home>(`/portal/work/${job}`), enabled: !!job, refetchInterval: 60_000 });
+  const home = useQuery({ queryKey: ["portal-work", job, "home"], queryFn: () => api.get<Home>(`/portal/work/${job}`), enabled: !!job && can.includes("bills"), refetchInterval: 60_000 });
   if (jobs.isLoading) return <div className="text-[13px] text-muted">Loading…</div>;
-  if (!job) return <div className="rounded-md border border-line bg-elev px-4 py-6 text-[13.5px] text-muted">No job is open to your account for bills and daily logs yet. Ask RKB to open one.</div>;
-  const tabs: [typeof tab, string, number | null][] = [["bills", "Bills", home.data ? home.data.bills.filter((b) => b.status === "sent" && b.stage !== "paid").length : null], ["logs", "Daily logs", null], ["cos", "Change orders", null]];
+  if (!job) return <div className="rounded-md border border-line bg-elev px-4 py-6 text-[13.5px] text-muted">No job is open to your account for {can.includes("bills") ? "bills and daily logs" : "daily logs"} yet. Ask RKB to open one.</div>;
+  const every: [typeof tab, string, string, number | null][] = [["bills", "bills", "Bills", home.data ? home.data.bills.filter((b) => b.status === "sent" && b.stage !== "paid").length : null], ["logs", "logs", "Daily logs", null], ["cos", "change_orders", "Change orders", null]];
+  const tabs = every.filter(([, part]) => can.includes(part));
+  if (!tabs.length) return <div className="rounded-md border border-line bg-elev px-4 py-6 text-[13.5px] text-muted">Your account is not set up to enter anything here. Ask RKB.</div>;
+  const shown = tabs.some(([k]) => k === tab) ? tab : tabs[0][0];
+  const property = home.data?.property || jobs.data?.jobs.find((j) => j.property_id === job)?.name || "";
   return (
     <div>
       <div className="mb-4 flex flex-wrap items-center justify-between gap-x-3 border-b border-line">
         <div className="flex min-w-0 overflow-x-auto">
-          {tabs.map(([k, name, n]) => (
-            <button key={k} type="button" onClick={() => setTab(k)} className={cn("-mb-px border-b-2 px-3.5 py-2.5 text-[13px]", tab === k ? "border-accent font-semibold text-fg" : "border-transparent text-muted hover:text-fg")}>
+          {tabs.map(([k, , name, n]) => (
+            <button key={k} type="button" onClick={() => setTab(k)} className={cn("-mb-px border-b-2 px-3.5 py-2.5 text-[13px]", shown === k ? "border-accent font-semibold text-fg" : "border-transparent text-muted hover:text-fg")}>
               {name}{n ? <span className="ml-1.5 rounded-[3px] bg-sunken px-1.5 text-[11.5px] text-muted">{n}</span> : null}
             </button>
           ))}
@@ -569,9 +576,9 @@ export function WorkPage() {
           {(jobs.data?.jobs || []).map((j) => <option key={j.property_id} value={j.property_id}>{j.name}</option>)}
         </select>
       </div>
-      {tab === "bills" && (home.data ? <Bills key={job} home={home.data} refresh={() => qc.invalidateQueries({ queryKey: ["portal-work", job, "home"] })} /> : <div className="text-[13px] text-muted">{home.isError ? "This job could not be opened." : "Loading…"}</div>)}
-      {tab === "logs" && <DailyLogs key={job} pid={job} property={home.data?.property || ""} />}
-      {tab === "cos" && <ChangeOrders key={job} pid={job} property={home.data?.property || ""} />}
+      {shown === "bills" && (home.data ? <Bills key={job} home={home.data} refresh={() => qc.invalidateQueries({ queryKey: ["portal-work", job, "home"] })} /> : <div className="text-[13px] text-muted">{home.isError ? "This job could not be opened." : "Loading…"}</div>)}
+      {shown === "logs" && <DailyLogs key={job} pid={job} property={property} />}
+      {shown === "cos" && <ChangeOrders key={job} pid={job} property={property} />}
     </div>
   );
 }

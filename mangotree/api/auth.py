@@ -124,7 +124,8 @@ def public_user(doc: Dict[str, Any]) -> Dict[str, Any]:
         # (admin directive 2026-10-27: "arv" for Wes); empty means portal only.
         out.update({"org": doc.get("org"), "org_name": doc.get("org_name"), "person_id": doc.get("person_id"),
                     "property_ids": list(doc.get("property_ids") or []),
-                    "tools": [t for t in (doc.get("tools") or []) if t in CONTRACTOR_TOOLS]})
+                    "tools": [t for t in (doc.get("tools") or []) if t in CONTRACTOR_TOOLS],
+                    "can": portal_parts(doc)})
     return out
 
 
@@ -132,15 +133,27 @@ def public_user(doc: Dict[str, Any]) -> Dict[str, Any]:
 #: ever reachable from a contractor session, whatever the browser asks for.
 CONTRACTOR_TOOLS = ("arv", "underwriting")
 
+#: The parts of the portal. An account with no list of its own has all of them — the
+#: builder's own office (Wes, Kelly). An account made for a person on site is given
+#: only "logs": it sees no next steps, no proposal, no bill and no change order
+#: (2026-11-22: Duwayne Tutt, David Gonzalez).
+PORTAL_PARTS = ("steps", "bills", "logs", "change_orders")
+
+
+def portal_parts(doc: Dict[str, Any]) -> List[str]:
+    can = doc.get("can")
+    return [p for p in PORTAL_PARTS if p in can] if isinstance(can, list) else list(PORTAL_PARTS)
+
 
 def ensure_contractor(mongo: Mongo, *, user_id: str, login_name: str, name: str, full_name: str, org: str, org_name: str,
                       person_id: str, property_ids: List[str], password: Optional[str] = None,
-                      tools: Optional[List[str]] = None) -> Dict[str, Any]:
+                      tools: Optional[List[str]] = None, can: Optional[List[str]] = None) -> Dict[str, Any]:
     """Create or update a contractor account (side=contractor). The password is
     set only when given (first creation, or a reset by RKB); returns the public
     user. Contractor accounts are refused by every RKB route by construction —
     see current_user(). ``tools`` replaces the account's tool grants when given
-    (None leaves them as they are)."""
+    (None leaves them as they are). ``can`` limits the account to the named parts of
+    the portal (None leaves it as it is; an account never given a list has all parts)."""
     users = mongo.db["users"]
     now = datetime.now(timezone.utc)
     doc = {"user_id": user_id, "login": login_name.strip().lower(), "name": name, "full_name": full_name, "role": "contractor",
@@ -151,6 +164,11 @@ def ensure_contractor(mongo: Mongo, *, user_id: str, login_name: str, name: str,
         if bad:
             raise ValueError(f"unknown tools {bad}; allowed: {list(CONTRACTOR_TOOLS)}")
         doc["tools"] = list(dict.fromkeys(tools))
+    if can is not None:
+        bad = [p for p in can if p not in PORTAL_PARTS]
+        if bad or not can:
+            raise ValueError(f"unknown portal parts {bad}; allowed: {list(PORTAL_PARTS)}")
+        doc["can"] = [p for p in PORTAL_PARTS if p in can]
     upd: Dict[str, Any] = {"$set": doc, "$setOnInsert": {"created_at": now, "active": True}}
     if password:
         if len(password) < 10:
