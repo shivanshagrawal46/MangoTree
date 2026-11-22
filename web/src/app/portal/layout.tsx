@@ -7,9 +7,9 @@
  */
 import * as React from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
-import { Calculator, FileCheck, LogOut } from "lucide-react";
+import { Calculator, ClipboardList, FileCheck, LogOut, Receipt } from "lucide-react";
 import { api } from "@/lib/api";
 import { useUser } from "@/components/providers";
 
@@ -17,6 +17,9 @@ export default function PortalLayout({ children }: { children: React.ReactNode }
   const { user, loading } = useUser();
   const router = useRouter();
   const qc = useQueryClient();
+  // Bills, daily logs and change orders are tables: they get the width of the screen. The sheet stays a narrow column.
+  const wide = (usePathname() || "").startsWith("/portal/work");
+  const width = wide ? "max-w-[1240px]" : "max-w-3xl";
   React.useEffect(() => {
     if (loading) return;
     if (!user) router.replace("/login");
@@ -26,26 +29,29 @@ export default function PortalLayout({ children }: { children: React.ReactNode }
   return (
     <div className="min-h-screen bg-bg">
       <header className="sticky top-0 z-20 border-b border-line bg-elev/90 backdrop-blur">
-        <div className="mx-auto max-w-3xl px-4 h-14 flex items-center gap-3">
+        <div className={`mx-auto ${width} px-4 h-14 flex items-center gap-3`}>
           <div className="h-8 w-8 rounded-xl bg-[#1F3550] text-white grid place-items-center font-bold text-sm">R</div>
           <div className="min-w-0 flex-1">
             <div className="text-[13px] font-semibold tracking-tight leading-none">RKB Consulting Group</div>
             <div className="text-[11px] text-faint mt-0.5 truncate">Next steps for {user.org_name || "ROI Blocks"} · signed in as {user.name}</div>
           </div>
+          {/* What the contractor enters itself (2026-11-22): bills, daily logs, change orders. The page says so when no job is open to the account. */}
+          <Link href="/portal/work" className={`h-8 px-3 rounded-lg text-xs flex items-center gap-1.5 hover:bg-sunken ${wide ? "bg-sunken text-fg font-medium" : "text-muted"}`} title="Bills, daily logs and change orders"><Receipt size={14} /> <span className="hidden sm:inline">Bills and logs</span></Link>
+          {wide && <Link href="/portal" className="h-8 px-3 rounded-lg text-xs text-muted hover:bg-sunken flex items-center gap-1.5" title="Next steps"><ClipboardList size={14} /> <span className="hidden sm:inline">Next steps</span></Link>}
           {/* An RKB system opened to this account (admin directive 2026-10-27: ARV for Wes). Rendered only when granted. */}
           {(user.tools || []).includes("arv") && (
-            <Link href="/arv" className="h-8 px-3 rounded-lg text-xs text-muted hover:bg-sunken flex items-center gap-1.5" title="ARV & underwriting"><Calculator size={14} /> ARV & underwriting</Link>
+            <Link href="/arv" className="h-8 px-3 rounded-lg text-xs text-muted hover:bg-sunken flex items-center gap-1.5" title="ARV & underwriting"><Calculator size={14} /> <span className="hidden sm:inline">ARV & underwriting</span></Link>
           )}
           {/* Underwriting, opened to Wes on 2026-11-20. Rendered only when granted. */}
           {(user.tools || []).includes("underwriting") && (
-            <Link href="/underwriting" className="h-8 px-3 rounded-lg text-xs text-muted hover:bg-sunken flex items-center gap-1.5" title="Underwriting"><FileCheck size={14} /> Underwriting</Link>
+            <Link href="/underwriting" className="h-8 px-3 rounded-lg text-xs text-muted hover:bg-sunken flex items-center gap-1.5" title="Underwriting"><FileCheck size={14} /> <span className="hidden sm:inline">Underwriting</span></Link>
           )}
           <button onClick={async () => { await api.post("/auth/logout").catch(() => {}); qc.clear(); window.location.assign("/login"); }} className="h-8 px-2.5 rounded-lg text-xs text-muted hover:bg-sunken flex items-center gap-1.5" title="Sign out">
-            <LogOut size={14} /> Sign out
+            <LogOut size={14} /> <span className="hidden sm:inline">Sign out</span>
           </button>
         </div>
       </header>
-      <main className="mx-auto max-w-3xl px-4 py-6">{children}</main>
+      <main className={`mx-auto ${width} px-4 py-6`}>{children}</main>
     </div>
   );
 }

@@ -1263,6 +1263,11 @@ notes_routes.install(app, mongo)
 from mangotree.brain import routes as brain_routes  # noqa: E402
 brain_routes.install(app, mongo, jobs)
 
+# What the contractor enters itself (2026-11-22): bills, daily logs and change orders put
+# straight into RKB's system from the portal, in place of the morning copy out of Buildertrend.
+from mangotree.brain import entry_routes  # noqa: E402
+entry_routes.install(app, mongo, jobs)
+
 # Underwriting and closing (2026-11-20): from a new address to a recorded deed of
 # trust on fixed rules and fixed lists. Own module, own collection (uw_files).
 from mangotree.underwriting import routes as uw_routes  # noqa: E402

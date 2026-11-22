@@ -219,8 +219,9 @@ class Buildertrend:
                 out["in_review"] += int(doc["in_review"])
             if ops:
                 self.bills.bulk_write(ops, ordered=False)
-            # A bill that has left Buildertrend (deleted or voided there) leaves here too.
-            self.bills.delete_many({"job_id": int(job), "bill_id": {"$nin": seen}})
+            # A bill that has left Buildertrend (deleted or voided there) leaves here too — but never one
+            # the contractor entered in RKB's own portal (entry.py): Buildertrend has never held those.
+            self.bills.delete_many({"job_id": int(job), "bill_id": {"$nin": seen}, "source": {"$ne": "contractor"}})
         self.__dict__.pop("_views", None)
         return out
 

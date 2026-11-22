@@ -684,6 +684,15 @@ class Scheduler:
                                   "cost_usd": sw["cost_usd"], "failed": len(sw["failed"])}
             except Exception:
                 logger.exception("reading the to-dos over failed")
+            # A daily log the contractor entered in the portal since the last run: the site reading of that
+            # property is made again, as it is after a Buildertrend pull (2026-11-22).
+            try:
+                if self.mongo.db["bt_pulls"].count_documents({"analysed": False, "new_logs": {"$exists": True}}, limit=1):
+                    from mangotree.brain.sitework import after_pull
+                    site = after_pull(self.mongo)
+                    total["site"] = {"read_again": len(site.get("read_again") or []), "failed": len(site.get("failed") or []), "cost_usd": site.get("cost_usd")}
+            except Exception:
+                logger.exception("reading the sites again failed")
             # A reply owed with nothing written (promised on a call, or its draft set aside) is written now,
             # or — when it cannot be written yet — becomes the next step. The list of replies holds only
             # what is written and ready (2026-11-21).

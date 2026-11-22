@@ -34,6 +34,7 @@ export const api = {
   get: <T,>(path: string) => request<T>(path),
   post: <T,>(path: string, body?: unknown) => request<T>(path, { method: "POST", body: body === undefined ? undefined : JSON.stringify(body) }),
   patch: <T,>(path: string, body?: unknown) => request<T>(path, { method: "PATCH", body: JSON.stringify(body) }),
+  put: <T,>(path: string, body?: unknown) => request<T>(path, { method: "PUT", body: JSON.stringify(body) }),
   del: <T,>(path: string) => request<T>(path, { method: "DELETE" }),
   /** Multipart upload. No Content-Type header: the browser sets the boundary. */
   upload: async <T,>(path: string, form: FormData): Promise<T> => {

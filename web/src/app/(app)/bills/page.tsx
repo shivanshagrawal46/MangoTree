@@ -12,6 +12,7 @@ import { Banknote, ChevronRight, Clock, Lock, Receipt } from "lucide-react";
 import { api } from "@/lib/api";
 import { Button, Card, Checkbox, Dialog, DialogContent, Skeleton } from "@/components/ui";
 import { BillLines, usd } from "@/components/brain/side";
+import { EntryChangeOrders } from "@/components/brain/entry";
 import { ago, cn, fmtDate } from "@/lib/utils";
 import { errText, type Bill } from "@/lib/brain";
 
@@ -165,6 +166,8 @@ export default function BillsPage() {
           ))}
         </div>
       </div>
+
+      <EntryChangeOrders />
 
       {q.data && rows.length > 0 && (
         <div className="mt-4 grid grid-cols-2 xl:grid-cols-4 gap-3">
