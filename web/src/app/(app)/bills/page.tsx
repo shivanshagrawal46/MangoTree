@@ -30,8 +30,10 @@ type Row = {
   check?: { lines: number; ok: { count: number; amount: number }; check: { count: number; amount: number }; unread: { count: number; amount: number }; read_at?: string | null } | null;
 };
 type MailResult = { now?: "sent" | "already_sent" | "still_sending" | "not_accepted" | "failed"; status?: string; why?: string };
-/* The two ticks that send an email. The page asks first; on yes the box is ticked and the email goes at once. */
-const SENDS: Record<string, string> = { ready_to_pay: "Ready to pay", paid: "Paid" };
+/* The ticks that send an email. The page asks first; on yes the box is ticked and the email goes at once.
+   "Manju Sir approved" tells JP Sir the bill is approved, unless the bill is already marked ready to pay (he has that email). */
+const SENDS: Record<string, string> = { manju_approved: "Manju Sir approved", ready_to_pay: "Ready to pay", paid: "Paid" };
+const sends = (r: { steps: Record<string, unknown> }, step: string) => !!SENDS[step] && !(step === "manju_approved" && r.steps.ready_to_pay);
 const names = (xs?: string[]) => (xs || []).map((n) => n.replace(/ Stone$/, "")).join(" and ");
 
 type Resp = { view: "open" | "paid"; steps: { key: string; label: string }[]; rows: Row[]; pulled_at?: string | null;
@@ -128,7 +130,7 @@ export default function BillsPage() {
     qc.setQueryData<Resp>(key, (cur) => cur ? { ...cur, rows: cur.rows.map((x) => x.bill_id === r.bill_id ? { ...x, steps: { ...x.steps, [step]: done ? { at: nowIso(), by_name: "you" } : null } } : x) } : cur);
     try {
       const res = await api.post<{ mail_result?: MailResult | null }>(`/brain/bills/${r.bill_id}/steps`, { step, done });
-      if (done && SENDS[step]) {
+      if (done && sends(r, step)) {
         const who = names(q.data?.mail_to?.[step]?.to) || "the recipients";
         const m = res.mail_result?.now;
         const time = step === "paid" ? ` Paid ${took(r.bill_moment || r.bill_date, nowIso()) || "the same day"} from the bill date.` : "";
@@ -229,7 +231,7 @@ export default function BillsPage() {
                         const m = r.steps[s.key];
                         return (
                           <div key={s.key} className="flex flex-col items-center text-center">
-                            <Checkbox checked={!!m} onCheckedChange={(v) => (v && SENDS[s.key] ? setAsk({ row: r, step: s.key }) : tick(r, s.key, v))} size={18} label={`${s.label} — ${r.title || r.number}`}
+                            <Checkbox checked={!!m} onCheckedChange={(v) => (v && sends(r, s.key) ? setAsk({ row: r, step: s.key }) : tick(r, s.key, v))} size={18} label={`${s.label} — ${r.title || r.number}`}
                               className={cn("rounded-md data-[state=checked]:bg-good data-[state=checked]:border-good", !m && next === s.key && "border-accent shadow-[0_0_0_3px_color-mix(in_srgb,var(--accent)_14%,transparent)]")} />
                             {m && (
                               <div className="mt-1 w-full rounded-md bg-good-soft/70 px-1 py-[3px] text-[10.5px] leading-tight text-muted">
@@ -289,7 +291,9 @@ export default function BillsPage() {
               <p className="mt-3 text-[13px] leading-relaxed">
                 An email will be sent now from <b className="font-semibold">rakesh@mtreh.com</b> to <b className="font-semibold">{names(q.data?.mail_to?.[ask.step]?.to) || "the recipients"}</b>
                 {(q.data?.mail_to?.[ask.step]?.cc || []).length > 0 && <>, with a copy to {names(q.data!.mail_to![ask.step].cc)}</>}
-                {ask.step === "paid" ? ", saying this bill has been paid, with the bill date, the time of each step and how long it took." : ", with this bill and everything on file about the property."}
+                {ask.step === "paid" ? ", saying this bill has been paid, with the bill date, the time of each step and how long it took."
+                  : ask.step === "manju_approved" ? ", saying this bill has been approved, with the bill and everything on file about the property."
+                  : ", with this bill and everything on file about the property."}
               </p>
               {(ask.row.mail?.[ask.step]?.status === "sent" || ask.row.mail?.[ask.step]?.status === "replied") && <p className="mt-2 text-[12.5px] text-high">This email was already sent once; it will not be sent again.</p>}
               <div className="mt-4 flex justify-end gap-2">

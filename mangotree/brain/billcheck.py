@@ -348,12 +348,13 @@ class BillCheck:
         saved = self.sheet.inputs.find_one({"property_id": pid}, {"_id": 0}) or {}
         paid_here = {t["bill_id"] for t in self.track.find({"bill_id": {"$in": [b["bill_id"] for b in bills]}, "steps.paid": {"$ne": None}}, {"bill_id": 1})}
 
+        tie = self.bt.change_order_by_po_line(pid)
+
         def rows(bs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-            r, _ = self.sheet._rows(estimate, bs, paid_here)
+            r, _ = self.sheet._rows(estimate, bs, paid_here, tie)
             return self.sheet._place(r, saved)
         was = {r["key"]: r for r in rows(before)}
         after = rows(before + mine)
-        tie = self.bt.change_order_by_po_line(pid)
         out: List[Dict[str, Any]] = []
         for a in after:
             b0 = was.get(a["key"]) or {}
@@ -576,6 +577,16 @@ class BillCheck:
         for l in lines:
             head.append(f"  {l['key']} | {l['group']} | {l['title']} | {l['cost_code']} | {usd(l['budget'])} | {usd(l['before'])} | {usd(l['this'])} | "
                         + (f"{l['percent_after']}%" if l["percent_after"] is not None else "not a proposal line" if job["has_proposal"] else "proposal not read"))
+        with_co = [l for l in lines if l.get("change_order")]
+        if with_co:
+            head += ["", "APPROVED CHANGE ORDERS these lines are billed under, from Buildertrend's Change Orders list "
+                         "(key | change order number | its title | its cost | Buildertrend's sentence on the approval):"]
+            for l in with_co:
+                co = l["change_order"]
+                head.append(f"  {l['key']} | {co.get('number') or 'no number'} | {co.get('title')} | {usd(co.get('builder_cost'))} | {co.get('status_text') or 'Approved'}")
+            head.append("For these lines an approved change order IS on file, and it is where the line budget comes from: never say that no change order is on file, "
+                        "or that the budget is unexplained. Name the change order by its number when you mention it. The approval is by the person Buildertrend names "
+                        "(the homeowner or the contractor's staff); it does not say RKB agreed. The change order's own document is not among the papers unless one is attached.")
         if not job["has_proposal"]:
             head.append("NOTE: RKB's system has NOT read this job's proposal from Buildertrend. So the budgets above are blank, not zero, and no line can be "
                         "called outside the proposal or over budget: do not say either. You may say that the proposal has not been read, so the line could not be placed.")

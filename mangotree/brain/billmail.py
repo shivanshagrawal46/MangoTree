@@ -1,9 +1,18 @@
-"""The two emails a bill sends by itself, from Rakesh Sir's mailbox.
+"""The emails a bill sends by itself, from Rakesh Sir's mailbox.
 
+    new bills read from Buildertrend  ->  Manjunath Sir: each new bill waiting for his
+                                          approval, with what the check found (one email
+                                          per pull; a bill is announced once: ``tell_new``)
+    "Manju Sir approved" ticked       ->  JP Sir: the bill is approved, with the bill and
+                                          everything about the property
     "Ready to pay" ticked  ->  JP Sir: the bill, and everything about the property
     "Paid" ticked          ->  Wes and Kelly, copy Manjunath Sir only:
                                the bill, when each step happened, and how long
                                it took from the bill date to payment
+
+(The first two were added 2026-11-24 at the user's instruction: "when new bills enter
+the system an automatic email to manju sir and when manju sir approved an automated
+email to jp sir".)
 
 Nobody writes or approves these. They are filled in from the records — no model
 is asked for a word — so every figure in them is the figure on the Bills page.
@@ -24,7 +33,9 @@ Who receives each email is a setting (``bill_mail``), not code.
 """
 from __future__ import annotations
 
+import hashlib
 import html as _html
+import os
 from datetime import timedelta
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -38,14 +49,17 @@ from .buildertrend import Buildertrend, is_holdback, usd
 from .store import BrainStore, name_of, now
 
 KIND = "bill_step"
+NEW_KIND = "bill_new"
 SETTING = "bill_mail"
 DEFAULTS: Dict[str, Any] = {
     "enabled": True,
+    "new_to": [["Manjunath Sir", "manjunath@mtreh.com"]],
+    "approved_to": [["JP Sir", "jp@mtreh.com"]],
     "ready_to": [["JP Sir", "jp@mtreh.com"]],
     "paid_to": [["Wes Stone", "wes@roiblocks.com"], ["Kelly Stone", "kelly@roiblocks.com"]],
     "paid_cc": [["Manjunath Sir", "manjunath@mtreh.com"]],
 }
-SENDS_ON = ("ready_to_pay", "paid")
+SENDS_ON = ("manju_approved", "ready_to_pay", "paid")
 _STEP_LABEL = dict(STEPS)
 
 
@@ -82,6 +96,19 @@ def _h(title: str) -> str:
 def _p(text: str, *, small: bool = False) -> str:
     style = "margin:10px 0;color:#666;font-size:12px" if small else "margin:10px 0"
     return f'<p style="{style}">{_html.escape(text)}</p>'
+
+
+def _ul(items: Sequence[str]) -> str:
+    return '<ul style="margin:4px 0 10px;padding-left:20px">' + "".join(f'<li style="margin:0 0 4px">{_html.escape(i)}</li>' for i in items) + "</ul>"
+
+
+def _link(label: str, url: str) -> str:
+    return f'<p style="margin:10px 0"><a href="{_html.escape(url)}">{_html.escape(label)}</a></p>'
+
+
+def site() -> str:
+    """Where MangoTree is opened from, for the link in an email."""
+    return (os.environ.get("MT_PUBLIC_URL") or "http://139.59.39.65:3017").rstrip("/")
 
 
 class BillMail:
@@ -174,8 +201,9 @@ class BillMail:
         s = self.settings()
         title, prop, amount = str(r.get("title") or r.get("number") or "Bill"), name_of(r["property_id"]) if r.get("property_id") else "property not stated", usd(r.get("amount"))
         bill, steps = self.bill_rows(r), self.step_rows(r)
-        if step == "ready_to_pay":
-            to, cc = _pairs(s["ready_to"]), []
+        if step in ("manju_approved", "ready_to_pay"):
+            approved = step == "manju_approved"
+            to, cc = _pairs(s["approved_to"] if approved else s["ready_to"]), []
             first = " and ".join(n for n, _ in to) or "JP Sir"
             # Only the lines this bill actually charges: Buildertrend lists every budget line, most of them at $0.00.
             lines = [(li.get("title") or li.get("cost_code") or "line", usd(li.get("amount")) + (f" — {li['cost_code']}" if li.get("cost_code") else ""))
@@ -187,10 +215,14 @@ class BillMail:
             prop_rows = self.property_rows(pid) if pid else []
             bt_rows, others = self.property_bill_rows(pid, r["bill_id"]) if pid else ([], [])
             other_rows = [(str(b.get("title") or b.get("number")), f"{usd(b.get('amount'))} — bill date {eastern.label(eastern.wall_clock_et(b.get('invoice_date')), time=False)}") for b in others]
-            intro = f"{first}, this bill has been marked ready to pay."
-            foot = f"Sent automatically from MangoTree when “Ready to pay” was ticked by {by}. All times are US Eastern."
+            intro = f"{first}, this bill has been approved by Manjunath Sir. It is now with you." if approved else f"{first}, this bill has been marked ready to pay."
+            foot = f"Sent automatically from MangoTree when “{_STEP_LABEL[step]}” was ticked by {by}. All times are US Eastern."
             parts = [_p(intro), _h("The bill"), _table(bill + extra)]
             text = [intro, "", "THE BILL", _text_rows(bill + extra)]
+            if approved:
+                url = f"{site()}/bills/{r['bill_id']}"
+                parts.append(_link("Open the bill in MangoTree", url))
+                text += ["", f"Open the bill: {url}"]
             if lines:
                 parts += [_h("Line items"), _table(lines)]
                 text += ["", "LINE ITEMS", _text_rows(lines)]
@@ -204,7 +236,7 @@ class BillMail:
                 text += ["", "OTHER BILLS ON THIS PROPERTY WAITING FOR APPROVAL", _text_rows(other_rows)]
             parts.append(_p(foot, small=True))
             text += ["", foot]
-            subject = f"Ready to pay — {title} — {prop} — {amount}"
+            subject = f"{'Approved' if approved else 'Ready to pay'} — {title} — {prop} — {amount}"
         elif step == "paid":
             to, cc = _pairs(s["paid_to"]), _pairs(s["paid_cc"])
             first = ", ".join(n.split()[0] for n, _ in to) or "Wes, Kelly"
@@ -225,7 +257,8 @@ class BillMail:
     def recipients(self) -> Dict[str, Dict[str, List[str]]]:
         """Who each email goes to, for the question the page asks before sending."""
         s = self.settings()
-        return {"ready_to_pay": {"to": [n for n, _ in _pairs(s["ready_to"])], "cc": []},
+        return {"manju_approved": {"to": [n for n, _ in _pairs(s["approved_to"])], "cc": []},
+                "ready_to_pay": {"to": [n for n, _ in _pairs(s["ready_to"])], "cc": []},
                 "paid": {"to": [n for n, _ in _pairs(s["paid_to"])], "cc": [n for n, _ in _pairs(s["paid_cc"])]}}
 
     def on_step(self, r: Dict[str, Any], step: str, done: bool, user: Dict[str, Any], *, wait: float = 20.0) -> Optional[Dict[str, Any]]:
@@ -243,6 +276,8 @@ class BillMail:
             return {"status": "off"}
         if is_holdback(r.get("title")):
             return {"status": "not_sent", "why": "hold-back bills do not send an email"}
+        if step == "manju_approved" and (r.get("steps") or {}).get("ready_to_pay"):
+            return {"status": "not_sent", "why": "the bill is already marked ready to pay"}      # JP Sir has that email; not a second one
         try:
             mail = self.compose(r, step, user.get("name") or user.get("user_id") or "someone")
             if not mail["to"]:
@@ -286,6 +321,105 @@ class BillMail:
         if result.get("status") == "sent":
             return {"status": "sent", "now": "sent"}
         return {"status": result.get("status") or "queued", "now": "not_accepted", "why": str(result.get("error") or "")[:200]}
+
+    # ------------------------------------------------- new bills, to Manjunath Sir
+    def new_bills(self) -> List[Dict[str, Any]]:
+        """The bills waiting for approval that nobody has been told about yet: read from
+        Buildertrend (a bill the contractor enters in the portal sends its own email at once),
+        its lines read, not a hold-back, not approved, and not announced before."""
+        from .billtrack import BillTracker
+        tr = BillTracker(self.mongo)
+        ids = [b["bill_id"] for b in tr.bills.find({"in_review": True, "holdback": {"$ne": True}, "source": {"$ne": "contractor"}, "line_items.0": {"$exists": True}}, {"bill_id": 1})]
+        told = {t["bill_id"] for t in tr.track.find({"bill_id": {"$in": ids}, "told_new": {"$exists": True}}, {"bill_id": 1})}
+        want = set(ids) - told
+        rows = [r for r in tr.rows("open") if r["bill_id"] in want and r.get("in_buildertrend") and not (r.get("steps") or {}).get("manju_approved")]
+        return sorted(rows, key=lambda r: (r.get("property") or "", r["bill_id"]))
+
+    def _found(self, bill_id: int) -> List[str]:
+        """What the bill check says about one bill, as short lines: the page's own words (no model is asked here)."""
+        from .billcheck import VERDICT_LABEL, BillCheck
+        d = BillCheck(self.mongo, self.store).draw(bill_id)
+        out: List[str] = []
+        for l in d["lines"][:10]:
+            ev, co = l.get("evidence") or {}, l.get("change_order")
+            says = [f"{VERDICT_LABEL.get(ev.get('verdict'), 'Not checked yet')}." + (f" {ev['basis']}" if ev.get("basis") else "")] if ev else ["Not checked against the logs and photos yet."]
+            if co:
+                says.append(f"Change order {co.get('number') or ''}, {usd(co.get('builder_cost'))}: {co.get('status_text') or 'approved'} in Buildertrend.".replace("  ", " "))
+            says += [str(x["text"]).split(". ")[0].rstrip(".") + "." for x in l.get("flags") or []]      # the fact; the page's instruction after it is left out
+            out.append(f"{l['title']} — {usd(l['this'])}: " + " ".join(says))
+        if len(d["lines"]) > 10:
+            out.append(f"{len(d['lines']) - 10} more line(s) are on the bill's page.")
+        out += [c["text"] for c in d.get("checks") or [] if c.get("ok") is False and c.get("key") != "in_proposal"]
+        out += [str(x) for x in ((d.get("reading") or {}).get("points") or [])[:3]]
+        return out
+
+    def compose_new(self, rows: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+        """One email for the new bills: each bill, and what the check found on it."""
+        from .billtrack import BillTracker
+        s = self.settings()
+        to = _pairs(s["new_to"])
+        first = " and ".join(n for n, _ in to) or "Manjunath Sir"
+        n, total = len(rows), round(sum(r.get("amount") or 0 for r in rows), 2)
+        intro = (f"{first}, a new bill has come in from Buildertrend and is waiting for your approval." if n == 1 else
+                 f"{first}, {n} new bills have come in from Buildertrend and are waiting for your approval ({usd(total)} in all).")
+        parts, text = [_p(intro)], [intro]
+        for i, r in enumerate(rows, 1):
+            head = f"{i}. {r.get('property') or 'Property not stated'} — {r.get('title') or r.get('number') or 'Bill'}"
+            facts = [("Amount", usd(r.get("amount"))), ("Pay to", str(r.get("pay_to") or "not stated")),
+                     ("Bill date", eastern.label(eastern.wall_clock_et(r.get("bill_date")), time=False) if r.get("bill_date") else "not stated")]
+            if r.get("due_day"):
+                facts.append(("Due", eastern.label(r["due_day"], time=False) + (" — past due" if r.get("past_due") else "")))
+            if r.get("created_by"):
+                facts.append(("Entered in Buildertrend by", str(r["created_by"])))
+            files = r.get("file_names") or []
+            facts.append(("Papers attached", ("; ".join(str(x) for x in files[:6]) + (f"; and {len(files) - 6} more" if len(files) > 6 else "")) if files else "none"))
+            try:
+                found = self._found(r["bill_id"])
+            except Exception:
+                logger.exception("new-bill email: the check of bill %s could not be read", r["bill_id"])
+                found = ["The check of this bill could not be read; open the bill's page."]
+            url = f"{site()}/bills/{r['bill_id']}"
+            parts += [_h(head), _table(facts), _p("What the check found:"), _ul(found), _link("Open this bill in MangoTree", url)]
+            text += ["", head, _text_rows(facts), "What the check found:"] + [f"  - {x}" for x in found] + [f"Open this bill: {url}"]
+        mine = {r["bill_id"] for r in rows}
+        older = [o for o in BillTracker(self.mongo).rows("open") if o["bill_id"] not in mine and o.get("in_buildertrend") and not (o.get("steps") or {}).get("manju_approved")]
+        if older:
+            rest = [(f"{o.get('property')} — {o.get('title') or o.get('number')}", usd(o.get("amount"))) for o in older[:20]]
+            parts += [_h("Still waiting for your approval from before"), _table(rest)]
+            text += ["", "STILL WAITING FOR YOUR APPROVAL FROM BEFORE", _text_rows(rest)]
+        foot = ("Sent automatically from MangoTree when new bills were read from Buildertrend. The check is an AI reading of the contractor's "
+                "logs, photos and papers; it is not an inspection. All dates are US Eastern.")
+        parts.append(_p(foot, small=True))
+        text += ["", foot]
+        one = rows[0]
+        subject = (f"New bill to approve — {one.get('title') or one.get('number')} — {one.get('property')} — {usd(one.get('amount'))}" if n == 1 else
+                   f"New bills to approve — {n} bills — {usd(total)}")
+        return {"to": to, "cc": [], "subject": subject, "html": _wrap(parts), "text": "\n".join(text)}
+
+    def tell_new(self, *, wait: float = 20.0) -> Dict[str, Any]:
+        """Email Manjunath Sir the bills that are new on the approval list. Called after a
+        Buildertrend pull has been read (``sitework.after_pull``). One email for all of them;
+        a bill is announced once (the mark is kept with the bill's tracking record)."""
+        from .billtrack import BillTracker
+        s = self.settings()
+        if not s.get("enabled", True):
+            return {"status": "off"}
+        rows = self.new_bills()
+        if not rows:
+            return {"status": "none"}
+        mail = self.compose_new(rows)
+        if not mail["to"]:
+            return {"status": "not_sent", "why": "no recipient is set"}
+        ids = sorted(r["bill_id"] for r in rows)
+        ref = "new:" + hashlib.sha1(",".join(map(str, ids)).encode()).hexdigest()[:16]
+        q = self.outbox().queue(kind=NEW_KIND, ref=ref, to=mail["to"], cc=mail["cc"], subject=mail["subject"], html=mail["html"], text=mail["text"],
+                                send_after=now() + timedelta(minutes=5), meta={"bill_ids": ids})
+        track = BillTracker(self.mongo).track
+        for i in ids:        # marked once it is on the outbox: from there it is retried until it goes
+            track.update_one({"bill_id": i}, {"$set": {"told_new": {"at": now(), "outbox_id": q.get("outbox_id")}}, "$setOnInsert": {"started_at": now()}}, upsert=True)
+        if q.get("status") in ("sent", "replied"):
+            return {"status": q["status"], "now": "already_sent", "bill_ids": ids}
+        return {**self.send_now(q["outbox_id"], wait=wait), "bill_ids": ids, "outbox_id": q["outbox_id"]}
 
     def states(self, bill_ids: Sequence[int]) -> Dict[int, Dict[str, Dict[str, Any]]]:
         """For the Bills page: what happened to each bill's emails (waiting to go, sent, cancelled)."""

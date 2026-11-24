@@ -367,6 +367,14 @@ def after_pull(mongo: Mongo, *, workers: int = 3) -> Dict[str, Any]:
     except Exception:
         logger.exception("checking the waiting bills after the pull failed")
         out["bills"] = {"read": [], "kept": [], "failed": [], "cost_usd": 0.0, "error": True}
+    # Then Manjunath Sir is told of the bills that are new on the approval list, with what the check found
+    # (one email; a bill is announced once: see billmail.tell_new).
+    try:
+        from .billmail import BillMail
+        out["new_bill_mail"] = BillMail(mongo, sw.store).tell_new()
+    except Exception:
+        logger.exception("the email about the new bills could not be sent")
+        out["new_bill_mail"] = {"status": "failed"}
     try:
         from mangotree.api import swr
         swr.clear()

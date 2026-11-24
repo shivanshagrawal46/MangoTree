@@ -101,6 +101,7 @@ class FollowMarkBody(BaseModel):
 class StepBody(BaseModel):
     step: str
     done: bool = True
+    quiet: bool = False        # "Manju Sir approved" ticked as part of "mark ready to pay": no approval email, the ready-to-pay one follows
 
 
 class BillCommentBody(BaseModel):
@@ -323,9 +324,9 @@ def install(app: FastAPI, mongo: Mongo, jobs) -> None:
     def brain_bill_step(bill_id: int, body: StepBody, user=CurrentUser):
         try:
             row = billtrack.set_step(bill_id, body.step, body.done, user)
-            # "Ready to pay" and "Paid" send their email by themselves (see brain/billmail.py); unticking
-            # before it has gone cancels it. A mail problem never undoes the tick.
-            row["mail_result"] = billmail.on_step(row, body.step, body.done, user)
+            # "Manju Sir approved", "Ready to pay" and "Paid" send their email by themselves (see
+            # brain/billmail.py); unticking before it has gone cancels it. A mail problem never undoes the tick.
+            row["mail_result"] = None if (body.quiet and body.done and body.step == "manju_approved") else billmail.on_step(row, body.step, body.done, user)
             row["mail"] = billmail.state(row["bill_id"])
             return data.clean(row)
         except ValueError as exc:

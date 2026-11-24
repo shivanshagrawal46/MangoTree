@@ -172,8 +172,15 @@ class MoneySheet:
             pool = [c for c in pool if said and _norm(c.get("description")) == said]
         return (pool[0], False) if len(pool) == 1 else (None, True)
 
-    def _rows(self, estimate: Optional[Dict[str, Any]], bills: List[Dict[str, Any]], paid_here: set) -> Tuple[List[Dict[str, Any]], List[str]]:
-        """The proposal's lines, with every bill line added to the row it belongs to."""
+    def _rows(self, estimate: Optional[Dict[str, Any]], bills: List[Dict[str, Any]], paid_here: set,
+              tied: Optional[Any] = None) -> Tuple[List[Dict[str, Any]], List[str]]:
+        """The proposal's lines, with every bill line added to the row it belongs to.
+
+        ``tied``: the purchase-order line ids Buildertrend ties to an APPROVED change order
+        (``Buildertrend.change_order_by_po_line``). A billed line with one of these ids is a
+        change-order line whether or not the contractor chose "change order" in the bill's
+        variance box (2026-11-24: 21 such lines were shown as "not a line of the proposal")."""
+        tied = tied or ()
         rows: List[Dict[str, Any]] = []
         index: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
         by_po: Dict[Any, List[Dict[str, Any]]] = {}
@@ -198,13 +205,13 @@ class MoneySheet:
                 amount = li.get("amount") or 0.0
                 row, unplaced = self._row_for(li, index, by_po)
                 if row is None:
-                    is_co = "change order" in str(li.get("variance") or "").lower() and not unplaced
+                    is_co = bool(li.get("po_line_id") and li["po_line_id"] in tied) or ("change order" in str(li.get("variance") or "").lower() and not unplaced)
                     if not amount and not is_co:
                         continue                                   # an unbilled line of some other purchase order: not this proposal's
                     k = self._extra_key(li)
                     row = extras.get(k)
                     if row is None:
-                        row = extras[k] = {"key": k, "kind": "change_order" if is_co else "other", "unplaced": unplaced,
+                        row = extras[k] = {"key": k, "kind": "change_order" if is_co else "other", "unplaced": unplaced and not is_co,
                                            "group": "Change orders" if is_co else "Not placed: the proposal has this name more than once" if unplaced
                                            else "Billed, but not a line of the proposal" if has_proposal
                                            else "The proposal has not been read from Buildertrend",
@@ -212,6 +219,8 @@ class MoneySheet:
                                            "description": li.get("description") or "", "proposal": 0.0, "price": 0.0,
                                            "change_orders": (li.get("unit_cost") or 0.0) if is_co else 0.0,
                                            "billed": 0.0, "in_review": 0.0, "paid": 0.0, "held_back": 0.0, "bills": 0}
+                    elif is_co and row["kind"] != "change_order":      # the row was begun by a line Buildertrend does not tie: the tie decides
+                        row.update(kind="change_order", unplaced=False, group="Change orders", change_orders=li.get("unit_cost") or 0.0)
                     # Buildertrend's own tie to its Change Orders list: the purchase-order line(s) this row is billed through.
                     if row["kind"] == "change_order" and li.get("po_line_id") and li["po_line_id"] not in row.setdefault("po_line_ids", []):
                         row["po_line_ids"].append(li["po_line_id"])
@@ -356,14 +365,17 @@ class MoneySheet:
         taken = self._taken(bills, paid_here)
         counted = [b for b in bills if b["bill_id"] in taken]
         aside = [b for b in bills if b["bill_id"] not in taken]
-        rows, notes = self._rows(estimate, counted, paid_here)
+        # Change orders: the approved ones of Buildertrend's Change Orders list (only approved ones are taken into account).
+        held_cos = self.bt.change_orders_of(pid)
+        tie = {int(i): c for c in held_cos for i in c.get("po_line_ids") or []}
+        rows, notes = self._rows(estimate, counted, paid_here, tie)
         rows = self._place(rows, saved)
         if aside:
             names = "; ".join(f"{(b.get('title') or '').strip()} ${b.get('amount') or 0:,.2f}" for b in aside[:6]) + (f"; and {len(aside) - 6} more" if len(aside) > 6 else "")
             notes.append(f"{len(aside)} bill(s) are neither paid nor on RKB's approval list (${sum(b.get('amount') or 0 for b in aside):,.2f}); "
                          f"they are in the bill list below but not in the columns: {names}.")
             # What has been billed in all, those bills included: the checks for a line billed past its price read this.
-            every = {r["key"]: r["billed"] for r in self._place(self._rows(estimate, bills, paid_here)[0], saved)}
+            every = {r["key"]: r["billed"] for r in self._place(self._rows(estimate, bills, paid_here, tie)[0], saved)}
             for r in rows:
                 r["billed_all"] = every.get(r["key"], r["billed"])
         for r in rows:
@@ -381,9 +393,6 @@ class MoneySheet:
                 r["category"] = mine.get("category") or _guess_category(r["title"])
                 if r["category"]:
                     r["suggest"] = None
-        # Change orders: the approved ones of Buildertrend's Change Orders list (only approved ones are taken into account).
-        held_cos = self.bt.change_orders_of(pid)
-        tie = {int(i): c for c in held_cos for i in c.get("po_line_ids") or []}
         for r in rows:
             if r["kind"] == "change_order":
                 r["change_order"] = self.change_order_for(r, tie)

@@ -10,13 +10,16 @@
        line (an AI reading, marked as such — not an inspection).
    Lines that need a look come first. A person marks a line OK or Hold, and that
    stands over the reading. Approving the bill is the same "Manju Sir approved" tick
-   as on the Bills page. Nothing is sent from here. */
+   as on the Bills page: it asks first, and on yes an email tells JP Sir the bill is
+   approved. "Approve and mark ready to pay" also ticks "Team reviewed" and "Ready to
+   pay": it asks first, and on yes the ready-to-pay email to JP Sir goes at once (that
+   one email, not the approval email as well), exactly as from the Bills page. */
 
 import * as React from "react";
 import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { AlertTriangle, Check, ChevronRight, Copy, ExternalLink, FileText, MessageSquareText, Minus, Pause, RefreshCw, X } from "lucide-react";
+import { AlertTriangle, Check, ChevronRight, Copy, ExternalLink, FileText, MessageSquareText, Minus, Pause, RefreshCw, Send, X } from "lucide-react";
 import { api, subscribeJob } from "@/lib/api";
 import { Button, Card, Dialog, DialogContent, Skeleton } from "@/components/ui";
 import { ago, cn, fmtDate } from "@/lib/utils";
@@ -59,7 +62,13 @@ type Draw = {
   reading: { at?: string; points?: string[]; photos_shown?: number; photos_posted?: number; logs_read?: number; last_log?: string | null; newer_logs?: boolean; papers?: Paper[]; papers_unread?: string[] } | null;
   steps: Record<string, Mark>; draws: { bill_id: number; title: string; number?: string; date?: string | null; status?: string; amount: number; in_review: boolean }[];
   message_for_wes: string; can: { lines: boolean };
+  mail_to?: Record<string, { to: string[]; cc: string[] }>; mail?: Record<string, MailState>;
 };
+type MailState = { status?: string; sent_at?: string | null; to?: string[]; error?: string | null };
+type MailResult = { now?: "sent" | "already_sent" | "still_sending" | "not_accepted" | "failed"; status?: string; why?: string };
+/* The three ticks "ready to pay" needs, in the order RKB makes them. */
+const TO_READY = ["manju_approved", "team_reviewed", "ready_to_pay"] as const;
+const names = (xs?: string[]) => (xs || []).join(" and ");
 
 const usd = (n?: number | null) => (n == null ? "—" : n.toLocaleString("en-US", { style: "currency", currency: "USD" }));
 const amt = (n?: number | null) => (n == null || Math.abs(n) < 0.005 ? "—" : n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
@@ -272,12 +281,17 @@ export function BillCheckPage({ billId }: { billId: string }) {
   const [msg, setMsg] = React.useState(false);
   const [ask, setAsk] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
+  const [askPay, setAskPay] = React.useState(false);
 
   if (q.isError) return <div className="px-6 py-10 text-[13px] text-muted">That bill could not be opened: {errText(q.error)} <Link href="/bills" className="text-accent hover:underline">Back to Bills</Link></div>;
   if (!q.data) return <div className="px-6 py-6 max-w-[1280px] mx-auto space-y-3"><Skeleton className="h-12 w-96" /><Skeleton className="h-28" /><Skeleton className="h-80" /></div>;
   const d = q.data;
   const can = d.can.lines;
   const approved = d.steps?.manju_approved;
+  const ready = d.steps?.ready_to_pay;
+  const readyMail = d.mail?.ready_to_pay;
+  const jp = names(d.mail_to?.ready_to_pay?.to) || "JP Sir";
+  const approvedTo = names(d.mail_to?.manju_approved?.to) || "JP Sir";
   const open = d.lines.filter((l) => l.state === "check" || l.state === "hold");
   const fine = d.lines.filter((l) => l.state === "ok");
   const unread = d.lines.filter((l) => l.state === null);
@@ -301,11 +315,33 @@ export function BillCheckPage({ billId }: { billId: string }) {
   const approve = async (done: boolean) => {
     setBusy(true);
     try {
-      await api.post(`/brain/bills/${d.bill_id}/steps`, { step: "manju_approved", done });
-      toast.success(done ? "Bill approved. It now shows as “Manju Sir approved” on the Bills page." : "Approval taken off.");
+      const res = await api.post<{ mail_result?: MailResult | null }>(`/brain/bills/${d.bill_id}/steps`, { step: "manju_approved", done });
+      const m = res.mail_result?.now;
+      if (!done) toast.success("Approval taken off.");
+      else if (m === "sent") toast.success(`Bill approved. Email sent to ${approvedTo}.`);
+      else if (m === "already_sent") toast.message(`Bill approved. The email to ${approvedTo} had already been sent.`);
+      else if (m === "still_sending") toast.message(`Bill approved. The email to ${approvedTo} is being sent.`);
+      else if (m === "not_accepted") toast.warning("Bill approved, but the email has NOT gone yet: Microsoft's mail service did not accept it just now. It is kept and retried every few minutes until it goes.", { duration: 12000 });
+      else toast.message(`Bill approved. No email was sent${res.mail_result?.why ? `: ${res.mail_result.why}` : "."}`);
       qc.invalidateQueries({ queryKey: ["brain"] });
     } catch (e) { toast.error(errText(e)); }
     setBusy(false); setAsk(false);
+  };
+  /* Tick whatever is still missing of approved → team reviewed → ready to pay. The last tick sends the email to JP Sir. */
+  const markReady = async () => {
+    setBusy(true);
+    try {
+      let last: { mail_result?: MailResult | null } = {};
+      for (const step of TO_READY) if (!d.steps?.[step]) last = await api.post<{ mail_result?: MailResult | null }>(`/brain/bills/${d.bill_id}/steps`, { step, done: true, quiet: step !== "ready_to_pay" });
+      const m = last.mail_result?.now;
+      if (m === "sent") toast.success(`Marked ready to pay. Email sent to ${jp}.`);
+      else if (m === "already_sent") toast.message(`Marked ready to pay. This email had already been sent to ${jp}.`);
+      else if (m === "still_sending") toast.message(`Marked ready to pay. The email to ${jp} is being sent.`);
+      else if (m === "not_accepted") toast.warning("Marked ready to pay, but the email has NOT gone yet: Microsoft's mail service did not accept it just now. It is kept and retried every few minutes until it goes.", { duration: 12000 });
+      else toast.error(`Marked ready to pay, but the email was not sent${last.mail_result?.why ? `: ${last.mail_result.why}` : "."}`);
+    } catch (e) { toast.error(errText(e)); }
+    qc.invalidateQueries({ queryKey: ["brain"] });
+    setBusy(false); setAskPay(false);
   };
   const row = (l: Line) => <LineRow key={l.key} l={l} can={can} onDecide={decide} onZoom={setZoom} />;
 
@@ -322,6 +358,14 @@ export function BillCheckPage({ billId }: { billId: string }) {
             <h1 className="text-[20px] font-semibold tracking-tight truncate">{d.title}</h1>
             <span className={cn("inline-flex items-center h-[22px] px-2 rounded-md text-[11.5px] font-semibold whitespace-nowrap", STATUS_TONE(d.status))}>{d.status} in Buildertrend</span>
           </div>
+          {ready && readyMail && (
+            <div className={cn("mt-0.5 text-[11.5px]", readyMail.status === "sent" || readyMail.status === "replied" ? "text-good" : readyMail.status === "queued" && !readyMail.error ? "text-high" : "text-critical")}>
+              {readyMail.status === "sent" || readyMail.status === "replied" ? `Ready-to-pay email sent to ${(readyMail.to || []).join(", ")} ${et(readyMail.sent_at)}`
+                : readyMail.status === "queued" && !readyMail.error ? "The ready-to-pay email is being sent"
+                  : readyMail.status === "queued" ? "Ready-to-pay email NOT gone yet: Microsoft's mail service did not accept it; retrying every few minutes"
+                    : readyMail.status ? "The ready-to-pay email could not be sent" : ""}
+            </div>
+          )}
           <div className="mt-0.5 text-[12.5px] text-muted">{d.number}{d.pay_to ? ` · pay to ${d.pay_to.replace(/\s+/g, " ")}` : ""}{d.bill_date ? ` · bill date ${fmtDate(d.bill_date, "d MMM yyyy")}` : ""}{d.created_by ? ` · entered by ${d.created_by}` : ""}</div>
         </div>
         <div className="flex items-center gap-2">
@@ -329,9 +373,11 @@ export function BillCheckPage({ billId }: { billId: string }) {
           {approved ? (
             <div className="flex items-center gap-2 h-8 pl-2.5 pr-1 rounded-lg bg-good-soft text-good text-[12.5px] font-medium">
               <Check size={13} strokeWidth={3} /> Approved{approved.by_name ? ` by ${approved.by_name.replace(/ Sir$/, "")}` : ""} · {et(approved.at)}
-              {can && <button type="button" disabled={busy} onClick={() => approve(false)} className="h-6 px-2 rounded-md text-[11.5px] text-muted hover:text-fg hover:bg-elev">Undo</button>}
+              {can && !ready && <button type="button" disabled={busy} onClick={() => approve(false)} className="h-6 px-2 rounded-md text-[11.5px] text-muted hover:text-fg hover:bg-elev">Undo</button>}
+              {ready && <span className="pr-1.5">· Ready to pay {et(ready.at)}</span>}
             </div>
-          ) : can && <Button variant="primary" size="sm" className="h-8" disabled={busy} onClick={() => (open.length || unread.length ? setAsk(true) : approve(true))}><Check size={13} strokeWidth={3} /> Approve bill</Button>}
+          ) : can && <Button variant="primary" size="sm" className="h-8" disabled={busy} onClick={() => setAsk(true)}><Check size={13} strokeWidth={3} /> Approve bill</Button>}
+          {can && !ready && d.pay_now > 0 && <Button variant="soft" size="sm" className="h-8" disabled={busy} onClick={() => setAskPay(true)}><Send size={12} /> {approved ? "Mark ready to pay" : "Approve and mark ready to pay"}</Button>}
         </div>
       </div>
 
@@ -422,7 +468,7 @@ export function BillCheckPage({ billId }: { billId: string }) {
       <p className="mt-3 text-[11px] text-faint leading-relaxed max-w-4xl">
         The amounts are worked out from the proposal and the bills in Buildertrend. “What the record shows” and “On the property” are an AI reading of the papers attached to the bill and the contractor&apos;s own daily logs and photos. It is not an inspection, and it only suggests:
         a person&apos;s OK or Hold on a line is what stands. The check is made by itself after every read of Buildertrend, for each bill not yet approved.
-        Approving the bill ticks “Manju Sir approved” on the Bills page; no email is sent by it.
+        “Approve bill” ticks “Manju Sir approved” on the Bills page and sends no email. “Approve and mark ready to pay” also ticks “Team reviewed” and “Ready to pay”, and emails JP Sir at once.
       </p>
 
       <Dialog open={zoom != null} onOpenChange={(o) => { if (!o) setZoom(null); }}>
@@ -442,16 +488,42 @@ export function BillCheckPage({ billId }: { billId: string }) {
         </DialogContent>
       </Dialog>
 
+      <Dialog open={askPay} onOpenChange={(o) => { if (!o && !busy) setAskPay(false); }}>
+        <DialogContent title={approved ? "Mark ready to pay and send the email?" : "Approve, mark ready to pay and send the email?"}>
+          <div className="rounded-xl border border-line bg-sunken/50 px-3.5 py-2.5 text-[13px]">
+            <div className="font-medium">{d.title}</div>
+            <div className="text-muted mt-0.5 tnum">{d.property} · pay now {usd(d.pay_now)}{d.held > 0 && <> · held back {usd(d.held)}</>} · bill date {fmtDate(d.bill_date, "d MMM yyyy")}</div>
+          </div>
+          {(open.length > 0 || unread.length > 0) && (
+            <div className="mt-3 rounded-lg bg-high-soft text-high text-[12.5px] px-3 py-2 leading-snug">
+              {open.length > 0 && <><b className="font-semibold">{open.length} line{open.length === 1 ? "" : "s"}, {usd(openSum)}</b>, {open.length === 1 ? "is" : "are"} still to check or on hold. </>}
+              {unread.length > 0 && <>{unread.length} line{unread.length === 1 ? " has" : "s have"} not been checked against the logs and photos. </>}
+              The whole bill will go to payment as it stands.
+            </div>
+          )}
+          <p className="mt-3 text-[13px] leading-relaxed">
+            This ticks {TO_READY.filter((s) => !d.steps?.[s]).map((s) => ({ manju_approved: "“Manju Sir approved”", team_reviewed: "“Team reviewed”", ready_to_pay: "“Ready to pay”" }[s])).join(", ")} in your name,
+            and an email is sent now from <b className="font-semibold">rakesh@mtreh.com</b> to <b className="font-semibold">{jp}</b>
+            {(d.mail_to?.ready_to_pay?.cc || []).length > 0 && <>, with a copy to {names(d.mail_to!.ready_to_pay.cc)}</>}, with this bill and everything on file about the property. The email cannot be taken back.
+          </p>
+          {(readyMail?.status === "sent" || readyMail?.status === "replied") && <p className="mt-2 text-[12.5px] text-high">This email was already sent once; it will not be sent again.</p>}
+          <div className="mt-4 flex justify-end gap-2">
+            <Button variant="ghost" disabled={busy} onClick={() => setAskPay(false)}>Cancel — tick nothing</Button>
+            <Button variant="primary" disabled={busy} onClick={markReady}>{busy ? "Sending…" : "Yes, tick and send"}</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={ask} onOpenChange={(o) => { if (!o && !busy) setAsk(false); }}>
-        <DialogContent title="Approve the whole bill?">
+        <DialogContent title="Approve the bill and send the email?">
           <p className="text-[13px] leading-relaxed">
             {open.length > 0 && <><b className="font-semibold">{open.length} line{open.length === 1 ? "" : "s"}, {usd(openSum)}</b>, {open.length === 1 ? "is" : "are"} still to check or on hold. </>}
             {unread.length > 0 && <>{unread.length} line{unread.length === 1 ? " has" : "s have"} not been checked against the logs and photos. </>}
-            Approving marks the whole bill of {usd(d.gross)} as approved.
+            Approving marks the whole bill of {usd(d.gross)} as approved, and an email is sent now from <b className="font-semibold">rakesh@mtreh.com</b> to <b className="font-semibold">{approvedTo}</b> saying it is approved. The email cannot be taken back.
           </p>
           <div className="mt-4 flex justify-end gap-2">
             <Button variant="ghost" disabled={busy} onClick={() => setAsk(false)}>Cancel</Button>
-            <Button variant="primary" disabled={busy} onClick={() => approve(true)}>{busy ? "Approving…" : "Approve anyway"}</Button>
+            <Button variant="primary" disabled={busy} onClick={() => approve(true)}>{busy ? "Approving…" : "Yes, approve and send"}</Button>
           </div>
         </DialogContent>
       </Dialog>

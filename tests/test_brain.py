@@ -721,7 +721,8 @@ def test_a_confirmed_tick_sends_at_once_and_an_outage_only_delays_the_email(monk
         ob.coll.update_one({"outbox_id": doc["outbox_id"]}, {"$set": {"error": "HTTP 504"}, "$inc": {"attempts": 1}})
         return {"status": "queued", "error": "HTTP 504"}
 
-    assert mail.on_step(row, "manju_approved", True, user) is None                # only two steps send anything
+    assert mail.on_step(row, "team_reviewed", True, user) is None                 # that step sends nothing
+    assert mail.on_step(row, "manju_approved", True, user)["status"] == "not_sent" and ob.coll.count_documents({}) == 0   # already ready to pay: JP Sir has that email
     monkeypatch.setattr(ob, "send_one", timing_out)                               # the mail service is down
     st = mail.on_step(row, "ready_to_pay", True, user)
     assert st["now"] == "not_accepted" and st["status"] == "queued" and st["to"] == ["JP Sir"] and len(tried) == 1   # tried at once
@@ -738,7 +739,91 @@ def test_a_confirmed_tick_sends_at_once_and_an_outage_only_delays_the_email(monk
     assert mail.on_step(other, "paid", False, user) == {"status": "cancelled"}    # unticked while it had not managed to go: stopped
     hold = dict(row, bill_id=78, title="General Remodel / Repair-5 (Hold-back)")
     assert mail.on_step(hold, "paid", True, user)["status"] == "not_sent" and ob.coll.count_documents({"ref": "78:paid"}) == 0
-    assert mail.recipients() == {"ready_to_pay": {"to": ["JP Sir"], "cc": []}, "paid": {"to": ["Wes Stone", "Kelly Stone"], "cc": ["Manjunath Sir"]}}
+    assert mail.recipients() == {"manju_approved": {"to": ["JP Sir"], "cc": []}, "ready_to_pay": {"to": ["JP Sir"], "cc": []},
+                                 "paid": {"to": ["Wes Stone", "Kelly Stone"], "cc": ["Manjunath Sir"]}}
+
+
+def test_manju_sir_approved_emails_jp_sir_once(monkeypatch):
+    mail, row = _bill_mail(monkeypatch)
+    row = dict(row, steps={"manju_approved": {"at": datetime(2026, 11, 12, 14, 15, tzinfo=timezone.utc), "by_name": "Manjunath Sir"}, "team_reviewed": None, "ready_to_pay": None, "paid": None})
+    user = {"user_id": "manjunath", "name": "Manjunath Sir"}
+    ob = mail.outbox()
+
+    def accepted(doc):
+        ob.coll.update_one({"outbox_id": doc["outbox_id"]}, {"$set": {"status": "sent", "sent_at": datetime.now(timezone.utc)}})
+        return {"status": "sent"}
+
+    monkeypatch.setattr(ob, "send_one", accepted)
+    st = mail.on_step(row, "manju_approved", True, user)
+    assert st["now"] == "sent" and st["to"] == ["JP Sir"]
+    d = ob.coll.find_one({"ref": "77:manju_approved"})
+    assert d["subject"].startswith("Approved — General Remodel / Repair-5 (Contractor) — ") and [x["address"] for x in d["to"]] == ["jp@mtreh.com"] and d["cc"] == []
+    for piece in ("JP Sir, this bill has been approved by Manjunath Sir. It is now with you.", "$7,531.88", "Framing", "THE PROPERTY", "/bills/77",
+                  "12 Nov 2026, 9:15 AM EST — Manjunath Sir", "“Manju Sir approved” was ticked by Manjunath Sir"):
+        assert piece in d["text"], piece
+    assert mail.on_step(row, "manju_approved", True, user)["now"] == "already_sent" and ob.coll.count_documents({}) == 1    # ticked again: not a second email
+    hold = dict(row, bill_id=78, title="General Remodel / Repair-5 (Hold-back)")
+    assert mail.on_step(hold, "manju_approved", True, user)["status"] == "not_sent"
+
+
+def test_new_bills_are_told_to_manju_sir_once_in_one_email(monkeypatch):
+    from mangotree.brain import billmail as bm
+    mail, _ = _bill_mail(monkeypatch)
+    db = mail.mongo.db
+    day = datetime(2026, 11, 23, 13, 0, tzinfo=timezone.utc)
+    line = [{"title": "Cabinets", "amount": 100.0}]
+
+    def bill(i, **k):
+        return {"bill_id": i, "property_id": "durham_st", "title": f"Bill {i}", "number": f"B-{i}", "pay_to": "KVC", "amount": 100.0 * i, "invoice_date": day,
+                "due_date": day + timedelta(days=2), "in_review": True, "status": "In review", "created_by": "Kelly Stone", "line_items": line, **k}
+    db["bt_bills"].insert_many([bill(1), bill(2, file_names=["Quote.pdf"]), bill(3, title="Bill 3 (Hold-back)", holdback=True), bill(4, source="contractor"), bill(5, line_items=[]),
+                                bill(6), bill(7)])
+    db["bill_tracking"].insert_one({"bill_id": 6, "steps": {"manju_approved": {"at": day, "by_name": "Manjunath Sir"}}})      # approved already: nothing to tell
+    db["bill_tracking"].insert_one({"bill_id": 7, "told_new": {"at": day}})                                                    # told before
+    monkeypatch.setattr(bm.BillMail, "_found", lambda self, i: [f"Line of bill {i}: Not in the record."])
+    ob = mail.outbox()
+    sent = []
+
+    def accepted(doc):
+        sent.append(doc["outbox_id"])
+        ob.coll.update_one({"outbox_id": doc["outbox_id"]}, {"$set": {"status": "sent", "sent_at": datetime.now(timezone.utc)}})
+        return {"status": "sent"}
+
+    monkeypatch.setattr(ob, "send_one", accepted)
+    assert [r["bill_id"] for r in mail.new_bills()] == [1, 2]            # not the hold-back, the portal bill, the one with no lines yet, the approved one, the one told
+    st = mail.tell_new()
+    assert st["now"] == "sent" and st["bill_ids"] == [1, 2] and len(sent) == 1
+    d = ob.coll.find_one({"kind": "bill_new"})
+    assert [x["address"] for x in d["to"]] == ["manjunath@mtreh.com"] and d["subject"] == "New bills to approve — 2 bills — $300.00" and d["meta"]["bill_ids"] == [1, 2]
+    for piece in ("Manjunath Sir, 2 new bills have come in from Buildertrend", "Bill 1", "Bill 2", "Quote.pdf", "Line of bill 2: Not in the record.", "/bills/1", "25 Nov 2026",
+                  "STILL WAITING FOR YOUR APPROVAL FROM BEFORE", "Bill 7", "not an inspection"):
+        assert piece in d["text"], piece
+    assert "Bill 6" not in d["text"] and "Hold-back" not in d["text"]
+    assert mail.tell_new() == {"status": "none"} and len(sent) == 1      # told once: the next pull says nothing about them
+    db["bt_bills"].update_one({"bill_id": 5}, {"$set": {"line_items": line}})            # its lines arrive: now it is told, alone
+    st = mail.tell_new()
+    assert st["bill_ids"] == [5] and ob.coll.find_one({"meta.bill_ids": [5]})["subject"].startswith("New bill to approve — Bill 5 — ")
+    assert db["bill_tracking"].find_one({"bill_id": 5})["told_new"]["outbox_id"] == st["outbox_id"]
+
+
+def test_a_line_buildertrend_ties_to_an_approved_change_order_is_a_change_order_line():
+    import mongomock
+    from mangotree.brain.moneysheet import MoneySheet
+
+    class _M:
+        db = mongomock.MongoClient().db
+
+    sheet = MoneySheet(_M(), store=object())
+    estimate = {"groups": [{"title": "Interior", "lines": [{"line_id": 1, "title": "Framing", "cost_code": "07 - Framing", "builder_cost": 5000.0, "price": 5500.0, "po_line_id": 11}]}]}
+    bills = [{"bill_id": 1, "status": "In review", "in_review": True, "amount": 4250.0,
+              "line_items": [{"title": "Mold remediation - basement", "cost_code": "06 - Subcontractor Services", "amount": 4250.0, "unit_cost": 8500.0, "po_line_id": 555, "variance": None}]}]
+    rows, _ = sheet._rows(estimate, bills, set())
+    mold = next(r for r in rows if r["title"].startswith("Mold"))
+    assert mold["kind"] == "other" and mold["revised"] == 0.0                              # nothing ties it: billed outside the proposal
+    rows, _ = sheet._rows(estimate, bills, set(), {555: {"co_id": 9}})
+    mold = next(r for r in rows if r["title"].startswith("Mold"))
+    assert mold["kind"] == "change_order" and mold["group"] == "Change orders" and mold["change_orders"] == 8500.0 and mold["po_line_ids"] == [555]   # the variance box was left empty
+    assert sheet.change_order_for(mold, {555: {"co_id": 9, "number": "0002", "approved": True}})["number"] == "0002"
 
 
 def test_a_mail_service_outage_never_drops_an_email_but_a_refused_email_ends(monkeypatch):
