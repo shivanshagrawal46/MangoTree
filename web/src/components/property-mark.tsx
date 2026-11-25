@@ -3,9 +3,11 @@
 /* Every property has its own colour (2026-11-26): a small square with the street's initial,
    shown wherever the property is named, so a row is placed at a glance.
 
-   The colour is fixed by the property itself: its id picks a place among 24 colours, and where
-   two would land on the same place the later one (by id) takes the next free one. So no two
-   properties of the portfolio share a colour, and a property keeps its colour from page to page. */
+   The look is Twenty's: a soft tint with the letter in the stronger shade of the same colour
+   (its tag colours, --t-tag-background-* and --t-tag-text-*). The colour is fixed by the
+   property itself: its id picks one of the 24 colour names, and where two would land on the
+   same one the later (by id) takes the next free one. So no two properties of the portfolio
+   share a colour, and a property keeps its colour from page to page. */
 
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -13,9 +15,9 @@ import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type { PropertySummary } from "@/lib/types";
 
-const COLOURS = ["#c2410c", "#1d4ed8", "#15803d", "#7e22ce", "#a16207", "#0e7490", "#be185d", "#475569", "#4d7c0f", "#4338ca", "#b91c1c", "#0f766e",
-  "#ea580c", "#0369a1", "#047857", "#a21caf", "#7c4a2d", "#1e3a8a", "#be123c", "#6d28d9", "#57534e", "#5f6b1e", "#6b2d5c", "#b45309"];
-const NEUTRAL = "var(--fg-faint)";
+const COLOURS = ["blue", "tomato", "green", "purple", "amber", "cyan", "pink", "bronze", "grass", "iris", "red", "turquoise",
+  "orange", "sky", "jade", "plum", "brown", "violet", "crimson", "mint", "gold", "lime", "ruby", "yellow"];
+const NEUTRAL = "gray";
 
 function place(id: string): number {
   let h = 2166136261;
@@ -34,7 +36,7 @@ export function assignColours(ids: string[]): Record<string, string> {
   return out;
 }
 
-/** The colour of each property of the portfolio. Uses the list the sidebar already holds: no call of its own. */
+/** The colour name of each property of the portfolio. Uses the list the sidebar already holds: no call of its own. */
 export function usePropertyColours(): (id?: string | null) => string {
   const q = useQuery({ queryKey: ["properties"], queryFn: () => api.get<PropertySummary[]>("/properties"), staleTime: 5 * 60_000 });
   const map = React.useMemo(() => assignColours((q.data || []).map((p) => p.property_id)), [q.data]);
@@ -50,7 +52,10 @@ export function propertyInitial(label: string): string {
   return (word[0] || "").toUpperCase();
 }
 
-/** The coloured square with the initial. `colour` comes from usePropertyColours(). */
+/** The tinted square with the initial. `colour` is a colour name from usePropertyColours(). */
 export function PropertyMark({ label, colour, className }: { label: string; colour: string; className?: string }) {
-  return <span aria-hidden style={{ background: colour }} className={cn("inline-grid place-items-center h-3.5 w-3.5 shrink-0 rounded-[3px] text-[9px] leading-none font-semibold text-white", className)}>{propertyInitial(label)}</span>;
+  return (
+    <span aria-hidden style={{ background: `var(--t-tag-background-${colour})`, color: `var(--t-tag-text-${colour})` }}
+      className={cn("inline-grid place-items-center h-4 w-4 shrink-0 rounded-[4px] text-[10px] leading-none font-medium", className)}>{propertyInitial(label)}</span>
+  );
 }

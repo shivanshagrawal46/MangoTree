@@ -24,7 +24,7 @@ import { toast } from "sonner";
 import { AlertTriangle, Check, CircleCheck, CircleMinus, CircleX, Copy, ExternalLink, FileText, MessageSquareText, Minus, Pause, Receipt, RefreshCw } from "lucide-react";
 import { api, subscribeJob } from "@/lib/api";
 import { Dialog, DialogContent, Skeleton } from "@/components/ui";
-import { Block, Btn, Figure, Figures, Label, PageHead, Tag, TH, type Tone } from "@/components/ds";
+import { Block, Btn, Figure, Figures, Label, PageBody, PageHead, Tag, TH, type Tone } from "@/components/ds";
 import { PropertyMark, usePropertyColours } from "@/components/property-mark";
 import { ago, cn, fmtDate } from "@/lib/utils";
 import { errText } from "@/lib/brain";
@@ -78,7 +78,7 @@ const usd = (n?: number | null) => (n == null ? "—" : n.toLocaleString("en-US"
 const amt = (n?: number | null) => (n == null || Math.abs(n) < 0.005 ? "—" : n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
 const et = (iso?: string | null) => (iso ? new Date(iso).toLocaleString("en-US", { timeZone: "America/New_York", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }) + " ET" : "");
 /* A cell of the line-by-line table: the text of a line can run to several lines, so the row grows. */
-const CELL = "px-2 py-2 align-top text-[13px] leading-normal border-b border-r border-line/80 last:border-r-0";
+const CELL = "px-3 py-2 align-top text-[13px] leading-normal border-b border-line-soft";
 
 const VERDICT: Record<Verdict, { label: string; tone: Tone }> = {
   shown: { label: "Shown in a photo", tone: "green" },
@@ -289,8 +289,8 @@ export function BillCheckPage({ billId }: { billId: string }) {
   const colourOf = usePropertyColours();
 
   const head = <Receipt size={16} strokeWidth={1.6} />;
-  if (q.isError) return <div><PageHead icon={head} crumbs={[{ label: "Bills", href: "/bills" }, { label: "Bill" }]} /><div className="px-6 py-8 text-[13px] text-muted">That bill could not be opened: {errText(q.error)} <Link href="/bills" className="text-accent hover:underline">Back to Bills</Link></div></div>;
-  if (!q.data) return <div><PageHead icon={head} crumbs={[{ label: "Bills", href: "/bills" }, { label: "…" }]} /><div className="px-6 py-4 max-w-[1280px] space-y-4"><Skeleton className="h-8 w-96" /><Skeleton className="h-24" /><Skeleton className="h-72" /></div></div>;
+  if (q.isError) return <div><PageHead icon={head} crumbs={[{ label: "Bills", href: "/bills" }, { label: "Bill" }]} /><PageBody><div className="px-6 py-8 text-[13px] text-muted">That bill could not be opened: {errText(q.error)} <Link href="/bills" className="text-accent hover:underline">Back to Bills</Link></div></PageBody></div>;
+  if (!q.data) return <div><PageHead icon={head} crumbs={[{ label: "Bills", href: "/bills" }, { label: "…" }]} /><PageBody><div className="px-6 py-4 max-w-[1280px] space-y-4"><Skeleton className="h-8 w-96" /><Skeleton className="h-24" /><Skeleton className="h-72" /></div></PageBody></div>;
   const d = q.data;
   const can = d.can.lines;
   const approved = d.steps?.manju_approved;
@@ -366,6 +366,7 @@ export function BillCheckPage({ billId }: { billId: string }) {
         ) : can && <Btn variant="accent" className="shrink-0" disabled={busy} onClick={() => setAsk(true)}><Check size={14} strokeWidth={2.4} /> Approve bill</Btn>}
       </PageHead>
 
+      <PageBody>
       <div className="px-6 pt-4 pb-8 max-w-[1280px]">
         {/* ───────── which bill ───────── */}
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
@@ -458,6 +459,7 @@ export function BillCheckPage({ billId }: { billId: string }) {
           “Approve bill” ticks “Manju Sir approved” on the Bills page and emails JP Sir that it is approved. “Approve and mark ready to pay” also ticks “Team reviewed” and “Ready to pay”, and emails JP Sir at once.
         </p>
       </div>
+      </PageBody>
 
       <Dialog open={zoom != null} onOpenChange={(o) => { if (!o) setZoom(null); }}>
         <DialogContent wide className="rounded-lg p-5" title="Photo from the contractor's log">

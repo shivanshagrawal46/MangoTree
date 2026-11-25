@@ -11,6 +11,7 @@ import { toast } from "sonner";
 import { ExternalLink, Globe, Handshake, Mail, Phone, Search, Users } from "lucide-react";
 import { api } from "@/lib/api";
 import { Card, Skeleton } from "@/components/ui";
+import { PageBody, PageHead } from "@/components/ds";
 import { copyText } from "@/components/email-draft";
 import { cn, fmtDate } from "@/lib/utils";
 
@@ -74,11 +75,11 @@ export default function BrokersPage() {
   const shown = areas.reduce((n, a) => n + a.shown.length, 0);
 
   return (
-    <div className="px-6 py-6 max-w-[1400px] mx-auto">
-      <div>
-        <h1 className="text-[20px] font-semibold tracking-tight">Brokers</h1>
-        <p className="text-[12.5px] text-muted mt-0.5">Real-estate agents and brokers, by the area of our properties. Click a phone number or an email address to copy it.</p>
-      </div>
+    <div>
+      <PageHead icon={<Handshake size={16} strokeWidth={1.6} />} crumbs={[{ label: "Brokers" }]}>
+        <span className="hidden lg:inline text-[12px] text-faint">By the area of our properties · click a phone number or an email address to copy it</span>
+      </PageHead>
+      <PageBody><div className="px-6 pb-8 max-w-[1400px]">
 
       {!d ? <div className="mt-4 space-y-2.5"><Skeleton className="h-16" /><Skeleton className="h-40" /></div> : (
         <>
@@ -176,6 +177,7 @@ export default function BrokersPage() {
           </p>
         </>
       )}
+      </div></PageBody>
     </div>
   );
 }

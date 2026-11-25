@@ -3,8 +3,10 @@
 /* To reply — the emails waiting for an answer, and nothing else on the page. */
 
 import { useQuery } from "@tanstack/react-query";
+import { Reply } from "lucide-react";
 import { api } from "@/lib/api";
-import { Card, Skeleton } from "@/components/ui";
+import { Skeleton } from "@/components/ui";
+import { PageBody, PageHead, View, Views } from "@/components/ds";
 import { ReplyList, replyState } from "@/components/brain/replies";
 import type { Draft } from "@/lib/brain";
 
@@ -14,15 +16,20 @@ export default function RepliesPage() {
   const ready = rows.filter((d) => replyState(d).rank === 2).length;
   const rewrite = rows.filter((d) => replyState(d).rank === 0).length;
   return (
-    <div className="px-6 lg:px-10 py-8 max-w-6xl mx-auto">
-      <h1 className="text-[24px] font-semibold tracking-tight">To reply</h1>
-      <p className="text-[13.5px] text-muted mt-1">
-        {q.isLoading ? "Checking the mail…" : rows.length === 0 ? "No email is waiting for a reply." :
-          `${rows.length} email${rows.length === 1 ? "" : "s"} waiting · ${ready} ready to send · ${rows.length - ready - rewrite} with points to check${rewrite ? ` · ${rewrite} partly answered already` : ""}. A reply sent from Outlook closes its line by itself.`}
-      </p>
-      <Card className="mt-5 overflow-hidden">
-        {q.isLoading ? <div className="p-5 space-y-3"><Skeleton className="h-9" /><Skeleton className="h-9" /><Skeleton className="h-9" /></div> : <ReplyList drafts={rows} />}
-      </Card>
+    <div>
+      <PageHead icon={<Reply size={16} strokeWidth={1.6} />} crumbs={[{ label: "To reply" }]}>
+        <span className="text-[12px] text-faint">A reply sent from Outlook closes its line by itself</span>
+      </PageHead>
+      <PageBody>
+      {!q.isLoading && rows.length > 0 && (
+        <Views>
+          <View active count={rows.length}>Waiting</View>
+          <span className="flex-1" />
+          <span className="pr-2 text-[12px] text-faint tnum">{ready} ready to send · {rows.length - ready - rewrite} with points to check{rewrite > 0 && <> · <span className="text-critical">{rewrite} to rewrite</span></>}</span>
+        </Views>
+      )}
+      {q.isLoading ? <div className="p-4 space-y-2"><Skeleton className="h-6" /><Skeleton className="h-6" /><Skeleton className="h-6" /></div> : <ReplyList drafts={rows} />}
+      </PageBody>
     </div>
   );
 }

@@ -5,13 +5,13 @@
    what happened. Always in the same order. */
 
 import * as React from "react";
+import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { ChevronDown, Gavel, HardHat, Info, Mail, Plus, RefreshCw } from "lucide-react";
 import { api, subscribeJob } from "@/lib/api";
-import { Badge, Button, Dialog, DialogContent, Input, Select } from "@/components/ui";
+import { Badge, Button, Input, Select } from "@/components/ui";
 import { useUser } from "@/components/providers";
-import { DraftCard } from "@/components/brain/draft";
 import { sortReplies } from "@/components/brain/replies";
 import { ActivityList, ItemRow } from "@/components/brain/file";
 import { ago, cn, fmtDate } from "@/lib/utils";
@@ -163,7 +163,8 @@ export function PropertyDetails({ pid, f, days, setDays, onTab }: { pid: string;
   const { user } = useUser();
   const qc = useQueryClient();
   const key = ["brain", "property", pid, days];
-  const [openDraft, setOpenDraft] = React.useState<Draft | null>(null);
+  const router = useRouter();
+  const setOpenDraft = (d: Draft) => router.push(`/replies/${d.draft_id}`);      // a reply opens on its own page
   const [openBill, setOpenBill] = React.useState<number | null>(null);
   const [adding, setAdding] = React.useState(false);
   const [title, setTitle] = React.useState("");
@@ -326,12 +327,6 @@ export function PropertyDetails({ pid, f, days, setDays, onTab }: { pid: string;
           <button type="button" onClick={() => { if (window.confirm("Rebuild this file from the records? Open items and waiting drafts are re-derived.")) build(); }} disabled={busy} className="ml-2 inline-flex items-center gap-1 text-accent hover:underline"><RefreshCw size={10} /> {busy ? "Rebuilding…" : "Rebuild"}</button>
         </div>
       )}
-
-      <Dialog open={!!openDraft} onOpenChange={(o) => !o && setOpenDraft(null)}>
-        <DialogContent wide className="max-h-[90vh] overflow-y-auto" title="Reply">
-          {openDraft && <DraftCard draft={openDraft} showProperty={false} onChange={(next) => { if (next.status !== "ready") setOpenDraft(null); }} />}
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

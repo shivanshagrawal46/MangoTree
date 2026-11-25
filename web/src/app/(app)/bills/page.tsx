@@ -13,7 +13,7 @@ import { toast } from "sonner";
 import { Calendar, CircleCheck, CircleDollarSign, Home, MessageSquare, Receipt } from "lucide-react";
 import { api } from "@/lib/api";
 import { Dialog, DialogContent, Skeleton } from "@/components/ui";
-import { Btn, Chip, Col, Figure, Figures, PageHead, Tag, TD, TH, Tick, View, Views, type Tone } from "@/components/ds";
+import { Btn, Chip, Col, PageBody, PageHead, Tag, TD, TH, Tick, View, Views, type Tone } from "@/components/ds";
 import { PropertyMark, usePropertyColours } from "@/components/property-mark";
 import { BillLines, usd } from "@/components/brain/side";
 import { EntryChangeOrders } from "@/components/brain/entry";
@@ -63,7 +63,7 @@ const shortName = (t?: string) => (t || "").replace(/\s*\(contractor\)\s*$/i, ""
 /* The step headings, short enough for a column; the full name is on the heading's tooltip and on each box. */
 const SHORT: Record<string, string> = { manju_approved: "Manju Sir", team_reviewed: "Team" };
 /* Bill · Property · Bill date · Amount · Check · the four steps · Open · Comment (the one column that takes the spare width). */
-const WIDTHS = [236, 176, 84, 92, 96, 92, 84, 96, 84, 76];
+const WIDTHS = [222, 176, 104, 96, 108, 88, 88, 108, 72, 84];
 /* A bill is overdue once its due day has passed and it is not ticked paid (worked out now, not from the day Buildertrend was last read). */
 const overdue = (due?: string | null) => !!due && Date.now() > new Date(due).getTime() + 12 * 3_600_000;
 
@@ -152,25 +152,24 @@ export default function BillsPage() {
       <PageHead icon={<Receipt size={16} strokeWidth={1.6} />} crumbs={[{ label: "Bills" }]}>
         {q.data?.pulled_at && <span className="text-[12px] text-faint">Buildertrend read {ago(q.data.pulled_at)}</span>}
       </PageHead>
+      <PageBody>
       <Views>
         <View active={view === "open"} count={view === "open" && q.data ? rows.length : undefined} onClick={() => { setView("open"); setOpen(null); }}>To process</View>
         <View active={view === "paid"} count={view === "paid" && q.data ? rows.length : undefined} onClick={() => { setView("paid"); setOpen(null); }}>Paid</View>
         <span className="flex-1" />
-        <span className="pr-2 text-[12px] text-faint">Times are US Eastern</span>
+        {/* The figures of the list, in one quiet line. */}
+        {q.data && rows.length > 0 && (
+          <span className="pr-2 text-[12px] text-faint tnum truncate">
+            {usd(total)} {view === "open" ? "waiting" : "paid"} on {properties} propert{properties === 1 ? "y" : "ies"}
+            {view === "open"
+              ? <> · oldest <span className={cn(oldest > 14 ? "text-critical" : oldest > 7 ? "text-high" : undefined)}>{oldest} day{oldest === 1 ? "" : "s"}</span>{late > 0 && <> · <span className="text-critical">{late} past due</span></>}</>
+              : avgDays != null && <> · {avgDays.toFixed(1)} days on average to pay</>}
+            {" "}· {usd(q.data.held_back?.held_amount ?? 0)} held back
+          </span>
+        )}
       </Views>
 
-      <div className="px-4 pb-4 border-b border-line empty:hidden"><EntryChangeOrders /></div>
-
-      {q.data && rows.length > 0 && (
-        <Figures>
-          <Figure label={view === "open" ? "Bills to process" : "Bills paid"} value={rows.length} sub={view === "open" ? `${toCheck} with lines to check` : "ticked Paid here"} />
-          <Figure label={view === "open" ? "Amount waiting" : "Amount paid"} value={usd(total)} sub={`${properties} propert${properties === 1 ? "y" : "ies"}`} />
-          {view === "open"
-            ? <Figure label="Oldest bill" value={`${oldest} day${oldest === 1 ? "" : "s"}`} tone={oldest > 14 ? "text-critical" : oldest > 7 ? "text-high" : undefined} sub={`${late} past ${late === 1 ? "its" : "their"} due date`} />
-            : <Figure label="Average time to pay" value={avgDays != null ? `${avgDays.toFixed(1)} days` : "—"} sub="from bill date to Paid" />}
-          <Figure label="Held back (10%)" value={usd(q.data.held_back?.held_amount ?? 0)} sub={`${q.data.held_back?.held ?? 0} hold-back bills, not listed`} />
-        </Figures>
-      )}
+      <div className="px-4 pb-4 border-b border-line-soft empty:hidden"><EntryChangeOrders /></div>
 
       <div className="overflow-x-auto">
         <table className="w-full min-w-[1290px] table-fixed border-collapse">
@@ -189,7 +188,7 @@ export default function BillsPage() {
           </thead>
           <tbody>
             {!q.data ? <tr><td colSpan={cols} className="p-4"><div className="space-y-2"><Skeleton className="h-6" /><Skeleton className="h-6" /><Skeleton className="h-6" /></div></td></tr>
-              : rows.length === 0 ? <tr><td colSpan={cols} className="h-8 px-2 text-[13px] text-faint border-b border-line">{view === "open" ? "No bill is in review in Buildertrend, and none is part-way through." : "Tick “Paid” on a bill and it moves here with its times."}</td></tr>
+              : rows.length === 0 ? <tr><td colSpan={cols} className="h-8 px-3 text-[13px] text-faint border-b border-line">{view === "open" ? "No bill is in review in Buildertrend, and none is part-way through." : "Tick “Paid” on a bill and it moves here with its times."}</td></tr>
                 : rows.map((r) => {
                   const paid = r.steps.paid;
                   const days = daysOpen(r.bill_moment || r.bill_date);
@@ -201,14 +200,14 @@ export default function BillsPage() {
                   return (
                     <React.Fragment key={r.bill_id}>
                       <tr onClick={go} className="cursor-pointer hover:bg-hover transition-colors">
-                        <td className={cn(TD, "text-fg font-medium")} title={[r.title || r.number, r.number, r.pay_to && `pay to ${r.pay_to}`].filter(Boolean).join(" · ")}>
+                        <td className={TD} title={[r.title || r.number, r.number, r.pay_to && `pay to ${r.pay_to}`].filter(Boolean).join(" · ")}>
                           {page ? <Link href={`/bills/${r.bill_id}`} onClick={(e) => e.stopPropagation()} className="hover:underline">{name}</Link> : name}
                         </td>
                         <td className={TD}>{r.property_id
                           ? <Link href={`/property/${r.property_id}?tab=bills`} onClick={(e) => e.stopPropagation()} className="inline-flex max-w-full align-middle hover:brightness-95"><Chip icon={<PropertyMark label={r.property} colour={colourOf(r.property_id)} />}>{r.property}</Chip></Link>
                           : r.property}</td>
-                        <td className={cn(TD, "tnum", isLate && "text-critical font-medium")} title={r.due_day ? `Due ${fmtDate(r.due_day, "d MMM yyyy")}${isLate ? ", past its due date" : ""}` : undefined}>{fmtDate(r.bill_day, "d MMM")}</td>
-                        <td className={cn(TD, "text-right tnum text-fg")}>{usd(r.amount)}</td>
+                        <td className={cn(TD, "tnum text-muted", isLate && "text-critical")} title={r.due_day ? `Due ${fmtDate(r.due_day, "d MMM yyyy")}${isLate ? ", past its due date" : ""}` : undefined}>{fmtDate(r.bill_day, "d MMM")}</td>
+                        <td className={cn(TD, "text-right tnum")}>{usd(r.amount)}</td>
                         <td className={TD}>{page && (!r.check ? <Tag>Not checked</Tag>
                           : r.check.check.count ? <Tag tone="amber" title={`${usd(r.check.check.amount)} to check`}>{r.check.check.count} to check</Tag>
                             : <Tag tone="green">{r.check.lines === 1 ? "Line supported" : "Lines supported"}</Tag>)}</td>
@@ -219,10 +218,11 @@ export default function BillsPage() {
                           const tip = m ? [s.label, et(m.at), took(r.bill_moment || r.bill_date, m.at) && `+${took(r.bill_moment || r.bill_date, m.at)} from the bill date`, m.by_name && `by ${m.by_name}`,
                             gone && `emailed ${(mail!.to || []).join(", ")} ${etTime(mail!.sent_at)}`].filter(Boolean).join(" · ") : s.label;
                           return (
-                            <td key={s.key} className={cn(TD, "text-center whitespace-normal py-1")} title={tip} onClick={(e) => e.stopPropagation()}>
-                              <span className="inline-flex items-center gap-1.5 align-middle">
+                            <td key={s.key} className={cn(TD, "text-center whitespace-normal py-1.5")} title={tip} onClick={(e) => e.stopPropagation()}>
+                              {/* The box, and under it the day it was ticked. */}
+                              <span className="inline-flex flex-col items-center gap-1 align-middle">
                                 <Tick checked={!!m} next={!m && next === s.key} label={`${s.label} — ${r.title || r.number}`} onChange={(v) => (v && sends(r, s.key) ? setAsk({ row: r, step: s.key }) : tick(r, s.key, v))} />
-                                {m && <span className="text-[12px] text-faint tnum">{etDay(m.at)}</span>}
+                                {m && <span className="text-[12px] leading-none text-muted tnum">{etDay(m.at)}</span>}
                               </span>
                               {m && mail?.status === "queued" && !mail.error && <div className="text-[11px] leading-tight text-high">email being sent</div>}
                               {m && mail?.status === "needs_consent" && <div className="text-[11px] leading-tight text-critical">email not sent: the mailbox must allow sending</div>}
@@ -258,21 +258,24 @@ export default function BillsPage() {
           </tbody>
           {q.data && rows.length > 0 && (
             <tfoot>
-              <tr className="text-[12px] text-faint [&>td]:border-b [&>td]:border-b-line">
-                <td className="h-8 px-2 border-r border-line/80">{rows.length} bill{rows.length === 1 ? "" : "s"}</td>
-                <td className="h-8 px-2 border-r border-line/80">{properties} propert{properties === 1 ? "y" : "ies"}</td>
-                <td className="border-r border-line/80" />
-                <td className="h-8 px-2 text-right tnum border-r border-line/80">{usd(total)}</td>
-                <td className="h-8 px-2 border-r border-line/80">{view === "open" ? `${toCheck} to check` : ""}</td>
-                {steps.map((s) => <td key={s.key} className="h-8 px-2 text-center tnum border-r border-line/80">{rows.filter((r) => r.steps[s.key]).length} of {rows.length}</td>)}
-                <td className="border-r border-line/80" /><td />
+              <tr className="text-[12px] text-faint [&>td]:border-b [&>td]:border-b-line-soft">
+                <td className="h-8 px-3">{rows.length} bill{rows.length === 1 ? "" : "s"}</td>
+                <td className="h-8 px-3">{properties} propert{properties === 1 ? "y" : "ies"}</td>
+                <td />
+                <td className="h-8 px-3 text-right tnum">{usd(total)}</td>
+                <td className="h-8 px-3">{view === "open" ? `${toCheck} to check` : ""}</td>
+                {steps.map((s) => <td key={s.key} className="h-8 px-3 text-center tnum">{rows.filter((r) => r.steps[s.key]).length} of {rows.length}</td>)}
+                <td /><td />
               </tr>
             </tfoot>
           )}
         </table>
       </div>
 
-      <div className="px-4 pt-3 pb-6 max-w-5xl space-y-2 text-[12px] leading-relaxed text-faint">
+      {/* How the page works is kept, but closed: it is read once, not every day. */}
+      <details className="px-3 pt-3 pb-6 max-w-5xl text-[12px] leading-relaxed text-faint">
+        <summary className="cursor-pointer select-none hover:text-muted">How this page works</summary>
+        <div className="mt-2 space-y-2">
         {q.data?.held_back && q.data.held_back.held > 0 && (
           <p className="text-muted">
             Hold-back bills are not listed: RKB keeps 10% of every draw until the work is complete.
@@ -285,7 +288,9 @@ export default function BillsPage() {
           A bill appears here when it is on Buildertrend’s “Bills need your approval” list, and stays until it is ticked paid. Each tick records the time and who made it: hold the pointer over a tick to see them. Unticking a box removes its time.
           A comment is RKB’s own note on the bill: it is saved when you leave the box, with who wrote it, and is not sent to anyone.
         </p>
-      </div>
+        </div>
+      </details>
+      </PageBody>
 
       <Dialog open={!!ask} onOpenChange={(o) => { if (!o && !sending) setAsk(null); }}>
         <DialogContent className="rounded-lg p-5" title={ask ? `Tick “${SENDS[ask.step]}” and send the email?` : ""}>

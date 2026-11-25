@@ -2,27 +2,34 @@
 
 /* The emails that are waiting for a reply — one line each, nothing else.
    Who wrote, about what, which property, how long it has waited, and whether
-   the written reply can go as it is. Click a line and the reply opens. */
+   the written reply can go as it is. A line opens the reply on its own page. */
 
 import * as React from "react";
-import { Dialog, DialogContent } from "@/components/ui";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useQuery } from "@tanstack/react-query";
+import { Reply } from "lucide-react";
+import { api } from "@/lib/api";
+import { Skeleton } from "@/components/ui";
+import { Chip, PageBody, PageHead, Tag, TD, TH, type Tone } from "@/components/ds";
+import { PropertyMark, usePropertyColours } from "@/components/property-mark";
 import { DraftCard } from "@/components/brain/draft";
 import { cn, fmtDate } from "@/lib/utils";
-import type { Draft } from "@/lib/brain";
+import { errText, type Draft } from "@/lib/brain";
 
-type State = { label: string; cls: string; rank: number };
+type State = { label: string; cls: string; tone: Tone; rank: number };
 
 export function replyState(d: Draft): State {
   // A call after the draft was written changed what it says (see brain/calls.py).
-  if (d.stale?.kind === "call") return { label: "Changed by a call — rewrite", cls: "bg-critical-soft text-critical", rank: 0 };
+  if (d.stale?.kind === "call") return { label: "Changed by a call — rewrite", cls: "bg-critical-soft text-critical", tone: "red", rank: 0 };
   // The reading-over of the lists found it overtaken by a later email (see brain/sweep.py).
-  if (d.stale?.kind === "record") return { label: "Out of date — rewrite", cls: "bg-critical-soft text-critical", rank: 0 };
-  if (d.stale?.kind === "not_needed") return { label: "Looks already answered", cls: "bg-high-soft text-high", rank: 0 };
-  if (d.stale?.why) return { label: "Partly answered — rewrite", cls: "bg-critical-soft text-critical", rank: 0 };
-  if (!d.verification?.ran) return { label: "Not yet checked", cls: "bg-high-soft text-high", rank: 1 };
+  if (d.stale?.kind === "record") return { label: "Out of date — rewrite", cls: "bg-critical-soft text-critical", tone: "red", rank: 0 };
+  if (d.stale?.kind === "not_needed") return { label: "Looks already answered", cls: "bg-high-soft text-high", tone: "amber", rank: 0 };
+  if (d.stale?.why) return { label: "Partly answered — rewrite", cls: "bg-critical-soft text-critical", tone: "red", rank: 0 };
+  if (!d.verification?.ran) return { label: "Not yet checked", cls: "bg-high-soft text-high", tone: "amber", rank: 1 };
   const n = d.verification.open?.length || 0;
-  if (n > 0) return { label: `${n} point${n === 1 ? "" : "s"} to check`, cls: "bg-high-soft text-high", rank: 1 };
-  return { label: "Ready to send", cls: "bg-good-soft text-good", rank: 2 };
+  if (n > 0) return { label: `${n} point${n === 1 ? "" : "s"} to check`, cls: "bg-high-soft text-high", tone: "amber", rank: 1 };
+  return { label: "Ready to send", cls: "bg-good-soft text-good", tone: "green", rank: 2 };
 }
 
 function daysSince(date?: string) {
@@ -41,41 +48,65 @@ export function sortReplies(drafts: Draft[]) {
   return [...drafts].sort((a, b) => t(b) - t(a));
 }
 
+/* An email's line is given room above and below: these are read one by one, not scanned like figures. */
+const ROOM = "h-12";
+
+/** Where one waiting reply opens: its own page. */
+export const replyHref = (id: string) => `/replies/${id}`;
+
 export function ReplyList({ drafts, limit }: { drafts: Draft[]; limit?: number }) {
-  const [open, setOpen] = React.useState<Draft | null>(null);
+  const router = useRouter();
+  const colourOf = usePropertyColours();
   const rows = sortReplies(drafts).slice(0, limit || drafts.length);
-  if (!rows.length) return <div className="px-5 py-6 text-[13.5px] text-muted">No email is waiting for a reply.</div>;
+  if (!rows.length) return <div className="h-8 px-4 flex items-center text-[13px] text-faint">No email is waiting for a reply.</div>;
   return (
-    <>
-      <div className="hidden md:grid grid-cols-[170px_minmax(0,1fr)_150px_84px_176px] gap-4 px-5 py-2 text-[10.5px] font-semibold uppercase tracking-[0.08em] text-faint border-b border-line">
-        <div>From</div><div>Email</div><div>Property</div><div>Waiting</div><div>Reply</div>
-      </div>
-      <ul className="divide-y divide-line">
-        {rows.map((d) => {
-          const s = replyState(d);
-          const from = d.in_reply_to?.from_name || d.to?.[0]?.name || "—";
-          const late = daysSince(d.in_reply_to?.date) >= 3;
-          return (
-            <li key={d.draft_id}>
-              <button type="button" onClick={() => setOpen(d)} className="w-full text-left grid md:grid-cols-[170px_minmax(0,1fr)_150px_84px_176px] gap-x-4 gap-y-1 items-center px-5 py-3 hover:bg-sunken/60 transition">
-                <div className="text-[13.5px] font-semibold truncate">{from}</div>
-                <div className="min-w-0">
-                  <div className="text-[13.5px] truncate">{d.in_reply_to?.subject || d.subject}</div>
-                  {d.why && <div className="text-[12px] text-muted truncate">{d.why}</div>}
-                </div>
-                <div className="text-[12.5px] text-muted truncate">{(d.properties || []).map((p) => p.name).join(", ") || "General"}</div>
-                <div className={cn("text-[12.5px] tnum", late ? "text-critical font-medium" : "text-muted")} title={d.in_reply_to?.date ? `Received ${fmtDate(d.in_reply_to.date, "EEE d MMM, HH:mm")}` : undefined}>{waited(d.in_reply_to?.date)}</div>
-                <div><span className={cn("inline-flex items-center h-6 px-2.5 rounded-full text-[11.5px] font-medium whitespace-nowrap", s.cls)}>{s.label}</span></div>
-              </button>
-            </li>
-          );
-        })}
-      </ul>
-      <Dialog open={!!open} onOpenChange={(o) => !o && setOpen(null)}>
-        <DialogContent wide className="max-h-[90vh] overflow-y-auto" title="Reply">
-          {open && <DraftCard draft={open} onChange={(next) => { if (next.status !== "ready") setOpen(null); }} />}
-        </DialogContent>
-      </Dialog>
-    </>
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-[900px] table-fixed border-collapse">
+        <colgroup><col style={{ width: 176 }} /><col /><col style={{ width: 200 }} /><col style={{ width: 92 }} /><col style={{ width: 224 }} /></colgroup>
+        <thead><tr><th className={TH}>From</th><th className={TH}>Email</th><th className={TH}>Property</th><th className={TH}>Waiting</th><th className={TH}>Reply</th></tr></thead>
+        <tbody>
+          {rows.map((d) => {
+            const s = replyState(d);
+            const from = d.in_reply_to?.from_name || d.to?.[0]?.name || "—";
+            const late = daysSince(d.in_reply_to?.date) >= 3;
+            const props = d.properties || [];
+            return (
+              <tr key={d.draft_id} onClick={() => router.push(replyHref(d.draft_id))} className="cursor-pointer hover:bg-hover transition-colors">
+                <td className={cn(TD, ROOM)}>{from}</td>
+                <td className={cn(TD, ROOM)} title={d.why || undefined}>
+                  <Link href={replyHref(d.draft_id)} onClick={(e) => e.stopPropagation()} className="text-fg hover:underline">{d.in_reply_to?.subject || d.subject}</Link>
+                  {d.why && <span className="text-faint"> · {d.why}</span>}
+                </td>
+                <td className={cn(TD, ROOM)}>{props.length ? <Chip icon={<PropertyMark label={props[0].name} colour={colourOf(props[0].property_id)} />}>{props.map((p) => p.name).join(", ")}</Chip> : <span className="text-faint">General</span>}</td>
+                <td className={cn(TD, ROOM, "tnum text-muted", late && "text-critical")} title={d.in_reply_to?.date ? `Received ${fmtDate(d.in_reply_to.date, "EEE d MMM, HH:mm")}` : undefined}>{waited(d.in_reply_to?.date)}</td>
+                <td className={cn(TD, ROOM)}><Tag tone={s.tone}>{s.label}</Tag></td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/* One waiting reply on its own page: the email that came, the reply as written, and what to do with it. */
+export function ReplyPage({ draftId }: { draftId: string }) {
+  const router = useRouter();
+  const q = useQuery({ queryKey: ["brain", "draft", draftId], queryFn: () => api.get<Draft>(`/brain/drafts/${draftId}`) });
+  const icon = <Reply size={16} strokeWidth={1.6} />;
+  const d = q.data;
+  return (
+    <div>
+      <PageHead icon={icon} crumbs={[{ label: "To reply", href: "/replies" }, { label: d ? (d.in_reply_to?.subject || d.subject || "Reply") : "…" }]}>
+        {d && <Tag tone={replyState(d).tone}>{replyState(d).label}</Tag>}
+      </PageHead>
+      <PageBody>
+        <div className="px-6 pt-4 pb-10 max-w-[1040px]">
+          {q.isError ? <div className="text-[13px] text-muted">That reply could not be opened: {errText(q.error)} <Link href="/replies" className="text-accent hover:underline">Back to To reply</Link></div>
+            : !d ? <div className="space-y-4"><Skeleton className="h-8 w-96" /><Skeleton className="h-40" /><Skeleton className="h-72" /></div>
+              : <DraftCard draft={d} onChange={(next) => { if (next.status !== "ready") router.push("/replies"); }} />}
+        </div>
+      </PageBody>
+    </div>
   );
 }

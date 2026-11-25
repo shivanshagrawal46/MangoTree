@@ -3,6 +3,7 @@
 import * as React from "react";
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { Toaster } from "sonner";
+import { ThemeProvider } from "twenty-ui/theme";
 import { EvidenceProvider } from "@/components/evidence";
 import { api } from "@/lib/api";
 import type { User } from "@/lib/types";
@@ -23,14 +24,24 @@ export function Providers({ children }: { children: React.ReactNode }) {
     const dark = localStorage.getItem("mt-theme") === "dark";
     document.documentElement.classList.toggle("dark", dark);
   }, []);
+  // twenty-ui takes its colours from the same light / dark switch as the rest of the app (the class on <html>).
+  const dark = React.useSyncExternalStore(watchTheme, () => document.documentElement.classList.contains("dark"), () => false);
   return (
-    <QueryClientProvider client={client}>
-      <UserProvider>
-        <EvidenceProvider>
-          {children}
-          <Toaster position="bottom-right" richColors closeButton toastOptions={{ style: { borderRadius: 12 } }} />
-        </EvidenceProvider>
-      </UserProvider>
-    </QueryClientProvider>
+    <ThemeProvider colorScheme={dark ? "dark" : "light"}>
+      <QueryClientProvider client={client}>
+        <UserProvider>
+          <EvidenceProvider>
+            {children}
+            <Toaster position="bottom-right" richColors closeButton toastOptions={{ style: { borderRadius: 8 } }} />
+          </EvidenceProvider>
+        </UserProvider>
+      </QueryClientProvider>
+    </ThemeProvider>
   );
+}
+
+function watchTheme(changed: () => void) {
+  const seen = new MutationObserver(changed);
+  seen.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
+  return () => seen.disconnect();
 }

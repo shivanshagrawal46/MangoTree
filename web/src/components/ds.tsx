@@ -15,16 +15,18 @@
 import * as React from "react";
 import Link from "next/link";
 import { Check } from "lucide-react";
+import { Tag as TwentyTag } from "twenty-ui/primitives/data-display";
 import { cn } from "@/lib/utils";
 
 /* ------------------------------------------------------------ the page's top bar */
 export type Crumb = { label: React.ReactNode; href?: string };
-/** 48px, stays on top while the page scrolls: where you are on the left, what you can do on the right. */
+/** 48px, white like the page, with one faint line under it; it stays on top while the page scrolls:
+ *  where you are on the left, what you can do on the right. */
 export function PageHead({ icon, crumbs, children }: { icon?: React.ReactNode; crumbs: Crumb[]; children?: React.ReactNode }) {
   return (
-    <div className="sticky top-0 z-20 h-12 shrink-0 flex items-center gap-2 pl-4 pr-3 border-b border-line bg-elev">
+    <div className="page-head sticky top-0 z-20 h-12 shrink-0 flex items-center gap-2 pl-4 pr-3 bg-elev border-b border-line-soft">
       <div className="min-w-0 flex items-center gap-2 text-[13px] font-medium whitespace-nowrap">
-        {icon && <span className="text-faint shrink-0">{icon}</span>}
+        {icon && <span className="text-muted shrink-0">{icon}</span>}
         {crumbs.map((c, i) => {
           const last = i === crumbs.length - 1;
           return (
@@ -39,6 +41,11 @@ export function PageHead({ icon, crumbs, children }: { icon?: React.ReactNode; c
       {children}
     </div>
   );
+}
+
+/** Everything of the page under the top bar. Plain white: no card, no outline. */
+export function PageBody({ className, children }: { className?: string; children: React.ReactNode }) {
+  return <div className={cn("min-h-[calc(100vh-48px)]", className)}>{children}</div>;
 }
 
 /* ------------------------------------------------------------------------ button */
@@ -56,11 +63,12 @@ export const Btn = React.forwardRef<HTMLButtonElement, BtnProps>(function Btn({ 
 });
 
 /* --------------------------------------------------------------- tag, chip, label */
-const TAG = { gray: "bg-normal-soft text-muted", green: "bg-good-soft text-good", amber: "bg-high-soft text-high", red: "bg-critical-soft text-critical", accent: "bg-accent-soft text-accent" } as const;
+const TAG = { gray: "gray", green: "green", amber: "amber", red: "red", accent: "jade" } as const;
 export type Tone = keyof typeof TAG;
-/** A category or a result in a word or two. Grey when it carries no judgement. */
-export function Tag({ tone = "gray", className, ...p }: React.HTMLAttributes<HTMLSpanElement> & { tone?: Tone }) {
-  return <span className={cn("inline-flex items-center gap-1 h-5 px-2 rounded text-[12px] font-medium whitespace-nowrap", TAG[tone], className)} {...p} />;
+/** A category or a result in a word or two. Grey when it carries no judgement.
+ *  This is Twenty's own tag (twenty-ui), in its soft colours. */
+export function Tag({ tone = "gray", className, title, children }: { tone?: Tone; className?: string; title?: string; children: React.ReactNode }) {
+  return <TwentyTag color={TAG[tone]} variant="soft" weight="regular" className={className} title={title}>{children}</TwentyTag>;
 }
 /** A reference to another record (a property, a person): its small icon and its name. */
 export function Chip({ icon, children, className }: { icon?: React.ReactNode; children: React.ReactNode; className?: string }) {
@@ -68,13 +76,13 @@ export function Chip({ icon, children, className }: { icon?: React.ReactNode; ch
 }
 /** The small label over a figure or a group. */
 export function Label({ className, ...p }: React.HTMLAttributes<HTMLSpanElement>) {
-  return <span className={cn("text-[11px] font-semibold text-faint", className)} {...p} />;
+  return <span className={cn("text-[11px] font-medium text-faint", className)} {...p} />;
 }
 
 /* ------------------------------------------------------------- views and figures */
 /** The 40px bar under the top bar: the views of the list on the left, a note on the right. */
 export function Views({ children }: { children: React.ReactNode }) {
-  return <div className="h-10 shrink-0 flex items-center gap-0.5 px-2 border-b border-line">{children}</div>;
+  return <div className="h-10 shrink-0 flex items-center gap-0.5 px-2 border-b border-line-soft">{children}</div>;
 }
 export function View({ active, count, children, ...p }: React.ButtonHTMLAttributes<HTMLButtonElement> & { active?: boolean; count?: React.ReactNode }) {
   return (
@@ -85,13 +93,13 @@ export function View({ active, count, children, ...p }: React.ButtonHTMLAttribut
 }
 /** A row of plain figures, divided by lines. */
 export function Figures({ children, className }: { children: React.ReactNode; className?: string }) {
-  return <div className={cn("grid grid-cols-2 lg:grid-cols-4 border-b border-line", className)}>{children}</div>;
+  return <div className={cn("grid grid-cols-2 lg:grid-cols-4 border-b border-line-soft", className)}>{children}</div>;
 }
 export function Figure({ label, value, sub, tone, children }: { label: string; value: React.ReactNode; sub?: React.ReactNode; tone?: string; children?: React.ReactNode }) {
   return (
-    <div className="min-w-0 px-4 py-3 border-r border-line last:border-r-0">
+    <div className="min-w-0 px-4 py-3 border-r border-line-soft last:border-r-0">
       <Label>{label}</Label>
-      <div className={cn("mt-1 text-[20px] leading-tight font-semibold tnum", tone)}>{value}</div>
+      <div className={cn("mt-1 text-[20px] leading-tight font-medium tnum", tone)}>{value}</div>
       {children}
       {sub && <div className="mt-0.5 text-[12px] text-muted truncate">{sub}</div>}
     </div>
@@ -100,8 +108,9 @@ export function Figure({ label, value, sub, tone, children }: { label: string; v
 
 /* ----------------------------------------------------------------------- tables */
 /** 32px rows; a header cell and a body cell. Each row owns its bottom line. */
-export const TH = "h-8 px-2 text-left text-[12px] font-medium text-faint bg-subtle border-b border-r border-line last:border-r-0 whitespace-nowrap overflow-hidden text-ellipsis";
-export const TD = "h-8 px-2 text-[13px] text-muted border-b border-r border-line/80 last:border-r-0 overflow-hidden text-ellipsis whitespace-nowrap";
+/* No lines between columns: only a faint line under each row, and room between the columns. */
+export const TH = "h-9 px-3 text-left text-[13px] font-medium text-muted bg-elev border-b border-line whitespace-nowrap overflow-hidden text-ellipsis";
+export const TD = "h-8 px-3 text-[13px] font-normal text-fg border-b border-line-soft overflow-hidden text-ellipsis whitespace-nowrap";
 /** The header's small icon and its word, kept on one line. */
 export function Col({ icon, children }: { icon?: React.ReactNode; children: React.ReactNode }) {
   return <span className="inline-flex items-center gap-1.5 align-middle">{icon}{children}</span>;
@@ -113,7 +122,7 @@ export function Tick({ checked, onChange, next, label, disabled }: { checked: bo
   return (
     <button type="button" role="checkbox" aria-checked={checked} aria-label={label} title={label} disabled={disabled} onClick={(e) => { e.stopPropagation(); onChange(!checked); }}
       className={cn("h-4 w-4 shrink-0 rounded border grid place-items-center transition-colors disabled:opacity-50",
-        checked ? "bg-good border-good text-white" : next ? "bg-elev border-accent hover:bg-accent-soft" : "bg-elev border-line-strong/70 hover:border-accent")}>
+        checked ? "bg-accent border-accent text-white" : next ? "bg-elev border-accent hover:bg-accent-soft" : "bg-elev border-line-strong hover:border-accent")}>
       {checked && <Check size={11} strokeWidth={3} />}
     </button>
   );

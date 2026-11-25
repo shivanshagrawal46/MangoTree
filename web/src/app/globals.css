@@ -1,3 +1,6 @@
+/* Twenty's own component library (twenty-ui, MIT) is used for the look of the app. Its styles sit in
+   their own layer: above our reset, below our utility classes, so a class of ours can still adjust them. */
+@layer theme, base, reset, twenty-ui, components, utilities;
 @import "tailwindcss";
 
 /* ------------------------------------------------------------------------
@@ -6,24 +9,26 @@
    health, urgency, money. Nothing decorative is coloured.
    ------------------------------------------------------------------------ */
 :root {
-  --bg: #f7f6f3;
+  /* Neutral and light (2026-11-26): white pages on a very light grey frame, soft grey text, faint lines. */
+  --bg: #fcfcfc;
   --bg-elev: #ffffff;
-  --bg-sunken: #efede8;
-  --bg-subtle: #faf9f7;       /* table headers, group rows */
-  --bg-hover: #f4f2ee;        /* a row or a quiet control under the pointer */
-  --fg: #16161a;
-  --fg-muted: #6b6b76;
-  --fg-faint: #9a9aa6;
-  --line: #e6e3dc;
-  --line-strong: #d3cfc5;
-  --accent: #1f6f5f;          /* mango leaf â€” the one brand colour */
+  --bg-sunken: #f1f1f1;       /* the frame behind the page, and the menu on it */
+  --bg-subtle: #fcfcfc;       /* group rows */
+  --bg-hover: #f6f6f6;        /* a row or a quiet control under the pointer */
+  --fg: #333333;
+  --fg-muted: #666666;
+  --fg-faint: #999999;
+  --line: #ebebeb;            /* the outline of a page, a card, an input */
+  --line-soft: #f1f1f1;       /* the lines inside a table */
+  --line-strong: #d6d6d6;
+  --accent: #1f6f5f;          /* mango leaf: our one colour for the main action, a tick, a link */
   --accent-soft: #e3f1ec;
   --critical: #c2410c;
   --critical-soft: #fff1ea;
   --high: #b45309;
   --high-soft: #fff7e6;
   --normal: #1f2937;
-  --normal-soft: #eef0f3;
+  --normal-soft: #f1f1f1;
   --info: #475569;
   --info-soft: #f1f4f8;
   --good: #15803d;
@@ -31,22 +36,23 @@
   --watch: #b45309;
   --money-in: #1d4ed8;
   --money-back: #15803d;
-  --radius: 14px;
-  --shadow-sm: 0 1px 2px rgba(20, 20, 30, 0.05);
+  --radius: 8px;
+  --shadow-sm: none;          /* nothing on a page casts a shadow; only what floats over it does (--shadow) */
   --shadow: 0 8px 30px rgba(20, 20, 30, 0.08);
 }
 
 .dark {
-  --bg: #0f1013;
-  --bg-elev: #17181c;
-  --bg-sunken: #0b0c0e;
-  --bg-subtle: #1b1c21;
-  --bg-hover: #1f2127;
-  --fg: #ecebe7;
-  --fg-muted: #a1a1ab;
-  --fg-faint: #6e6e78;
-  --line: #24262c;
-  --line-strong: #33363e;
+  --bg: #141414;
+  --bg-elev: #1b1b1b;
+  --bg-sunken: #111111;
+  --bg-subtle: #1f1f1f;
+  --bg-hover: #262626;
+  --fg: #ebebeb;
+  --fg-muted: #b3b3b3;
+  --fg-faint: #818181;
+  --line: #2a2a2a;
+  --line-soft: #232323;
+  --line-strong: #3a3a3a;
   --accent: #5fc2a9;
   --accent-soft: #14312a;
   --critical: #fb923c;
@@ -61,7 +67,7 @@
   --good-soft: #0f2a1a;
   --money-in: #60a5fa;
   --money-back: #4ade80;
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-sm: none;
   --shadow: 0 8px 30px rgba(0, 0, 0, 0.45);
 }
 
@@ -75,6 +81,7 @@
   --color-muted: var(--fg-muted);
   --color-faint: var(--fg-faint);
   --color-line: var(--line);
+  --color-line-soft: var(--line-soft);
   --color-line-strong: var(--line-strong);
   --color-accent: var(--accent);
   --color-accent-soft: var(--accent-soft);
@@ -117,7 +124,39 @@ body {
    (24px small), 48px bars, 1px lines, corners of 4 or 8, no shadows on a page, the green only for the
    main action and the chosen item. The parts are in components/ds.tsx.
    A page that fills the white pane exactly (a chat, a two-column file) takes this height. */
-.h-pane { height: calc(100vh - 18px); }
+.h-pane { height: 100vh; }
+/* twenty-ui sizes its text in rem for a page whose root is 13px. Our root is 16px (our spacing depends on
+   it), so its text sizes are given here in px: the same sizes it means. */
+/* twenty-ui draws corners as squircles where the browser can. A thing meant to be round (a dot, an avatar,
+   a pill) stays round. */
+.rounded-full { corner-shape: round; }
+/* Two colours stay ours inside twenty-ui (2026-11-26): the yellow of a "to check" tag is our own
+   yellow, not its brighter one. (The main colour is our green: --accent above.) */
+.light { --t-tag-background-amber: var(--high-soft); --t-tag-text-amber: var(--high); }
+.dark { --t-tag-background-amber: var(--high-soft); --t-tag-text-amber: var(--high); }
+.light, .dark { --t-font-size-xxs: 8px; --t-font-size-xs: 11px; --t-font-size-sm: 12px; --t-font-size-md: 13px; --t-font-size-lg: 16px; --t-font-size-xl: 20px; --t-font-size-xxl: 24px; }
+/* The page area is plain white, edge to edge, beside the menu: no frame and no card around it. */
+
+/* The screens not yet rebuilt from components/ds.tsx still carry sizes of their own: twenty-four text
+   sizes, eight corner sizes, small labels in capitals. Until each is rebuilt, what they ask for is
+   brought onto the one scale here, so the whole app reads the same. A rebuilt screen uses none of
+   these classes; when the last one is rebuilt this block goes.
+   Text: 11 label · 12 secondary · 13 body · 16 / 20 / 24 titles. */
+.text-\[9px\], .text-\[9\.5px\], .text-\[10px\], .text-\[10\.5px\] { font-size: 11px; }
+.text-\[11\.5px\] { font-size: 12px; }
+.text-\[12\.5px\], .text-\[13\.5px\], .text-\[14px\], .text-sm { font-size: 13px; }
+.text-\[15px\], .text-\[17px\], .text-base { font-size: 16px; }
+.text-\[18px\], .text-\[19px\], .text-\[22px\], .text-lg, .text-xl { font-size: 20px; }
+.text-\[26px\], .text-\[28px\], .text-2xl, .text-3xl { font-size: 24px; }
+/* Labels are written as words, not in spaced capitals. */
+.uppercase { text-transform: none; letter-spacing: normal; }
+/* Corners are 4 or 8. */
+.rounded-md { border-radius: 4px; }
+.rounded-xl, .rounded-2xl, .rounded-3xl { border-radius: 8px; }
+.rounded-t-xl, .rounded-t-2xl { border-top-left-radius: 8px; border-top-right-radius: 8px; }
+.rounded-b-xl, .rounded-b-2xl { border-bottom-left-radius: 8px; border-bottom-right-radius: 8px; }
+/* Nothing on a page casts a shadow. */
+.shadow-sm, .shadow { box-shadow: none; }
 
 /* number columns align */
 .tnum { font-variant-numeric: tabular-nums; }

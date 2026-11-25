@@ -8,9 +8,9 @@
 import * as React from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { RefreshCw } from "lucide-react";
+import { LayoutGrid, RefreshCw } from "lucide-react";
 import { api, subscribeJob } from "@/lib/api";
-import { Badge, Button } from "@/components/ui";
+import { Btn, PageBody, PageHead, Tag } from "@/components/ds";
 import { useUser } from "@/components/providers";
 import { MyDay } from "@/components/brain/myday";
 import { cn } from "@/lib/utils";
@@ -38,20 +38,15 @@ export default function TodayPage() {
   const today = new Date().toLocaleDateString("en-GB", { timeZone: "America/New_York", weekday: "long", day: "numeric", month: "long", year: "numeric" });
 
   return (
-    <div className="px-6 lg:px-10 py-7 max-w-[1280px] mx-auto">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-[20px] font-semibold tracking-tight">Today</h1>
-          <p className="text-[13px] text-muted mt-px">{user?.name || ""} · {today}</p>
-        </div>
-        <div className="flex items-center gap-2">
-          {pending > 0 && (q.data?.reading || reading
-            ? <Badge tone="high">{pending} new email{pending === 1 ? "" : "s"} being read</Badge>
-            : <Badge>{pending} new email{pending === 1 ? "" : "s"} · read at 6 am and 11 am ET</Badge>)}
-          <Button size="sm" onClick={readNow} disabled={!!reading}><RefreshCw size={13} className={cn(reading && "animate-spin")} /> {reading ? reading.slice(0, 48) : "Check for new mail"}</Button>
-        </div>
-      </div>
-      <MyDay />
+    <div>
+      <PageHead icon={<LayoutGrid size={16} strokeWidth={1.6} />} crumbs={[{ label: "Today" }]}>
+        <span className="hidden md:inline text-[12px] text-faint">{user?.name || ""} · {today}</span>
+        {pending > 0 && (q.data?.reading || reading
+          ? <Tag tone="amber">{pending} new email{pending === 1 ? "" : "s"} being read</Tag>
+          : <Tag>{pending} new email{pending === 1 ? "" : "s"} · read at 6 am and 11 am ET</Tag>)}
+        <Btn onClick={readNow} disabled={!!reading}><RefreshCw size={14} strokeWidth={1.6} className={cn(reading && "animate-spin")} /> {reading ? reading.slice(0, 48) : "Check for new mail"}</Btn>
+      </PageHead>
+      <PageBody><div className="px-6 pb-8 max-w-[1280px]"><MyDay /></div></PageBody>
     </div>
   );
 }

@@ -5,7 +5,11 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Command } from "cmdk";
-import { Gavel, Tag, LayoutGrid, Building2, CheckSquare, Inbox, Users, MessageSquare, Search, LogOut, Moon, Sun, AlertTriangle, ChevronRight, HardHat, ClipboardList, BellRing, FileBadge, Calculator, Archive, ChevronDown, Reply, Receipt, Handshake, Phone, FileCheck } from "lucide-react";
+// The menu uses the same icon set as Twenty (Tabler), drawn thin, each in one of Twenty's own colours.
+import { IconGavel as Gavel, IconTag as Tag, IconHome as LayoutGrid, IconBuildingSkyscraper as Building2, IconCheckbox as CheckSquare, IconInbox as Inbox, IconUsers as Users,
+  IconMessageCircle as MessageSquare, IconSearch as Search, IconLogout as LogOut, IconMoon as Moon, IconSun as Sun, IconAlertTriangle as AlertTriangle, IconChevronRight as ChevronRight,
+  IconHammer as HardHat, IconListCheck as ClipboardList, IconBell as BellRing, IconCertificate as FileBadge, IconCalculator as Calculator, IconArchive as Archive, IconChevronDown as ChevronDown,
+  IconMail as Reply, IconReceipt as Receipt, IconHeartHandshake as Handshake, IconPhone as Phone, IconFileCheck as FileCheck } from "@tabler/icons-react";
 import { api } from "@/lib/api";
 import { useUser } from "@/components/providers";
 import { Kbd } from "@/components/ui";
@@ -18,6 +22,15 @@ import type { PropertySummary } from "@/lib/types";
    screen (next steps, follow-ups, tasks, cards) now lives on the property file
    as open items; those screens stay reachable under "Older screens" — except the
    old follow-ups (reminders from before October), taken off the menu on 2026-11-18. */
+/* Every place in the menu has its own colour on its icon (2026-11-26), so the eye finds it without reading.
+   The colours are Twenty's own (the --t-color-* of its theme), the ones its menu uses. */
+const TINT: Record<string, string> = {
+  "/": "var(--t-color-blue)", "/replies": "var(--t-color-red)", "/team": "var(--t-color-purple)", "/bills": "var(--t-color-green)", "/chase": "var(--t-color-orange)",
+  "/calls": "var(--t-color-turquoise)", "/brokers": "var(--t-color-pink)", "/ask": "var(--t-color-iris)", "/arv": "var(--t-color-cyan)", "/underwriting": "var(--t-color-violet)",
+  "/sold": "var(--t-color-bronze)", construction: "var(--t-color-orange)", market: "var(--t-color-green)", nonperforming: "var(--t-color-red)",
+};
+const tint = (key: string) => (TINT[key] ? { color: TINT[key] } : undefined);
+
 const NAV = [
   { href: "/", label: "Today", icon: LayoutGrid },
   { href: "/replies", label: "To reply", icon: Reply },
@@ -161,8 +174,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const toggleTheme = () => { const d = !document.documentElement.classList.contains("dark"); document.documentElement.classList.toggle("dark", d); localStorage.setItem("mt-theme", d ? "dark" : "light"); };
 
   return (
-    <div className="h-screen flex overflow-hidden bg-sunken text-[13px]">
-      <aside className="w-[220px] shrink-0 flex flex-col">
+    <div className="h-screen flex overflow-hidden bg-elev text-[13px]">
+      <aside className="w-[220px] shrink-0 flex flex-col bg-bg border-r border-line-soft">
         <div className="h-12 shrink-0 px-3 flex items-center gap-2">
           <div className="h-5 w-5 rounded bg-accent text-white grid place-items-center text-[11px] font-semibold">M</div>
           <span className="text-[13px] font-semibold">MangoTree</span>
@@ -173,15 +186,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             person at the bottom stay in place; everything between scrolls together. */}
         <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-2 pb-2">
           <nav className="flex flex-col gap-0.5">
-            <button type="button" onClick={() => setPalette(true)} className={cn(ROW, "w-full font-medium text-muted hover:bg-fg/[0.04]")}>
+            <button type="button" onClick={() => setPalette(true)} className={cn(ROW, "w-full text-fg hover:bg-fg/[0.04]")}>
               <Search size={16} strokeWidth={1.6} /> <span>Jump to</span> <span className="ml-auto text-[11px] font-normal text-faint/80">Ctrl K</span>
             </button>
             {nav.map(({ href, label, icon: Icon }) => {
               const active = href === "/" ? path === "/" : path.startsWith(href);
               const n = href === "/replies" ? counts.data?.drafts : href === "/chase" ? counts.data?.followups : href === "/bills" ? counts.data?.bills : 0;
               return (
-                <Link key={href} href={href} className={cn(ROW, "font-medium", active ? "bg-fg/[0.07] text-fg" : "text-muted hover:bg-fg/[0.04] hover:text-fg")}>
-                  <Icon size={16} strokeWidth={1.6} /> <span className="truncate">{label}</span>
+                <Link key={href} href={href} className={cn(ROW, "text-fg", active ? "bg-fg/[0.05]" : "hover:bg-fg/[0.04]")}>
+                  <Icon size={16} strokeWidth={1.6} style={tint(href)} /> <span className="truncate">{label}</span>
                   {(n || 0) > 0 && <span title={href === "/chase" ? "Follow-ups waiting for you" : undefined} className={cn(COUNT, href === "/chase" && (counts.data?.followups_high || 0) > 0 ? "text-critical font-medium" : "text-faint")}>{n}</span>}
                 </Link>
               );
@@ -193,8 +206,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               reading that draws the progress bar on the property's page. */}
           {rkb && propertyGroups(props.data || [], counts.data?.groups, recent.data?.recent).map((g) => (
             <React.Fragment key={g.key}>
-              <div className="mt-3 h-7 px-2 flex items-center gap-1.5 text-[11px] font-semibold text-faint">
-                <g.icon size={14} strokeWidth={1.6} /> <span>{g.label}</span> <span className={cn(COUNT, "text-[11px]")}>{g.rows.length}</span>
+              <div className="mt-3 h-7 px-2 flex items-center gap-1.5 text-[12px] font-medium text-faint">
+                <g.icon size={14} strokeWidth={1.6} style={tint(g.key)} /> <span>{g.label}</span> <span className={cn(COUNT, "text-[11px]")}>{g.rows.length}</span>
               </div>
               <nav className="flex flex-col gap-0.5">
                 {g.rows.map((p) => {
@@ -204,7 +217,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   // Something happened here in the last two days and this person has not opened the property since: a green mark until they do.
                   const fresh = (g.key === "construction" || g.key === "market") && !!recent.data?.unseen?.includes(p.id);
                   return (
-                    <Link key={p.id} href={`/property/${p.id}`} className={cn(ROW, active ? "bg-fg/[0.07] text-fg font-medium" : fresh ? "text-fg font-medium hover:bg-fg/[0.04]" : "text-muted hover:bg-fg/[0.04] hover:text-fg")}>
+                    <Link key={p.id} href={`/property/${p.id}`} className={cn(ROW, "text-fg", active ? "bg-fg/[0.05]" : "hover:bg-fg/[0.04]")}>
                       <PropertyMark label={p.label} colour={colourOf(p.id)} />
                       <span className="truncate flex-1">{p.label}</span>
                       {fresh && <span title="New since you last opened it" className="h-1.5 w-1.5 shrink-0 rounded-full bg-good" />}
@@ -238,12 +251,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       </aside>
 
-      <main className="flex-1 min-w-0 py-2 pr-2">
-        <div className="h-full overflow-auto rounded-lg border border-line bg-elev">
+      {/* The page area: plain white beside the menu, and it scrolls by itself. */}
+      <main className="flex-1 min-w-0">
+        <div className="h-full overflow-auto">
           {(dash.data?.degrades?.length ?? 0) > 0 && (
-            <div className="bg-high-soft text-high text-[12px] px-4 py-2 flex items-center gap-2 border-b border-high/20"><AlertTriangle size={14} /> {(dash.data?.degrades || []).join(" · ")}</div>
+            <div className="bg-high-soft text-high text-[12px] px-4 py-2 flex items-center gap-2"><AlertTriangle size={14} /> {(dash.data?.degrades || []).join(" · ")}</div>
           )}
-          <div key={path} className="min-h-full">{children}</div>
+          <div key={path} className="page-area min-h-full">{children}</div>
         </div>
       </main>
       <Palette open={palette} onOpenChange={setPalette} properties={props.data || []} nav={nav} />

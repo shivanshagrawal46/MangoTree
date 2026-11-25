@@ -1,6 +1,10 @@
 import type { Metadata } from "next";
 import { Geist_Mono, Inter, Newsreader } from "next/font/google";
 import "./globals.css";
+// Twenty's component library: its styles and its light and dark colours (after ours, which sets the layer order).
+import "twenty-ui/style.css";
+import "twenty-ui/theme-light.css";
+import "twenty-ui/theme-dark.css";
 
 // One text face for the whole app (2026-11-26).
 const inter = Inter({

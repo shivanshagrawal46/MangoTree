@@ -18,16 +18,16 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { AlertTriangle, ArrowRight, Check, ChevronDown, Info, Plus, Send, X } from "lucide-react";
 import { api } from "@/lib/api";
 import { useEvidence } from "@/components/evidence";
 import { Button, Card, Dialog, DialogContent, Input, Select, Skeleton, Textarea } from "@/components/ui";
-import { DraftCard } from "@/components/brain/draft";
 import type { Alerts } from "@/components/brain/followups";
 import { cn, fmtET } from "@/lib/utils";
-import { errText, type DayBoard, type DayCard, type DayCheck, type Draft, type TeamRow } from "@/lib/brain";
+import { errText, type DayBoard, type DayCard, type DayCheck, type TeamRow } from "@/lib/brain";
 
 const usd = (n: number) => n.toLocaleString("en-US", { style: "currency", currency: "USD" });
 const daysSince = (iso?: string | null) => (iso ? Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000)) : null);
@@ -312,8 +312,8 @@ function Figure({ label, value, hint, red }: { label: string; value: number; hin
 
 export function MyDay() {
   const q = useQuery({ queryKey: ["brain", "myday"], queryFn: () => api.get<DayBoard>("/brain/myday"), placeholderData: (prev) => prev, refetchInterval: 60_000 });
-  const [draft, setDraft] = React.useState<Draft | null>(null);
-  const openDraft = async (id: string) => { try { setDraft(await api.get<Draft>(`/brain/drafts/${id}`)); } catch (e) { toast.error(errText(e)); } };
+  const router = useRouter();
+  const openDraft = (id: string) => router.push(`/replies/${id}`);        // a reply opens on its own page
   const a = useActions(openDraft);
   if (q.isLoading || !q.data) return <div className="mt-5 space-y-3.5"><Skeleton className="h-16" /><Skeleton className="h-64" /><Skeleton className="h-64" /></div>;
   const d = q.data;
@@ -364,12 +364,6 @@ export function MyDay() {
       {work.length > 0 && <WorkTable title="Bills and site checks" hint="From Buildertrend" leadHead="Item" lead={(c) => c.title} cards={work} cols={workCols} empty="No bill or site check is waiting." />}
       <WorkTable title="Decisions" hint="Waiting for your decision" leadHead="Decision" lead={(c) => c.title} cards={decisions} cols={todoCols} order="newest first" empty="No decision is waiting for you." />
       <WorkTable title="To do" hint="Things for you to do or have done" leadHead="Task" lead={(c) => c.title} cards={todos} cols={todoCols} order="newest first" empty="Nothing is waiting for you. New things appear here as emails, calls and bills come in." />
-
-      <Dialog open={!!draft} onOpenChange={(o) => !o && setDraft(null)}>
-        <DialogContent wide className="max-h-[90vh] overflow-y-auto" title="Reply">
-          {draft && <DraftCard draft={draft} onChange={(next) => { if (next.status !== "ready") { setDraft(null); a.refresh(); } }} />}
-        </DialogContent>
-      </Dialog>
     </>
   );
 }

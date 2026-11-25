@@ -13,6 +13,7 @@ import { toast } from "sonner";
 import { ArrowRight, BellRing, Check, Clock, Copy } from "lucide-react";
 import { api } from "@/lib/api";
 import { Card, Skeleton } from "@/components/ui";
+import { Btn, PageBody, PageHead } from "@/components/ds";
 import { usd } from "@/components/brain/side";
 import { ago, cn } from "@/lib/utils";
 import { errText } from "@/lib/brain";
@@ -129,14 +130,12 @@ export function FollowUpsPage() {
   const tabs: [string, string][] = [...Object.entries(d.owners), ["all", "Everyone"]];
 
   return (
-    <div className="px-6 lg:px-10 py-7 max-w-5xl mx-auto">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-[22px] font-semibold tracking-tight">Follow-ups</h1>
-          <p className="text-[13px] text-muted mt-0.5">Who has to do what on the {d.properties} properties under construction. Worked out from Buildertrend and the money sheet each time — an item leaves by itself when it is done.</p>
-        </div>
-        {d.message_for_wes && <button type="button" onClick={copyWes} className="h-8 px-3 rounded-lg border border-line bg-elev text-[12.5px] font-medium inline-flex items-center gap-1.5 hover:border-line-strong"><Copy size={13} /> Copy message for Wes</button>}
-      </div>
+    <div>
+      <PageHead icon={<BellRing size={16} strokeWidth={1.6} />} crumbs={[{ label: "Follow-ups" }]}>
+        <span className="hidden xl:inline text-[12px] text-faint">Who has to do what on the {d.properties} properties under construction · an item leaves by itself when it is done</span>
+        {d.message_for_wes && <Btn onClick={copyWes}><Copy size={14} strokeWidth={1.6} /> Copy message for Wes</Btn>}
+      </PageHead>
+      <PageBody><div className="px-6 pb-8 max-w-5xl">
 
       <div className="mt-4 flex flex-wrap items-center gap-2">
         <div className="inline-flex flex-wrap rounded-lg bg-sunken p-0.5 border border-line">
@@ -188,6 +187,7 @@ export function FollowUpsPage() {
         </Card>
       ))}
       <p className="mt-4 text-[11.5px] text-muted">Nothing on this page is sent to anyone. The message for Wes is copied for Rakesh Sir to read and send himself.</p>
+      </div></PageBody>
     </div>
   );
 }
