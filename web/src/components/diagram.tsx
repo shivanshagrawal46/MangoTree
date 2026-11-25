@@ -21,7 +21,7 @@ function loadMermaid() {
         theme: "base",
         flowchart: { curve: "basis", htmlLabels: true, padding: 14, nodeSpacing: 36, rankSpacing: 46, useMaxWidth: true },
         themeVariables: {
-          fontFamily: "var(--font-geist-sans), ui-sans-serif, system-ui",
+          fontFamily: "var(--font-inter), ui-sans-serif, system-ui",
           fontSize: "13px",
           primaryColor: "#eef5f2",
           primaryTextColor: "#16161a",

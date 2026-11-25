@@ -53,7 +53,7 @@ export default function PropertyPage() {
 
   if (!q.data) {
     return (
-      <div className="h-screen flex flex-col">
+      <div className="h-pane flex flex-col">
         <div className="border-b border-line bg-elev"><div className="h-11 px-5 flex items-center justify-between"><Skeleton className="h-5 w-72" /><Skeleton className="h-6 w-[520px] max-w-[50%]" /></div><div className="h-[34px] px-5 flex items-center border-t border-line/70"><Skeleton className="h-4 w-[560px] max-w-full" /></div></div>
         <div className="flex-1 grid lg:grid-cols-[minmax(0,1fr)_364px]"><div /><div className="border-l border-line bg-elev/60 p-4 space-y-3"><Skeleton className="h-24" /><Skeleton className="h-36" /><Skeleton className="h-40" /></div></div>
       </div>
@@ -63,7 +63,7 @@ export default function PropertyPage() {
   const counts = { bills: f.site?.bills?.in_review.length || 0, site: f.sitework?.flagged || 0 };
 
   return (
-    <div className="h-screen flex flex-col">
+    <div className="h-pane flex flex-col">
       <PropertyHeader f={f} tab={tab} onTab={setTab} counts={counts} />
       <div className="flex-1 min-h-0">
         {tab === "overview" && (

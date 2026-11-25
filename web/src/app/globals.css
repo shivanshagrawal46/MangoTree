@@ -9,6 +9,8 @@
   --bg: #f7f6f3;
   --bg-elev: #ffffff;
   --bg-sunken: #efede8;
+  --bg-subtle: #faf9f7;       /* table headers, group rows */
+  --bg-hover: #f4f2ee;        /* a row or a quiet control under the pointer */
   --fg: #16161a;
   --fg-muted: #6b6b76;
   --fg-faint: #9a9aa6;
@@ -38,6 +40,8 @@
   --bg: #0f1013;
   --bg-elev: #17181c;
   --bg-sunken: #0b0c0e;
+  --bg-subtle: #1b1c21;
+  --bg-hover: #1f2127;
   --fg: #ecebe7;
   --fg-muted: #a1a1ab;
   --fg-faint: #6e6e78;
@@ -65,6 +69,8 @@
   --color-bg: var(--bg);
   --color-elev: var(--bg-elev);
   --color-sunken: var(--bg-sunken);
+  --color-subtle: var(--bg-subtle);
+  --color-hover: var(--bg-hover);
   --color-fg: var(--fg);
   --color-muted: var(--fg-muted);
   --color-faint: var(--fg-faint);
@@ -84,7 +90,7 @@
   --color-good-soft: var(--good-soft);
   --color-money-in: var(--money-in);
   --color-money-back: var(--money-back);
-  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, monospace;
   --font-serif: var(--font-serif), Georgia, "Times New Roman", serif;
   --radius-card: var(--radius);
@@ -103,9 +109,15 @@ body {
   background: var(--bg);
   color: var(--fg);
   font-family: var(--font-sans);
-  font-feature-settings: "ss01", "cv11", "tnum";
+  font-feature-settings: "tnum";
   -webkit-font-smoothing: antialiased;
 }
+
+/* The look of the app (2026-11-26): 13px Inter in three weights, a 4px grid, 32px rows and controls
+   (24px small), 48px bars, 1px lines, corners of 4 or 8, no shadows on a page, the green only for the
+   main action and the chosen item. The parts are in components/ds.tsx.
+   A page that fills the white pane exactly (a chat, a two-column file) takes this height. */
+.h-pane { height: calc(100vh - 18px); }
 
 /* number columns align */
 .tnum { font-variant-numeric: tabular-nums; }

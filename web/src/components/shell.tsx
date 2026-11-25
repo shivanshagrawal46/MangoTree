@@ -5,11 +5,11 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Command } from "cmdk";
-import { motion } from "framer-motion";
 import { Gavel, Tag, LayoutGrid, Building2, CheckSquare, Inbox, Users, MessageSquare, Search, LogOut, Moon, Sun, AlertTriangle, ChevronRight, HardHat, ClipboardList, BellRing, FileBadge, Calculator, Archive, ChevronDown, Reply, Receipt, Handshake, Phone, FileCheck } from "lucide-react";
 import { api } from "@/lib/api";
 import { useUser } from "@/components/providers";
 import { Kbd } from "@/components/ui";
+import { PropertyMark, usePropertyColours } from "@/components/property-mark";
 import { cn, initials, propertyLabel } from "@/lib/utils";
 import type { PropertySummary } from "@/lib/types";
 
@@ -81,7 +81,8 @@ function propertyGroups(props: { property_id: string; address: string }[], group
   return [
     { key: "construction", label: "Construction", icon: HardHat, rows: fresh(of("construction")) },
     { key: "market", label: "On market", icon: Tag, rows: fresh(of("market")) },
-    { key: "nonperforming", label: "Non-performing", icon: Gavel, rows: of("nonperforming") },
+    // The deals RKB is collecting through lawyers or the courts ("non-performing" in the data).
+    { key: "nonperforming", label: "Foreclosure", icon: Gavel, rows: of("nonperforming") },
     { key: "sold", label: "Sold", icon: Archive, rows: of("sold") },
     general,
   ].filter((g) => g.rows.length > 0);
@@ -114,6 +115,11 @@ function ContractorFrame({ children, path }: { children: React.ReactNode; path: 
   );
 }
 
+/* The frame (2026-11-26): the grey frame fills the window; the menu sits on it at the left; the page is one
+   white pane that scrolls by itself. Sizes follow components/ds.tsx: 28px menu rows, 13px text, 48px bars. */
+const ROW = "h-7 px-2 rounded flex items-center gap-2 text-[13px] transition-colors";
+const COUNT = "ml-auto text-[12px] font-normal tnum";
+
 export function AppShell({ children }: { children: React.ReactNode }) {
   const { user, loading } = useUser();
   const router = useRouter();
@@ -129,9 +135,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const dash = useQuery({ queryKey: ["shell"], queryFn: () => api.get<{ unplaced: number; degrades: string[]; answering?: { property_id: string | null; question: string; job_id: string }[] }>("/shell"), enabled: rkb, staleTime: 5 * 60_000,
     // Poll while any answer is running so the sidebar spinner clears on its own.
     refetchInterval: (query) => ((query.state.data?.answering?.length ?? 0) > 0 ? 15_000 : false) });
-  const answering = new Set((dash.data?.answering || []).map((a) => a.property_id || "__global__"));
   const counts = useQuery({ queryKey: ["brain", "counts"], queryFn: () => api.get<{ drafts: number; bills?: number; open: Record<string, number>; groups?: Record<string, string>; market_days?: Record<string, number | null>; followups?: number | null; followups_high?: number | null }>("/brain/counts"), enabled: rkb, staleTime: 60_000, refetchInterval: 120_000 });
   const [older, setOlder] = React.useState(false);
+  const colourOf = usePropertyColours();
 
   React.useEffect(() => { if (!loading && !user) router.replace("/login"); }, [loading, user, router]);
   // A contractor session has nothing here (the server refuses every RKB route
@@ -155,90 +161,90 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const toggleTheme = () => { const d = !document.documentElement.classList.contains("dark"); document.documentElement.classList.toggle("dark", d); localStorage.setItem("mt-theme", d ? "dark" : "light"); };
 
   return (
-    <div className="min-h-screen">
-      <aside className="fixed inset-y-0 left-0 z-30 w-[212px] border-r border-line bg-elev/80 backdrop-blur flex flex-col">
-        <div className="px-4 pt-4 pb-3 flex items-center gap-2.5">
-          <div className="h-8 w-8 rounded-xl bg-accent text-white grid place-items-center font-bold text-sm">M</div>
-          <div><div className="text-[13px] font-semibold tracking-tight leading-none">MangoTree</div><div className="text-[11px] text-faint mt-0.5">RKB Consulting Group</div></div>
+    <div className="h-screen flex overflow-hidden bg-sunken text-[13px]">
+      <aside className="w-[220px] shrink-0 flex flex-col">
+        <div className="h-12 shrink-0 px-3 flex items-center gap-2">
+          <div className="h-5 w-5 rounded bg-accent text-white grid place-items-center text-[11px] font-semibold">M</div>
+          <span className="text-[13px] font-semibold">MangoTree</span>
+          <span className="ml-auto text-[11px] text-faint">RKB</span>
         </div>
-        <button onClick={() => setPalette(true)} className="mx-3 mb-2 h-9 rounded-xl border border-line bg-bg flex items-center gap-2 px-3 text-xs text-muted hover:border-line-strong">
-          <Search size={14} /> <span className="flex-1 text-left">Jump to…</span> <Kbd>⌘K</Kbd>
-        </button>
-        {/* One scrolling body for the nav and the property list (2026-10-27): with
-            eighteen properties the fixed nav left the list a few rows tall. Header
-            and the user row stay pinned; everything between scrolls together. */}
-        <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain pb-2">
-        <nav className="px-2 space-y-0.5">
-          {nav.map(({ href, label, icon: Icon }) => {
-            const active = href === "/" ? path === "/" : path.startsWith(href);
-            return (
-              <Link key={href} href={href} className={cn("flex items-center gap-2.5 h-8 px-2.5 rounded-lg text-[12.5px] transition", active ? "bg-accent-soft text-accent font-medium" : "text-fg/80 hover:bg-sunken hover:text-fg")}>
-                <Icon size={14} /> <span className="flex-1">{label}</span>
-                {href === "/replies" && (counts.data?.drafts || 0) > 0 && <span className="text-[10px] font-semibold bg-accent text-white rounded-full px-1.5 h-4 min-w-4 grid place-items-center">{counts.data!.drafts}</span>}
-                {href === "/chase" && (counts.data?.followups || 0) > 0 && <span title="Follow-ups waiting for you" className={cn("text-[10px] font-semibold rounded-full px-1.5 h-4 min-w-4 grid place-items-center", (counts.data?.followups_high || 0) > 0 ? "bg-critical text-white" : "bg-sunken text-muted")}>{counts.data!.followups}</span>}
-                {href === "/bills" && (counts.data?.bills || 0) > 0 && <span className="text-[10px] font-semibold bg-sunken text-muted rounded-full px-1.5 h-4 min-w-4 grid place-items-center">{counts.data!.bills}</span>}
-              </Link>
-            );
-          })}
-        </nav>
-        {/* The properties, sorted by where each deal stands (2026-11-13): under construction,
-            on the market (with the days since it was listed), and non-performing — the ones
-            RKB is collecting through lawyers or the courts. The sorting comes from the same
-            reading that draws the progress bar on the property's page. */}
-        {rkb && propertyGroups(props.data || [], counts.data?.groups, recent.data?.recent).map((g) => (
-          <React.Fragment key={g.key}>
-            <div className={cn("px-4 pt-4 pb-1 text-[10px] uppercase tracking-wider flex items-center gap-1.5",
-              g.key === "nonperforming" ? "text-critical/80" : g.key === "construction" || g.key === "market" ? "text-accent font-bold" : "text-muted font-medium")}>
-              <g.icon size={11} /> <span className="flex-1">{g.label}</span> <span className="tnum normal-case tracking-normal">{g.rows.length}</span>
-            </div>
-            <div className="px-2 space-y-0.5">
-              {g.rows.map((p) => {
-                const active = path === `/property/${p.id}` || path.startsWith(`/property/${p.id}/`);
-                const n = counts.data?.open?.[p.id] || 0;
-                const days = g.key === "market" ? counts.data?.market_days?.[p.id] : undefined;
-                // Something happened here in the last two days and this person has not opened the property since: a green mark until they do.
-                const fresh = (g.key === "construction" || g.key === "market") && !!recent.data?.unseen?.includes(p.id);
-                return (
-                  <Link key={p.id} href={`/property/${p.id}`} className={cn("flex items-center gap-2 h-7 px-2.5 rounded-md text-[12px] transition", active ? "bg-sunken text-fg font-medium" : fresh ? "text-fg font-medium hover:bg-sunken" : "text-fg/80 hover:bg-sunken hover:text-fg")}>
-                    {fresh && <span title="New since you last opened it" className="h-2 w-2 shrink-0 rounded-full bg-good" />}
-                    <span className="truncate flex-1">{p.label}</span>
-                    {days != null && <span title={`${days} day${days === 1 ? "" : "s"} on the market`} className="text-[10px] text-faint tnum shrink-0">{days}d</span>}
-                    {n > 0 && <span title={`${n} item${n === 1 ? "" : "s"} need you`} className="text-[10px] font-semibold text-high bg-high-soft rounded-full px-1.5 h-4 min-w-4 grid place-items-center">{n}</span>}
-                  </Link>
-                );
-              })}
-            </div>
-          </React.Fragment>
-        ))}
-        <button type="button" onClick={() => setOlder((v) => !v)} className="mt-3 w-full px-4 pt-2 pb-1 text-[10px] uppercase tracking-wider text-faint flex items-center gap-1.5 hover:text-muted">
-          <ChevronDown size={11} className={cn("transition", !(older || olderActive) && "-rotate-90")} /> Older screens
-        </button>
-        {(older || olderActive) && (
-          <nav className="px-2 space-y-0.5">
-            {olderNav.map(({ href, label, icon: Icon }) => (
-              <Link key={href} href={href} className={cn("flex items-center gap-2.5 h-8 px-2.5 rounded-lg text-[12.5px] transition", path.startsWith(href) ? "bg-sunken text-fg font-medium" : "text-faint hover:bg-sunken hover:text-fg")}>
-                <Icon size={13} /> <span className="flex-1">{label}</span>
-                {href === "/review" && unplaced > 0 && <span className="text-[10px] font-semibold bg-high-soft text-high rounded-full px-1.5 h-4 grid place-items-center">{unplaced}</span>}
-              </Link>
-            ))}
+        {/* One scrolling body for the menu and the property lists (2026-10-27): with eighteen
+            properties a fixed menu left the lists a few rows tall. The name on top and the
+            person at the bottom stay in place; everything between scrolls together. */}
+        <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-2 pb-2">
+          <nav className="flex flex-col gap-0.5">
+            <button type="button" onClick={() => setPalette(true)} className={cn(ROW, "w-full font-medium text-muted hover:bg-fg/[0.04]")}>
+              <Search size={16} strokeWidth={1.6} /> <span>Jump to</span> <span className="ml-auto text-[11px] font-normal text-faint/80">Ctrl K</span>
+            </button>
+            {nav.map(({ href, label, icon: Icon }) => {
+              const active = href === "/" ? path === "/" : path.startsWith(href);
+              const n = href === "/replies" ? counts.data?.drafts : href === "/chase" ? counts.data?.followups : href === "/bills" ? counts.data?.bills : 0;
+              return (
+                <Link key={href} href={href} className={cn(ROW, "font-medium", active ? "bg-fg/[0.07] text-fg" : "text-muted hover:bg-fg/[0.04] hover:text-fg")}>
+                  <Icon size={16} strokeWidth={1.6} /> <span className="truncate">{label}</span>
+                  {(n || 0) > 0 && <span title={href === "/chase" ? "Follow-ups waiting for you" : undefined} className={cn(COUNT, href === "/chase" && (counts.data?.followups_high || 0) > 0 ? "text-critical font-medium" : "text-faint")}>{n}</span>}
+                </Link>
+              );
+            })}
           </nav>
-        )}
+          {/* The properties, sorted by where each deal stands (2026-11-13): under construction,
+              on the market (with the days since it was listed), and in foreclosure — the ones
+              RKB is collecting through lawyers or the courts. The sorting comes from the same
+              reading that draws the progress bar on the property's page. */}
+          {rkb && propertyGroups(props.data || [], counts.data?.groups, recent.data?.recent).map((g) => (
+            <React.Fragment key={g.key}>
+              <div className="mt-3 h-7 px-2 flex items-center gap-1.5 text-[11px] font-semibold text-faint">
+                <g.icon size={14} strokeWidth={1.6} /> <span>{g.label}</span> <span className={cn(COUNT, "text-[11px]")}>{g.rows.length}</span>
+              </div>
+              <nav className="flex flex-col gap-0.5">
+                {g.rows.map((p) => {
+                  const active = path === `/property/${p.id}` || path.startsWith(`/property/${p.id}/`);
+                  const n = counts.data?.open?.[p.id] || 0;
+                  const days = g.key === "market" ? counts.data?.market_days?.[p.id] : undefined;
+                  // Something happened here in the last two days and this person has not opened the property since: a green mark until they do.
+                  const fresh = (g.key === "construction" || g.key === "market") && !!recent.data?.unseen?.includes(p.id);
+                  return (
+                    <Link key={p.id} href={`/property/${p.id}`} className={cn(ROW, active ? "bg-fg/[0.07] text-fg font-medium" : fresh ? "text-fg font-medium hover:bg-fg/[0.04]" : "text-muted hover:bg-fg/[0.04] hover:text-fg")}>
+                      <PropertyMark label={p.label} colour={colourOf(p.id)} />
+                      <span className="truncate flex-1">{p.label}</span>
+                      {fresh && <span title="New since you last opened it" className="h-1.5 w-1.5 shrink-0 rounded-full bg-good" />}
+                      {days != null && <span title={`${days} day${days === 1 ? "" : "s"} on the market`} className="text-[12px] font-normal text-faint tnum shrink-0">{days}d</span>}
+                      {n > 0 && <span title={`${n} item${n === 1 ? "" : "s"} need you`} className="text-[12px] font-medium text-high tnum shrink-0">{n}</span>}
+                    </Link>
+                  );
+                })}
+              </nav>
+            </React.Fragment>
+          ))}
+          <button type="button" onClick={() => setOlder((v) => !v)} className="mt-3 h-7 w-full px-2 flex items-center gap-1.5 text-[11px] font-semibold text-faint hover:text-muted">
+            <ChevronDown size={14} strokeWidth={1.6} className={cn("transition", !(older || olderActive) && "-rotate-90")} /> Older screens
+          </button>
+          {(older || olderActive) && (
+            <nav className="flex flex-col gap-0.5">
+              {olderNav.map(({ href, label, icon: Icon }) => (
+                <Link key={href} href={href} className={cn(ROW, path.startsWith(href) ? "bg-fg/[0.07] text-fg font-medium" : "text-faint hover:bg-fg/[0.04] hover:text-fg")}>
+                  <Icon size={16} strokeWidth={1.6} /> <span className="truncate">{label}</span>
+                  {href === "/review" && unplaced > 0 && <span className={cn(COUNT, "text-high font-medium")}>{unplaced}</span>}
+                </Link>
+              ))}
+            </nav>
+          )}
         </div>
-        <div className="border-t border-line p-3 flex items-center gap-2 shrink-0">
-          <div className="h-8 w-8 rounded-full bg-accent-soft text-accent grid place-items-center text-xs font-semibold">{initials(user.full_name || user.name)}</div>
-          <div className="min-w-0 flex-1"><div className="text-xs font-medium truncate">{user.name}</div><div className="text-[10px] text-faint capitalize">{user.role}</div></div>
-          <button onClick={toggleTheme} className="h-7 w-7 grid place-items-center rounded-lg text-muted hover:bg-sunken"><Sun size={14} className="dark:hidden" /><Moon size={14} className="hidden dark:block" /></button>
-          <button onClick={async () => { await api.post("/auth/logout").catch(() => {}); qc.clear(); window.location.assign("/login"); }} className="h-7 w-7 grid place-items-center rounded-lg text-muted hover:bg-sunken" title="Sign out"><LogOut size={14} /></button>
+        <div className="h-12 shrink-0 px-3 flex items-center gap-2">
+          <div className="h-6 w-6 shrink-0 rounded-full bg-accent-soft text-accent grid place-items-center text-[10px] font-semibold">{initials(user.full_name || user.name)}</div>
+          <div className="min-w-0 flex-1 text-[13px] font-medium truncate" title={user.role}>{user.name}</div>
+          <button onClick={toggleTheme} className="h-6 w-6 grid place-items-center rounded text-faint hover:bg-fg/[0.06] hover:text-fg" title="Light or dark"><Sun size={16} strokeWidth={1.6} className="dark:hidden" /><Moon size={16} strokeWidth={1.6} className="hidden dark:block" /></button>
+          <button onClick={async () => { await api.post("/auth/logout").catch(() => {}); qc.clear(); window.location.assign("/login"); }} className="h-6 w-6 grid place-items-center rounded text-faint hover:bg-fg/[0.06] hover:text-fg" title="Sign out"><LogOut size={16} strokeWidth={1.6} /></button>
         </div>
       </aside>
 
-      <main className="ml-[212px] min-w-0 min-h-screen flex flex-col">
-        {(dash.data?.degrades?.length ?? 0) > 0 && (
-          <div className="bg-high-soft text-high text-xs px-5 py-2 flex items-center gap-2 border-b border-high/20"><AlertTriangle size={13} /> {(dash.data?.degrades || []).join(" · ")}</div>
-        )}
-        <motion.div key={path} initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.18 }} className="flex-1">
-          {children}
-        </motion.div>
+      <main className="flex-1 min-w-0 py-2 pr-2">
+        <div className="h-full overflow-auto rounded-lg border border-line bg-elev">
+          {(dash.data?.degrades?.length ?? 0) > 0 && (
+            <div className="bg-high-soft text-high text-[12px] px-4 py-2 flex items-center gap-2 border-b border-high/20"><AlertTriangle size={14} /> {(dash.data?.degrades || []).join(" · ")}</div>
+          )}
+          <div key={path} className="min-h-full">{children}</div>
+        </div>
       </main>
       <Palette open={palette} onOpenChange={setPalette} properties={props.data || []} nav={nav} />
     </div>
@@ -252,19 +258,19 @@ function Palette({ open, onOpenChange, properties, nav }: { open: boolean; onOpe
   const go = (href: string) => { onOpenChange(false); setQ(""); router.push(href); };
   return (
     <Command.Dialog open={open} onOpenChange={onOpenChange} label="Jump to" className="fixed inset-0 z-50" overlayClassName="fixed inset-0 bg-black/30 backdrop-blur-[2px]"
-      contentClassName="fixed left-1/2 top-[18%] -translate-x-1/2 w-[calc(100vw-2rem)] max-w-xl bg-elev border border-line rounded-2xl shadow-[var(--shadow)] overflow-hidden">
-      <div className="flex items-center gap-2 px-4 border-b border-line"><Search size={15} className="text-faint" /><Command.Input value={q} onValueChange={setQ} placeholder="Property, person, document, or a question…" className="h-12 flex-1 bg-transparent text-sm outline-none placeholder:text-faint" /><Kbd>esc</Kbd></div>
+      contentClassName="fixed left-1/2 top-[18%] -translate-x-1/2 w-[calc(100vw-2rem)] max-w-xl bg-elev border border-line rounded-lg shadow-[var(--shadow)] overflow-hidden">
+      <div className="flex items-center gap-2 px-4 border-b border-line"><Search size={16} strokeWidth={1.6} className="text-faint" /><Command.Input value={q} onValueChange={setQ} placeholder="Property, person, document, or a question…" className="h-12 flex-1 bg-transparent text-[13px] outline-none placeholder:text-faint" /><Kbd>esc</Kbd></div>
       <Command.List className="max-h-[380px] overflow-y-auto p-2">
-        <Command.Empty className="px-3 py-6 text-center text-sm text-muted">Nothing yet — keep typing.</Command.Empty>
-        {q.length > 6 && <Command.Group heading="Ask" className="text-[10px] uppercase tracking-wider text-faint px-2 pt-2 pb-1"><Item onSelect={() => go(`/ask?q=${encodeURIComponent(q)}`)} icon={MessageSquare} label={`Ask: “${q}”`} sub="Ask across every property" /></Command.Group>}
-        <Command.Group heading="Go to" className="text-[10px] uppercase tracking-wider text-faint px-2 pt-2 pb-1">
+        <Command.Empty className="px-3 py-6 text-center text-[13px] text-muted">Nothing yet — keep typing.</Command.Empty>
+        {q.length > 6 && <Command.Group heading="Ask" className="text-[11px] font-semibold text-faint px-2 pt-2 pb-1"><Item onSelect={() => go(`/ask?q=${encodeURIComponent(q)}`)} icon={MessageSquare} label={`Ask: “${q}”`} sub="Ask across every property" /></Command.Group>}
+        <Command.Group heading="Go to" className="text-[11px] font-semibold text-faint px-2 pt-2 pb-1">
           {nav.map((n) => <Item key={n.href} onSelect={() => go(n.href)} icon={n.icon} label={n.label} />)}
         </Command.Group>
-        <Command.Group heading="Properties" className="text-[10px] uppercase tracking-wider text-faint px-2 pt-2 pb-1">
+        <Command.Group heading="Properties" className="text-[11px] font-semibold text-faint px-2 pt-2 pb-1">
           {properties.map((p) => <Item key={p.property_id} value={`${p.address} ${p.property_id}`} onSelect={() => go(`/property/${p.property_id}`)} icon={Building2} label={p.address} sub={propertyLabel(p.property_id)} />)}
         </Command.Group>
         {remote.data?.results?.filter((r: any) => r.kind !== "property").length > 0 && (
-          <Command.Group heading="People & documents" className="text-[10px] uppercase tracking-wider text-faint px-2 pt-2 pb-1">
+          <Command.Group heading="People & documents" className="text-[11px] font-semibold text-faint px-2 pt-2 pb-1">
             {remote.data.results.filter((r: any) => r.kind !== "property").map((r: any) => (
               <Item key={r.kind + r.id} value={r.label} onSelect={() => go(r.kind === "person" ? `/people/${r.id}` : `/document/${r.id}`)} icon={r.kind === "person" ? Users : Search} label={r.label} sub={r.sub} />
             ))}
@@ -277,8 +283,8 @@ function Palette({ open, onOpenChange, properties, nav }: { open: boolean; onOpe
 
 function Item({ onSelect, icon: Icon, label, sub, value }: { onSelect: () => void; icon: any; label: string; sub?: string; value?: string }) {
   return (
-    <Command.Item value={value || label} onSelect={onSelect} className="flex items-center gap-3 px-3 h-10 rounded-lg text-sm cursor-pointer data-[selected=true]:bg-sunken">
-      <Icon size={15} className="text-muted" /><span className="flex-1 truncate">{label}</span>{sub && <span className="text-xs text-faint truncate max-w-[40%]">{sub}</span>}<ChevronRight size={14} className="text-faint" />
+    <Command.Item value={value || label} onSelect={onSelect} className="flex items-center gap-2 px-2 h-8 rounded text-[13px] font-normal text-fg cursor-pointer data-[selected=true]:bg-hover">
+      <Icon size={16} strokeWidth={1.6} className="text-faint" /><span className="flex-1 truncate">{label}</span>{sub && <span className="text-[12px] text-faint truncate max-w-[40%]">{sub}</span>}<ChevronRight size={14} className="text-faint" />
     </Command.Item>
   );
 }

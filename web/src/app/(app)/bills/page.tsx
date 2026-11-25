@@ -2,15 +2,19 @@
 
 /* Bills — every contractor bill RKB is handling, on one line each: the bill, the
    property, the bill date, and RKB's four steps as tick boxes. Each tick records
-   when it was made and by whom, and the page shows how long the bill took. */
+   when it was made and by whom, and the page shows how long the bill took.
+   A row opens the bill's own page (the check, line by line). */
 
 import * as React from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Banknote, ChevronRight, Clock, Lock, Receipt } from "lucide-react";
+import { Calendar, CircleCheck, CircleDollarSign, Home, MessageSquare, Receipt } from "lucide-react";
 import { api } from "@/lib/api";
-import { Button, Card, Checkbox, Dialog, DialogContent, Skeleton } from "@/components/ui";
+import { Dialog, DialogContent, Skeleton } from "@/components/ui";
+import { Btn, Chip, Col, Figure, Figures, PageHead, Tag, TD, TH, Tick, View, Views, type Tone } from "@/components/ds";
+import { PropertyMark, usePropertyColours } from "@/components/property-mark";
 import { BillLines, usd } from "@/components/brain/side";
 import { EntryChangeOrders } from "@/components/brain/entry";
 import { ago, cn, fmtDate } from "@/lib/utils";
@@ -22,6 +26,7 @@ type MailState = { status?: string; send_after?: string | null; sent_at?: string
 /* Every time on this page is US Eastern, the same as in the emails the page sends. */
 const et = (iso?: string | null) => (iso ? new Date(iso).toLocaleString("en-US", { timeZone: "America/New_York", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }) + " ET" : "");
 const etTime = (iso?: string | null) => (iso ? new Date(iso).toLocaleString("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "2-digit" }) + " ET" : "");
+const etDay = (iso?: string | null) => (iso ? new Date(iso).toLocaleString("en-GB", { timeZone: "America/New_York", day: "numeric", month: "short" }) : "");     // "24 Nov", as the bill date is written
 type Row = {
   bill_id: number; property_id?: string; property: string; number?: string; title?: string; pay_to?: string; amount?: number | null;
   bill_date?: string | null; bill_moment?: string | null; mail?: Record<string, MailState>; bill_day?: string | null; due_day?: string | null; past_due?: boolean; buildertrend_status?: string; in_buildertrend?: boolean;
@@ -50,45 +55,29 @@ function took(from?: string | null, to?: string | null) {
 }
 const nowIso = () => new Date().toISOString();
 const daysOpen = (from?: string | null) => (from ? Math.floor((Date.now() - new Date(from).getTime()) / 86_400_000) : 0);
+/* How long a bill has been open is highlighted: green up to a week, amber after it, red after two. */
+const dayTone = (days: number): Tone => (days > 14 ? "red" : days > 7 ? "amber" : "green");
 
-/* Bill · Property · Bill date · Amount · the four steps · Time taken · Comment (the one column that takes the spare width). */
-const COLS = "grid-cols-[200px_136px_74px_88px_repeat(4,92px)_78px_minmax(190px,1fr)]";
 /* Hold-back bills are never listed here, so "(Contractor)" on a name says nothing: the row shows the name without it. */
 const shortName = (t?: string) => (t || "").replace(/\s*\(contractor\)\s*$/i, "").trim();
-
-/* The four figures on top of the list, each with its own colour so the page reads at a glance. */
-const TONES = {
-  accent: { bar: "bg-accent", chip: "bg-accent-soft text-accent" },
-  blue: { bar: "bg-money-in", chip: "bg-[color-mix(in_srgb,var(--money-in)_13%,transparent)] text-money-in" },
-  good: { bar: "bg-good", chip: "bg-good-soft text-good" },
-  high: { bar: "bg-high", chip: "bg-high-soft text-high" },
-  critical: { bar: "bg-critical", chip: "bg-critical-soft text-critical" },
-  slate: { bar: "bg-info", chip: "bg-info-soft text-info" },
-} as const;
-function Tile({ tone, icon, label, value, sub }: { tone: keyof typeof TONES; icon: React.ReactNode; label: string; value: React.ReactNode; sub?: React.ReactNode }) {
-  return (
-    <div className="relative overflow-hidden rounded-xl border border-line bg-elev pl-4 pr-3.5 py-3 flex items-center gap-3 shadow-[var(--shadow-sm)]">
-      <span className={cn("absolute inset-y-0 left-0 w-[3px]", TONES[tone].bar)} />
-      <span className={cn("grid place-items-center size-9 rounded-lg shrink-0", TONES[tone].chip)}>{icon}</span>
-      <div className="min-w-0">
-        <div className="text-[10px] font-semibold uppercase tracking-[0.09em] text-faint">{label}</div>
-        <div className="text-[18px] font-semibold tracking-tight tnum leading-tight mt-0.5">{value}</div>
-        {sub && <div className="text-[11px] text-muted truncate mt-0.5">{sub}</div>}
-      </div>
-    </div>
-  );
-}
+/* The step headings, short enough for a column; the full name is on the heading's tooltip and on each box. */
+const SHORT: Record<string, string> = { manju_approved: "Manju Sir", team_reviewed: "Team" };
+/* Bill · Property · Bill date · Amount · Check · the four steps · Open · Comment (the one column that takes the spare width). */
+const WIDTHS = [236, 176, 84, 92, 96, 92, 84, 96, 84, 76];
 /* A bill is overdue once its due day has passed and it is not ticked paid (worked out now, not from the day Buildertrend was last read). */
 const overdue = (due?: string | null) => !!due && Date.now() > new Date(due).getTime() + 12 * 3_600_000;
 
-/* RKB's own note on a bill. Written in place; saved when the box is left (or on Enter). Empty removes it. */
+/* RKB's own note on a bill. Written in place and read in full: the box grows with the words.
+   Saved when the box is left (or on Enter). Empty removes it. */
 function Comment({ row, onSaved }: { row: Row; onSaved: (c: Row["comment"]) => void }) {
   const saved = row.comment?.text || "";
   const [text, setText] = React.useState(saved);
   const [busy, setBusy] = React.useState(false);
   const ref = React.useRef<HTMLTextAreaElement>(null);
   React.useEffect(() => { if (document.activeElement !== ref.current) setText(saved); }, [saved]);
-  React.useLayoutEffect(() => { const el = ref.current; if (el) { el.style.height = "0px"; el.style.height = `${Math.max(30, el.scrollHeight + 2)}px`; } }, [text]);
+  /* The same words, unseen, sit under the box in the same cell of a grid: they give the box its height,
+     so the whole comment shows whatever the width of the column. */
+  const SHAPE = "[grid-area:1/1] min-w-0 px-1.5 py-[3px] border text-[13px] leading-[1.4] whitespace-pre-wrap break-words";
   const save = async () => {
     const next = text.replace(/\s+/g, " ").trim();
     if (next === saved) { setText(saved); return; }
@@ -101,14 +90,16 @@ function Comment({ row, onSaved }: { row: Row; onSaved: (c: Row["comment"]) => v
   };
   return (
     <div className="min-w-0">
-      <textarea ref={ref} value={text} rows={1} maxLength={500} disabled={busy} placeholder="Add a comment" aria-label={`Comment — ${row.title || row.number}`}
-        onChange={(e) => setText(e.target.value)} onBlur={save}
-        onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); e.currentTarget.blur(); } else if (e.key === "Escape") { setText(saved); requestAnimationFrame(() => ref.current?.blur()); } }}
-        style={{ scrollbarWidth: "none" }}
-        className={cn("block w-full resize-none overflow-hidden rounded-md border px-2 py-[5px] text-[12.5px] leading-snug outline-none transition placeholder:text-faint",
-          text ? "border-transparent bg-sunken/60" : "border-dashed border-line bg-transparent", "hover:border-line focus:border-accent focus:bg-elev")} />
+      <div className="grid -mx-1.5">
+        <div aria-hidden className={cn(SHAPE, "invisible border-transparent")}>{text || "Add a comment"}{" "}</div>
+        <textarea ref={ref} value={text} rows={1} maxLength={500} disabled={busy} placeholder="Add a comment" aria-label={`Comment — ${row.title || row.number}`}
+          onChange={(e) => setText(e.target.value)} onBlur={save}
+          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); e.currentTarget.blur(); } else if (e.key === "Escape") { setText(saved); requestAnimationFrame(() => ref.current?.blur()); } }}
+          style={{ scrollbarWidth: "none" }}
+          className={cn(SHAPE, "block h-full w-full resize-none overflow-hidden rounded border-transparent bg-transparent text-fg outline-none transition-colors placeholder:text-faint/70 hover:border-line focus:border-accent focus:bg-elev")} />
+      </div>
       {row.comment?.at && text === saved && saved && (
-        <div className="mt-0.5 px-2 text-[10.5px] text-faint truncate">{(row.comment.by_name || "").replace(/ Sir$/, "")}{row.comment.by_name ? " · " : ""}{et(row.comment.at)}</div>
+        <div className="text-[11px] text-faint truncate">{(row.comment.by_name || "").replace(/ Sir$/, "")}{row.comment.by_name ? " · " : ""}{et(row.comment.at)}</div>
       )}
     </div>
   );
@@ -116,6 +107,8 @@ function Comment({ row, onSaved }: { row: Row; onSaved: (c: Row["comment"]) => v
 
 export default function BillsPage() {
   const qc = useQueryClient();
+  const router = useRouter();
+  const colourOf = usePropertyColours();
   const [view, setView] = React.useState<"open" | "paid">("open");
   const [open, setOpen] = React.useState<number | null>(null);
   const [ask, setAsk] = React.useState<{ row: Row; step: string } | null>(null);     // "send the email?" before the tick
@@ -149,142 +142,156 @@ export default function BillsPage() {
   const oldest = rows.reduce((m, r) => Math.max(m, daysOpen(r.bill_moment || r.bill_date)), 0);
   const paidTimes = rows.map((r) => (r.steps.paid && (r.bill_moment || r.bill_date) ? new Date(r.steps.paid.at).getTime() - new Date((r.bill_moment || r.bill_date)!).getTime() : null)).filter((x): x is number => x != null && x >= 0);
   const avgDays = paidTimes.length ? paidTimes.reduce((a, b) => a + b, 0) / paidTimes.length / 86_400_000 : null;
+  const properties = new Set(rows.map((r) => r.property_id)).size;
+  const toCheck = rows.filter((r) => r.check?.check.count).length;
+  const late = rows.filter((r) => !r.steps.paid && overdue(r.due_day)).length;
+  const cols = 6 + steps.length + 1;
 
   return (
-    <div className="px-6 py-6 max-w-[1400px] mx-auto">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-[20px] font-semibold tracking-tight">Bills</h1>
-          <p className="text-[12.5px] text-muted mt-0.5">
-            {!q.data ? "Loading…" : view === "open"
-              ? (rows.length ? "Bills waiting for RKB, from approval to payment" : "No bill is waiting.")
-              : (rows.length ? "Bills ticked Paid, with the time each one took" : "No bill has been marked paid yet.")}
-            {q.data?.pulled_at && <span className="text-faint"> · Buildertrend read {ago(q.data.pulled_at)}</span>}
-          </p>
-        </div>
-        <div className="inline-flex rounded-lg bg-sunken p-0.5 border border-line">
-          {([["open", "To process"], ["paid", "Paid"]] as const).map(([k, l]) => (
-            <button key={k} type="button" onClick={() => { setView(k); setOpen(null); }} className={cn("h-7 px-3 rounded-md text-[12.5px] font-medium transition", view === k ? "bg-accent text-white shadow-[var(--shadow-sm)]" : "text-muted hover:text-fg")}>{l}</button>
-          ))}
-        </div>
-      </div>
+    <div>
+      <PageHead icon={<Receipt size={16} strokeWidth={1.6} />} crumbs={[{ label: "Bills" }]}>
+        {q.data?.pulled_at && <span className="text-[12px] text-faint">Buildertrend read {ago(q.data.pulled_at)}</span>}
+      </PageHead>
+      <Views>
+        <View active={view === "open"} count={view === "open" && q.data ? rows.length : undefined} onClick={() => { setView("open"); setOpen(null); }}>To process</View>
+        <View active={view === "paid"} count={view === "paid" && q.data ? rows.length : undefined} onClick={() => { setView("paid"); setOpen(null); }}>Paid</View>
+        <span className="flex-1" />
+        <span className="pr-2 text-[12px] text-faint">Times are US Eastern</span>
+      </Views>
 
-      <EntryChangeOrders />
+      <div className="px-4 pb-4 border-b border-line empty:hidden"><EntryChangeOrders /></div>
 
       {q.data && rows.length > 0 && (
-        <div className="mt-4 grid grid-cols-2 xl:grid-cols-4 gap-3">
-          <Tile tone="accent" icon={<Receipt size={17} />} label={view === "open" ? "Bills to process" : "Bills paid"} value={rows.length}
-            sub={view === "open" ? `${rows.filter((r) => r.check?.check.count).length} with lines to check` : "ticked Paid here"} />
-          <Tile tone="blue" icon={<Banknote size={17} />} label={view === "open" ? "Amount waiting" : "Amount paid"} value={usd(total)}
-            sub={view === "open" ? `${new Set(rows.map((r) => r.property_id)).size} properties` : `${new Set(rows.map((r) => r.property_id)).size} properties`} />
+        <Figures>
+          <Figure label={view === "open" ? "Bills to process" : "Bills paid"} value={rows.length} sub={view === "open" ? `${toCheck} with lines to check` : "ticked Paid here"} />
+          <Figure label={view === "open" ? "Amount waiting" : "Amount paid"} value={usd(total)} sub={`${properties} propert${properties === 1 ? "y" : "ies"}`} />
           {view === "open"
-            ? <Tile tone={oldest > 14 ? "critical" : oldest > 7 || rows.some((r) => !r.steps.paid && overdue(r.due_day)) ? "high" : "good"} icon={<Clock size={17} />} label="Oldest bill" value={`${oldest} day${oldest === 1 ? "" : "s"}`}
-                sub={`${rows.filter((r) => !r.steps.paid && overdue(r.due_day)).length} past their due date`} />
-            : <Tile tone="good" icon={<Clock size={17} />} label="Average time to pay" value={avgDays != null ? `${avgDays.toFixed(1)} days` : "—"} sub="from bill date to Paid" />}
-          <Tile tone="slate" icon={<Lock size={16} />} label="Held back (10%)" value={usd(q.data.held_back?.held_amount ?? 0)} sub={`${q.data.held_back?.held ?? 0} hold-back bills, not listed`} />
-        </div>
+            ? <Figure label="Oldest bill" value={`${oldest} day${oldest === 1 ? "" : "s"}`} tone={oldest > 14 ? "text-critical" : oldest > 7 ? "text-high" : undefined} sub={`${late} past ${late === 1 ? "its" : "their"} due date`} />
+            : <Figure label="Average time to pay" value={avgDays != null ? `${avgDays.toFixed(1)} days` : "—"} sub="from bill date to Paid" />}
+          <Figure label="Held back (10%)" value={usd(q.data.held_back?.held_amount ?? 0)} sub={`${q.data.held_back?.held ?? 0} hold-back bills, not listed`} />
+        </Figures>
       )}
 
-      <Card className="mt-3 overflow-x-auto">
-        <div className="min-w-[1256px]">
-          <div className={cn("grid gap-2.5 px-4 py-2.5 border-b border-accent/20 bg-accent-soft/70 text-[9.5px] font-semibold uppercase tracking-[0.09em] text-accent items-end", COLS)}>
-            <div className="pl-[19px]">Bill</div><div>Property</div><div>Bill date</div><div className="text-right">Amount</div>
-            {steps.map((s) => <div key={s.key} className="text-center leading-tight">{s.label}</div>)}
-            <div className="text-right">Time taken</div>
-            <div className="pl-2">Comment</div>
-          </div>
-          {!q.data ? <div className="p-4 space-y-2.5"><Skeleton className="h-10" /><Skeleton className="h-10" /><Skeleton className="h-10" /></div>
-            : rows.length === 0 ? <div className="px-4 py-8 text-[13px] text-muted text-center">{view === "open" ? "No bill is in review in Buildertrend, and none is part-way through." : "Tick “Paid” on a bill and it moves here with its times."}</div>
-              : rows.map((r) => {
-                const paid = r.steps.paid;
-                const days = daysOpen(r.bill_moment || r.bill_date);
-                const late = !paid && overdue(r.due_day);
-                const next = steps.find((s) => !r.steps[s.key])?.key;                  // the step this bill is waiting on
-                return (
-                  <div key={r.bill_id} className="relative border-b border-line/70 last:border-0">
-                    <span className={cn("absolute left-0 top-0 bottom-0 w-[3px]", paid ? "bg-good" : !r.check ? "bg-line-strong" : r.check.check.count ? "bg-high" : "bg-good")} />
-                    <div className={cn("grid gap-2.5 px-4 py-2.5 items-start hover:bg-accent-soft/25 transition-colors", COLS)}>
-                      <button type="button" onClick={() => setOpen(open === r.bill_id ? null : r.bill_id)} title={[r.title || r.number, r.number, r.pay_to].filter(Boolean).join(" · ")} className="min-w-0 text-left flex gap-1.5">
-                        <ChevronRight size={13} className={cn("mt-[3px] shrink-0 text-faint transition", open === r.bill_id && "rotate-90")} />
-                        <span className="min-w-0">
-                          <span className="block text-[13px] font-medium leading-snug line-clamp-2">{shortName(r.title) || r.number}</span>
-                          <span className="block text-[11px] text-faint truncate">{r.pay_to || r.number}</span>
-                        </span>
-                      </button>
-                      <div className="min-w-0 text-[12.5px]">
-                        <div className="truncate">{r.property_id ? <Link href={`/property/${r.property_id}?tab=bills`} className="font-medium text-accent hover:underline">{r.property}</Link> : r.property}</div>
-                        {r.in_buildertrend !== false && (
-                          <Link href={`/bills/${r.bill_id}`} title="Open this bill line by line: the proposal line, what was billed before, and what the logs and photos show"
-                            className={cn("mt-1 inline-flex items-center gap-1 h-[20px] pl-1.5 pr-1 rounded text-[11px] font-semibold whitespace-nowrap hover:brightness-95",
-                              !r.check ? "bg-sunken text-muted" : r.check.check.count ? "bg-high-soft text-high" : "bg-good-soft text-good")}>
-                            {!r.check ? "Not checked yet" : r.check.check.count ? `${r.check.check.count} to check · ${usd(r.check.check.amount)}` : r.check.lines === 1 ? "Line supported" : `All ${r.check.lines} lines supported`}
-                            <ChevronRight size={11} />
-                          </Link>
-                        )}
-                      </div>
-                      <div className="text-[12.5px] tnum">
-                        {fmtDate(r.bill_day, "d MMM yy")}
-                        {r.due_day && <div className={cn("text-[10.5px]", late ? "text-critical font-semibold" : "text-faint")}>due {fmtDate(r.due_day, "d MMM")}</div>}
-                      </div>
-                      <div className="text-[13px] font-semibold tnum text-right">{usd(r.amount)}</div>
-                      {steps.map((s) => {
-                        const m = r.steps[s.key];
-                        return (
-                          <div key={s.key} className="flex flex-col items-center text-center">
-                            <Checkbox checked={!!m} onCheckedChange={(v) => (v && sends(r, s.key) ? setAsk({ row: r, step: s.key }) : tick(r, s.key, v))} size={18} label={`${s.label} — ${r.title || r.number}`}
-                              className={cn("rounded-md data-[state=checked]:bg-good data-[state=checked]:border-good", !m && next === s.key && "border-accent shadow-[0_0_0_3px_color-mix(in_srgb,var(--accent)_14%,transparent)]")} />
-                            {m && (
-                              <div className="mt-1 w-full rounded-md bg-good-soft/70 px-1 py-[3px] text-[10.5px] leading-tight text-muted">
-                                <div className="tnum">{et(m.at)}</div>
-                                <div className="text-faint">{took(r.bill_moment || r.bill_date, m.at) ? `+${took(r.bill_moment || r.bill_date, m.at)}` : ""}{m.by_name ? ` · ${m.by_name.replace(/ Sir$/, "")}` : ""}</div>
-                                {r.mail?.[s.key]?.status === "queued" && !r.mail[s.key].error && <div className="text-high">email to {(r.mail[s.key].to || []).join(", ")} is being sent</div>}
-                                {(r.mail?.[s.key]?.status === "sent" || r.mail?.[s.key]?.status === "replied") && <div className="text-good">emailed {(r.mail[s.key].to || []).join(", ")} {etTime(r.mail[s.key].sent_at)}</div>}
-                                {r.mail?.[s.key]?.status === "needs_consent" && <div className="text-critical">email not sent: the mailbox needs to allow sending</div>}
-                                {r.mail?.[s.key]?.status === "queued" && r.mail[s.key].error && <div className="text-critical">email NOT gone yet: Microsoft&apos;s mail service did not accept it; retrying every few minutes</div>}
-                                {r.mail?.[s.key]?.status === "failed" && <div className="text-critical">email could not be sent</div>}
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[1290px] table-fixed border-collapse">
+          <colgroup>{WIDTHS.slice(0, 5).map((w, i) => <col key={i} style={{ width: w }} />)}{steps.map((s, i) => <col key={s.key} style={{ width: WIDTHS[5 + i] ?? 88 }} />)}<col style={{ width: WIDTHS[9] }} /><col /></colgroup>
+          <thead>
+            <tr>
+              <th className={TH}><Col icon={<Receipt size={14} strokeWidth={1.6} />}>Bill</Col></th>
+              <th className={TH}><Col icon={<Home size={14} strokeWidth={1.6} />}>Property</Col></th>
+              <th className={TH}><Col icon={<Calendar size={14} strokeWidth={1.6} />}>Bill date</Col></th>
+              <th className={cn(TH, "text-right")}><Col icon={<CircleDollarSign size={14} strokeWidth={1.6} />}>Amount</Col></th>
+              <th className={TH}><Col icon={<CircleCheck size={14} strokeWidth={1.6} />}>Check</Col></th>
+              {steps.map((s) => <th key={s.key} title={s.label} className={cn(TH, "text-center")}>{SHORT[s.key] || s.label}</th>)}
+              <th className={cn(TH, "text-right")}>{view === "paid" ? "Took" : "Open"}</th>
+              <th className={TH}><Col icon={<MessageSquare size={14} strokeWidth={1.6} />}>Comment</Col></th>
+            </tr>
+          </thead>
+          <tbody>
+            {!q.data ? <tr><td colSpan={cols} className="p-4"><div className="space-y-2"><Skeleton className="h-6" /><Skeleton className="h-6" /><Skeleton className="h-6" /></div></td></tr>
+              : rows.length === 0 ? <tr><td colSpan={cols} className="h-8 px-2 text-[13px] text-faint border-b border-line">{view === "open" ? "No bill is in review in Buildertrend, and none is part-way through." : "Tick “Paid” on a bill and it moves here with its times."}</td></tr>
+                : rows.map((r) => {
+                  const paid = r.steps.paid;
+                  const days = daysOpen(r.bill_moment || r.bill_date);
+                  const isLate = !paid && overdue(r.due_day);
+                  const next = steps.find((s) => !r.steps[s.key])?.key;                  // the step this bill is waiting on
+                  const page = r.in_buildertrend !== false;                              // it has its own page: the check, line by line
+                  const name = shortName(r.title) || r.number || "";
+                  const go = () => (page ? router.push(`/bills/${r.bill_id}`) : setOpen(open === r.bill_id ? null : r.bill_id));
+                  return (
+                    <React.Fragment key={r.bill_id}>
+                      <tr onClick={go} className="cursor-pointer hover:bg-hover transition-colors">
+                        <td className={cn(TD, "text-fg font-medium")} title={[r.title || r.number, r.number, r.pay_to && `pay to ${r.pay_to}`].filter(Boolean).join(" · ")}>
+                          {page ? <Link href={`/bills/${r.bill_id}`} onClick={(e) => e.stopPropagation()} className="hover:underline">{name}</Link> : name}
+                        </td>
+                        <td className={TD}>{r.property_id
+                          ? <Link href={`/property/${r.property_id}?tab=bills`} onClick={(e) => e.stopPropagation()} className="inline-flex max-w-full align-middle hover:brightness-95"><Chip icon={<PropertyMark label={r.property} colour={colourOf(r.property_id)} />}>{r.property}</Chip></Link>
+                          : r.property}</td>
+                        <td className={cn(TD, "tnum", isLate && "text-critical font-medium")} title={r.due_day ? `Due ${fmtDate(r.due_day, "d MMM yyyy")}${isLate ? ", past its due date" : ""}` : undefined}>{fmtDate(r.bill_day, "d MMM")}</td>
+                        <td className={cn(TD, "text-right tnum text-fg")}>{usd(r.amount)}</td>
+                        <td className={TD}>{page && (!r.check ? <Tag>Not checked</Tag>
+                          : r.check.check.count ? <Tag tone="amber" title={`${usd(r.check.check.amount)} to check`}>{r.check.check.count} to check</Tag>
+                            : <Tag tone="green">{r.check.lines === 1 ? "Line supported" : "Lines supported"}</Tag>)}</td>
+                        {steps.map((s) => {
+                          const m = r.steps[s.key];
+                          const mail = r.mail?.[s.key];
+                          const gone = mail?.status === "sent" || mail?.status === "replied";
+                          const tip = m ? [s.label, et(m.at), took(r.bill_moment || r.bill_date, m.at) && `+${took(r.bill_moment || r.bill_date, m.at)} from the bill date`, m.by_name && `by ${m.by_name}`,
+                            gone && `emailed ${(mail!.to || []).join(", ")} ${etTime(mail!.sent_at)}`].filter(Boolean).join(" · ") : s.label;
+                          return (
+                            <td key={s.key} className={cn(TD, "text-center whitespace-normal py-1")} title={tip} onClick={(e) => e.stopPropagation()}>
+                              <span className="inline-flex items-center gap-1.5 align-middle">
+                                <Tick checked={!!m} next={!m && next === s.key} label={`${s.label} — ${r.title || r.number}`} onChange={(v) => (v && sends(r, s.key) ? setAsk({ row: r, step: s.key }) : tick(r, s.key, v))} />
+                                {m && <span className="text-[12px] text-faint tnum">{etDay(m.at)}</span>}
+                              </span>
+                              {m && mail?.status === "queued" && !mail.error && <div className="text-[11px] leading-tight text-high">email being sent</div>}
+                              {m && mail?.status === "needs_consent" && <div className="text-[11px] leading-tight text-critical">email not sent: the mailbox must allow sending</div>}
+                              {m && mail?.status === "queued" && mail.error && <div className="text-[11px] leading-tight text-critical">email NOT gone yet; retrying</div>}
+                              {m && mail?.status === "failed" && <div className="text-[11px] leading-tight text-critical">email could not be sent</div>}
+                            </td>
+                          );
+                        })}
+                        <td className={cn(TD, "text-right")}>
+                          {paid ? <Tag tone="green" title="From the bill date to Paid">{took(r.bill_moment || r.bill_date, paid.at) || "—"}</Tag>
+                            : <Tag tone={dayTone(days)} title="Open so far, from the bill date">{days} day{days === 1 ? "" : "s"}</Tag>}
+                        </td>
+                        <td className={cn(TD, "whitespace-normal py-1 cursor-text")} onClick={(e) => e.stopPropagation()}>
+                          <Comment row={r} onSaved={(c) => { qc.setQueryData<Resp>(key, (cur) => cur ? { ...cur, rows: cur.rows.map((x) => x.bill_id === r.bill_id ? { ...x, comment: c } : x) } : cur); }} />
+                        </td>
+                      </tr>
+                      {open === r.bill_id && (
+                        <tr>
+                          <td colSpan={cols} className="px-4 py-3 border-b border-line bg-subtle">
+                            <div className="max-w-3xl">
+                              <div className="mb-1.5 text-[12px] text-muted">
+                                <span className="font-medium text-fg">{r.title || r.number}</span>{r.number ? ` · ${r.number}` : ""}{r.pay_to ? ` · ${r.pay_to}` : ""}
+                                <span className="text-faint"> · Buildertrend: {r.buildertrend_status}{r.approvers?.length ? ` · approver there: ${r.approvers.join(", ")}` : ""}</span>
                               </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                      <div className="text-right text-[12.5px] tnum">
-                        {paid ? <><span className="inline-flex h-[22px] items-center rounded-full bg-good-soft px-2 text-[12px] font-semibold text-good">{took(r.bill_moment || r.bill_date, paid.at) || "—"}</span><div className="mt-0.5 text-[10.5px] text-faint">bill date to paid</div></>
-                          : <><span className={cn("inline-flex h-[22px] items-center rounded-full px-2 text-[12px] font-semibold", days > 14 ? "bg-critical-soft text-critical" : days > 7 ? "bg-high-soft text-high" : "bg-good-soft text-good")}>{days} day{days === 1 ? "" : "s"}</span><div className="mt-0.5 text-[10.5px] text-faint">open so far</div></>}
-                      </div>
-                      <Comment row={r} onSaved={(c) => { qc.setQueryData<Resp>(key, (cur) => cur ? { ...cur, rows: cur.rows.map((x) => x.bill_id === r.bill_id ? { ...x, comment: c } : x) } : cur); }} />
-                    </div>
-                    {open === r.bill_id && (
-                      <div className="px-4 pb-3 pl-[34px] max-w-3xl">
-                        <div className="mb-1.5 text-[11.5px] text-muted">
-                          <span className="font-medium text-fg">{r.title || r.number}</span>{r.number ? ` · ${r.number}` : ""}{r.pay_to ? ` · ${r.pay_to}` : ""}
-                          <span className="text-faint"> · Buildertrend: {r.buildertrend_status}{r.approvers?.length ? ` · approver there: ${r.approvers.join(", ")}` : ""}</span>
-                        </div>
-                        <BillLines b={r as unknown as Bill} />
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-        </div>
-      </Card>
-      {q.data?.held_back && q.data.held_back.held > 0 && (
-        <p className="mt-2.5 text-[12px] text-muted">
-          Hold-back bills are not listed: RKB keeps 10% of every draw until the work is complete.
-          {" "}<b className="text-fg font-semibold tnum">{usd(q.data.held_back.held_amount)}</b> is held across {q.data.held_back.held} hold-back bills
-          {q.data.held_back.in_review > 0 ? <> ({q.data.held_back.in_review} of them, {usd(q.data.held_back.in_review_amount)}, entered with the bills now in review)</> : null}.
+                              <BillLines b={r as unknown as Bill} />
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  );
+                })}
+          </tbody>
+          {q.data && rows.length > 0 && (
+            <tfoot>
+              <tr className="text-[12px] text-faint [&>td]:border-b [&>td]:border-b-line">
+                <td className="h-8 px-2 border-r border-line/80">{rows.length} bill{rows.length === 1 ? "" : "s"}</td>
+                <td className="h-8 px-2 border-r border-line/80">{properties} propert{properties === 1 ? "y" : "ies"}</td>
+                <td className="border-r border-line/80" />
+                <td className="h-8 px-2 text-right tnum border-r border-line/80">{usd(total)}</td>
+                <td className="h-8 px-2 border-r border-line/80">{view === "open" ? `${toCheck} to check` : ""}</td>
+                {steps.map((s) => <td key={s.key} className="h-8 px-2 text-center tnum border-r border-line/80">{rows.filter((r) => r.steps[s.key]).length} of {rows.length}</td>)}
+                <td className="border-r border-line/80" /><td />
+              </tr>
+            </tfoot>
+          )}
+        </table>
+      </div>
+
+      <div className="px-4 pt-3 pb-6 max-w-5xl space-y-2 text-[12px] leading-relaxed text-faint">
+        {q.data?.held_back && q.data.held_back.held > 0 && (
+          <p className="text-muted">
+            Hold-back bills are not listed: RKB keeps 10% of every draw until the work is complete.
+            {" "}<b className="text-fg font-semibold tnum">{usd(q.data.held_back.held_amount)}</b> is held across {q.data.held_back.held} hold-back bills
+            {q.data.held_back.in_review > 0 ? <> ({q.data.held_back.in_review} of them, {usd(q.data.held_back.in_review_amount)}, entered with the bills now in review)</> : null}.
+          </p>
+        )}
+        <p>
+          Ticking “Manju Sir approved” emails JP Sir, ticking “Ready to pay” emails JP Sir, and ticking “Paid” emails Wes and Kelly (copy Manjunath Sir), from rakesh@mtreh.com. The page asks first, and on yes the email is sent at once.
+          A bill appears here when it is on Buildertrend’s “Bills need your approval” list, and stays until it is ticked paid. Each tick records the time and who made it: hold the pointer over a tick to see them. Unticking a box removes its time.
+          A comment is RKB’s own note on the bill: it is saved when you leave the box, with who wrote it, and is not sent to anyone.
         </p>
-      )}
-      <p className="mt-2.5 text-[11px] text-faint leading-relaxed">
-        Ticking “Ready to pay” emails JP Sir, and ticking “Paid” emails Wes and Kelly (copy Manjunath Sir), from rakesh@mtreh.com. The page asks first, and on yes the email is sent at once. All times are US Eastern.
-        A bill appears here when it is on Buildertrend’s “Bills need your approval” list, and stays until it is ticked paid. Each tick records the time and who made it; “+2d 3h” is the time since the bill date. Unticking a box removes its time.
-        A comment is RKB’s own note on the bill: it is saved when you leave the box, with who wrote it, and is not sent to anyone.
-      </p>
+      </div>
 
       <Dialog open={!!ask} onOpenChange={(o) => { if (!o && !sending) setAsk(null); }}>
-        <DialogContent title={ask ? `Tick “${SENDS[ask.step]}” and send the email?` : ""}>
+        <DialogContent className="rounded-lg p-5" title={ask ? `Tick “${SENDS[ask.step]}” and send the email?` : ""}>
           {ask && (
             <div>
-              <div className="rounded-xl border border-line bg-sunken/50 px-3.5 py-2.5 text-[13px]">
+              <div className="rounded-lg border border-line bg-subtle px-3 py-2 text-[13px]">
                 <div className="font-medium">{ask.row.title || ask.row.number}</div>
                 <div className="text-muted mt-0.5">{ask.row.property} · {usd(ask.row.amount)} · bill date {fmtDate(ask.row.bill_day, "d MMM yyyy")}</div>
               </div>
@@ -295,12 +302,12 @@ export default function BillsPage() {
                   : ask.step === "manju_approved" ? ", saying this bill has been approved, with the bill and everything on file about the property."
                   : ", with this bill and everything on file about the property."}
               </p>
-              {(ask.row.mail?.[ask.step]?.status === "sent" || ask.row.mail?.[ask.step]?.status === "replied") && <p className="mt-2 text-[12.5px] text-high">This email was already sent once; it will not be sent again.</p>}
+              {(ask.row.mail?.[ask.step]?.status === "sent" || ask.row.mail?.[ask.step]?.status === "replied") && <p className="mt-2 text-[13px] text-high">This email was already sent once; it will not be sent again.</p>}
               <div className="mt-4 flex justify-end gap-2">
-                <Button variant="ghost" onClick={() => setAsk(null)} disabled={sending}>Cancel — do not tick</Button>
-                <Button variant="primary" disabled={sending} onClick={async () => { setSending(true); try { await tick(ask.row, ask.step, true); } finally { setSending(false); setAsk(null); } }}>
+                <Btn variant="ghost" onClick={() => setAsk(null)} disabled={sending}>Cancel — do not tick</Btn>
+                <Btn variant="accent" disabled={sending} onClick={async () => { setSending(true); try { await tick(ask.row, ask.step, true); } finally { setSending(false); setAsk(null); } }}>
                   {sending ? "Sending…" : "Yes, tick and send"}
-                </Button>
+                </Btn>
               </div>
             </div>
           )}
