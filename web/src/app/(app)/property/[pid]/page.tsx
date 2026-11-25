@@ -72,7 +72,7 @@ export default function PropertyPage() {
               {(["chat", "details"] as const).map((k) => <button key={k} type="button" onClick={() => setPane(k)} className={cn("flex-1 h-8 rounded-lg text-[13px] font-medium capitalize", pane === k ? "bg-sunken text-fg" : "text-muted")}>{k}</button>)}
             </div>
             <div className="flex-1 min-h-0 grid lg:grid-cols-[minmax(0,1fr)_364px]">
-              <main className={cn("min-h-0 bg-bg", pane !== "chat" && "hidden lg:block")}><BrainChat key={pid} propertyId={pid} /></main>
+              <main className={cn("min-h-0 bg-bg", pane !== "chat" && "hidden lg:block")}><BrainChat key={pid} propertyId={pid} bar={false} /></main>
               <aside className={cn("min-h-0 overflow-y-auto overflow-x-hidden border-l border-line bg-elev/60", pane !== "details" && "hidden lg:block")}>
                 <PropertyDetails pid={pid} f={f} days={days} setDays={setDays} onTab={setTab} />
               </aside>

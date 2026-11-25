@@ -5,7 +5,7 @@
    three parties. */
 
 import * as React from "react";
-import { Check, Gavel, Tag } from "lucide-react";
+import { Check, Gavel, HardHat, Landmark, Tag, User } from "lucide-react";
 import { cn, fmtDate } from "@/lib/utils";
 import type { PersonOnDeal, PropertyFile, Stage } from "@/lib/brain";
 
@@ -21,7 +21,7 @@ const SHORT: Record<string, string> = { closing: "Closed", construction: "Constr
 /* "Sharon Yvonne Peters (owner; guarantor). Borrower of record: …" -> the name. */
 export function shortName(value: string) {
   const name = value.split(/\s\(|;|\s[-–—]\s|\.\s|,\s/)[0].trim();
-  return name.length > 34 ? name.slice(0, 32) + "…" : name;
+  return name.length > 64 ? name.slice(0, 62) + "…" : name;     // the line it sits on has room for a whole name
 }
 
 export function daysFrom(date?: string | null) {
@@ -82,12 +82,17 @@ export function Stepper({ s }: { s: Stage }) {
   );
 }
 
-function Party({ label, people }: { label: string; people: PersonOnDeal[] }) {
+/* One of the three people on the deal, on the line of its own under the address: what they are, and their
+   name in full. The line has the whole width of the page, so a name is cut only when it truly cannot fit;
+   the pointer shows everyone on record for that part. */
+function Party({ icon, label, people }: { icon: React.ReactNode; label: string; people: PersonOnDeal[] }) {
   const p = people[0];
   return (
-    <div className="flex items-baseline gap-1.5 min-w-0" title={people.map((x) => x.value).join("\n") || undefined}>
-      <span className="text-[9.5px] font-semibold uppercase tracking-[0.1em] text-faint shrink-0">{label}</span>
-      {p ? <span className="text-[12px] font-medium text-fg truncate max-w-[168px]">{shortName(p.value)}</span> : <span className="text-[12px] text-faint truncate">not on record</span>}
+    <div className="flex items-center gap-1.5 min-w-0" title={people.map((x) => x.value).join("\n") || undefined}>
+      <span className="text-accent shrink-0">{icon}</span>
+      <span className="text-[12px] font-medium text-accent shrink-0">{label}</span>
+      {p ? <span className="text-[13px] text-fg truncate">{shortName(p.value)}</span> : <span className="text-[13px] text-faint truncate">not on record</span>}
+      {people.length > 1 && <span className="text-[12px] text-faint shrink-0">+{people.length - 1}</span>}
     </div>
   );
 }
@@ -116,7 +121,16 @@ export function PropertyHeader({ f, tab, onTab, counts }: { f: PropertyFile; tab
         )}
         {s && <div className="ml-auto hidden lg:block min-w-0 overflow-hidden"><Stepper s={s} /></div>}
       </div>
-      <div className="h-[34px] px-3 flex items-center justify-between gap-4 border-t border-line/70">
+      {/* Who is on the deal: always in view, on every tab, with room for the whole name (2026-11-26; it used to
+          share the line of the tabs, where the names were cut to a few letters or pushed off the screen). */}
+      {!f.is_general && (
+        <div className="min-h-8 px-5 py-1 flex flex-wrap items-center gap-x-8 gap-y-1 border-t border-line-soft">
+          <Party icon={<User size={14} strokeWidth={1.6} />} label="Homeowner" people={role("Homeowner / borrower")} />
+          <Party icon={<HardHat size={14} strokeWidth={1.6} />} label="Contractor" people={role("Contractor")} />
+          <Party icon={<Landmark size={14} strokeWidth={1.6} />} label="Title company" people={role("Title company")} />
+        </div>
+      )}
+      <div className="h-[34px] px-3 flex items-center justify-between gap-4 border-t border-line-soft">
         <nav className="flex h-full gap-0.5 overflow-x-auto 2xl:shrink-0" style={{ scrollbarWidth: "none" }}>
           {tabs.map((t) => {
             const n = counts?.[t.key] || 0;
@@ -130,13 +144,6 @@ export function PropertyHeader({ f, tab, onTab, counts }: { f: PropertyFile; tab
             );
           })}
         </nav>
-        {!f.is_general && (
-          <div className="hidden xl:flex items-center gap-5 pr-2 shrink-0 2xl:shrink 2xl:min-w-0 2xl:overflow-hidden">
-            <Party label="Homeowner" people={role("Homeowner / borrower")} />
-            <Party label="Contractor" people={role("Contractor")} />
-            <Party label="Title" people={role("Title company")} />
-          </div>
-        )}
       </div>
     </header>
   );

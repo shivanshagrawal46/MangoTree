@@ -32,7 +32,9 @@ const STARTERS_ALL = [
   "Which replies am I behind on?",
 ];
 
-export function BrainChat({ propertyId, className, initialQuestion }: { propertyId?: string; className?: string; initialQuestion?: string }) {
+/* `bar` is the line on top with the chat's name, "Earlier" and "New chat". The property page shows the
+   chat without it (2026-11-26): there the chat is one running conversation under the tabs. */
+export function BrainChat({ propertyId, className, initialQuestion, bar = true }: { propertyId?: string; className?: string; initialQuestion?: string; bar?: boolean }) {
   const qc = useQueryClient();
   const scope = propertyId || "portfolio";
   const [threadId, setThreadId] = React.useState<string | null>(null);
@@ -126,7 +128,7 @@ export function BrainChat({ propertyId, className, initialQuestion }: { property
 
   return (
     <div className={cn("flex flex-col min-h-0 h-full", className)}>
-      <div className="flex items-center justify-between gap-2 px-4 h-9 shrink-0 border-b border-line">
+      <div className={cn("flex items-center justify-between gap-2 px-4 h-9 shrink-0 border-b border-line", !bar && "hidden")}>
         <div className="text-[12.5px] font-medium text-muted truncate">{thread?.title || (propertyId ? "Chat about this property" : "Chat across all properties")}</div>
         <div className="flex items-center gap-1 relative">
           {past.length > 0 && <Button size="sm" variant="ghost" onClick={() => setShowHistory((v) => !v)}><History size={13} /> Earlier <ChevronDown size={12} /></Button>}
@@ -264,7 +266,7 @@ function Answer({ m }: { m: ChatMessage }) {
       {(m.actions || []).length > 0 && (
         <div className="mt-2 flex flex-wrap gap-1.5">
           {(m.actions || []).map((a, i) => (
-            <span key={i} className="text-[11.5px] px-2 h-6 inline-flex items-center rounded-full bg-good-soft text-good border border-good/25">
+            <span key={i} className="text-[12px] leading-snug px-2 py-1 inline-flex items-center rounded bg-good-soft text-good">
               {a.type === "todo_added" ? `Added to-do: ${a.title}` : a.type === "todo_closed" ? "Closed a to-do" : a.type === "note" ? "Recorded on the file" : a.type === "remember" ? "Stored as a standing instruction" : a.type}
             </span>
           ))}

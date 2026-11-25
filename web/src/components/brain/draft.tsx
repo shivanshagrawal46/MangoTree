@@ -120,7 +120,7 @@ export function DraftCard({ draft, compact, onChange, showProperty = true }: { d
   const done = d.status !== "ready";
   const names = (d.properties || []).map((p) => p.name).join(" · ");
   return (
-    <div className={cn("rounded-2xl border bg-elev overflow-hidden", done ? "border-line opacity-75" : "border-line shadow-[var(--shadow-sm)]")}>
+    <div className="rounded-lg border border-line bg-elev overflow-hidden">
       <button type="button" onClick={() => setOpen((v) => !v)} className="w-full text-left px-4 pt-3 pb-2.5 flex items-start gap-3">
         <div className={cn("h-8 w-8 rounded-xl grid place-items-center shrink-0", done ? "bg-sunken text-muted" : "bg-accent-soft text-accent")}><Mail size={15} /></div>
         <div className="min-w-0 flex-1">
@@ -173,9 +173,11 @@ export function DraftCard({ draft, compact, onChange, showProperty = true }: { d
           )}
           {original && <Incoming o={original} onOpen={() => evidence.open({ sha: original.sha256 })} />}
           {original && <div className="mb-1 text-[11.5px] font-medium text-muted">Your reply</div>}
-          <Input value={subject} onChange={(e) => setSubject(e.target.value)} onBlur={saveIfChanged} disabled={done} className="mb-2 text-[13px] font-medium" aria-label="Subject" />
-          <textarea ref={area} value={body} onChange={(e) => setBody(e.target.value)} onBlur={saveIfChanged} disabled={done} spellCheck
-            className="w-full rounded-xl border border-line bg-bg px-3.5 py-3 text-[13.5px] leading-[1.65] whitespace-pre-wrap focus:outline-none focus:ring-2 focus:ring-accent/30 resize-none min-h-[120px]" aria-label="Email text" />
+          {/* A reply that has gone (or was set aside) can still be read and copied in full: its words stay dark,
+              the boxes only stop taking changes. (A switched-off box is drawn in pale grey by the browser.) */}
+          <Input value={subject} onChange={(e) => setSubject(e.target.value)} onBlur={saveIfChanged} readOnly={done} className="mb-2 text-[13px] font-medium text-fg" aria-label="Subject" />
+          <textarea ref={area} value={body} onChange={(e) => setBody(e.target.value)} onBlur={saveIfChanged} readOnly={done} spellCheck
+            className="w-full rounded-lg border border-line bg-elev px-3.5 py-3 text-[13px] leading-[1.65] text-fg whitespace-pre-wrap focus:outline-none focus:border-accent resize-none min-h-[120px]" aria-label="Email text" />
           {redo && (
             <div className="mt-2 flex gap-2">
               <Input autoFocus value={instruction} onChange={(e) => setInstruction(e.target.value)} placeholder="What should change? e.g. firmer on the insurance, drop the second paragraph"
