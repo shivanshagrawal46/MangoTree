@@ -1263,6 +1263,10 @@ notes_routes.install(app, mongo)
 from mangotree.brain import routes as brain_routes  # noqa: E402
 brain_routes.install(app, mongo, jobs)
 
+# Speaking instead of typing in the chat (2026-11-25): a recording in, its text out.
+from mangotree.brain import voice as brain_voice  # noqa: E402
+brain_voice.install(app)
+
 # What the contractor enters itself (2026-11-22): bills, daily logs and change orders put
 # straight into RKB's system from the portal, in place of the morning copy out of Buildertrend.
 from mangotree.brain import entry_routes  # noqa: E402

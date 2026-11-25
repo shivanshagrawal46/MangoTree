@@ -7,12 +7,13 @@
 import * as React from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { ArrowUp, ChevronDown, FileText, History, Paperclip, Plus, Square, X } from "lucide-react";
+import { ArrowUp, ChevronDown, FileText, History, Mic, Paperclip, Plus, Square, X } from "lucide-react";
 import { api, subscribeJob } from "@/lib/api";
 import { Button, Skeleton } from "@/components/ui";
 import { useEvidence } from "@/components/evidence";
 import { Md } from "@/components/brain/md";
 import { Checked, DraftCard } from "@/components/brain/draft";
+import { useDictation } from "@/components/brain/dictate";
 import { ago, cn, fmtDate } from "@/lib/utils";
 import { errText, type ChatFile, type ChatMessage, type ChatThread } from "@/lib/brain";
 
@@ -53,6 +54,7 @@ export function BrainChat({ propertyId, className, initialQuestion }: { property
   const bottom = React.useRef<HTMLDivElement>(null);
   const fileInput = React.useRef<HTMLInputElement>(null);
   const area = React.useRef<HTMLTextAreaElement>(null);
+  const voice = useDictation(text, setText);        // speak instead of typing: the words land in the box, nothing is sent
 
   React.useEffect(() => () => { unsub.current?.(); }, []);
   React.useEffect(() => { bottom.current?.scrollIntoView({ block: "end" }); }, [thread?.messages?.length, live?.text, live?.steps.length]);
@@ -88,6 +90,7 @@ export function BrainChat({ propertyId, className, initialQuestion }: { property
   const send = async (override?: string) => {
     const question = (override ?? text).trim();
     if (!question || live || !thread) return;
+    voice.cancel();
     const sending = files;
     setText(""); setFiles([]);
     try {
@@ -183,13 +186,18 @@ export function BrainChat({ propertyId, className, initialQuestion }: { property
             </div>
           )}
           <textarea ref={area} rows={1} value={text} onChange={(e) => setText(e.target.value)}
-            placeholder={propertyId ? "Ask, or tell me what happened…" : "Ask about any property…"}
+            placeholder={voice.state === "listening" ? "Listening… press Stop when you have said it" : voice.state === "writing" ? "Writing out what you said…" : propertyId ? "Ask, or tell me what happened…" : "Ask about any property…"}
             onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
             className="w-full bg-transparent px-3.5 pt-2.5 pb-0.5 text-[13.5px] leading-relaxed placeholder:text-faint focus:outline-none resize-none" />
           <div className="flex items-center justify-between px-2 pb-2">
             <div className="flex items-center gap-1">
               <input ref={fileInput} type="file" multiple hidden onChange={(e) => upload(e.target.files)} />
               <Button size="sm" variant="ghost" onClick={() => fileInput.current?.click()} disabled={uploading || !thread}><Paperclip size={13} /> {uploading ? "Reading…" : "Attach"}</Button>
+              {voice.can && (voice.state === "listening"
+                ? <Button size="sm" variant="secondary" onClick={voice.toggle} title="Stop, and write out what was said"><Square size={11} /> Stop <span className="tnum text-muted">{Math.floor(voice.seconds / 60)}:{String(voice.seconds % 60).padStart(2, "0")}</span></Button>
+                : voice.state === "writing"
+                  ? <Button size="sm" variant="ghost" disabled><Mic size={13} /> Writing it out…</Button>
+                  : <Button size="sm" variant="ghost" onClick={voice.toggle} title="Speak, and the words are typed into the box"><Mic size={13} /> Speak</Button>)}
             </div>
             {live
               ? <Button size="icon" variant="secondary" onClick={stop} title="Stop"><Square size={13} /></Button>
