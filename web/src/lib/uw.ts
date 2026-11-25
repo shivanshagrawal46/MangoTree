@@ -13,8 +13,12 @@ export type Facts = {
   owner_kind?: string; owner_name?: string; owner_lives_there?: boolean; has_mortgage?: boolean; liens?: Lien[];
   builder_cost?: number; contingency?: number; contract_price?: number; closing_costs?: number; cash_to_owner?: number;
   rate?: number; points?: number; term_months?: number; interest_free_months?: number; first_six_inside_note?: boolean; minimum_interest_months?: number;
-  contractor_name?: string; contractor_licence?: string; title_company?: string; closing_date?: string; tax_id?: string; legal_description?: string;
+  contractor_name?: string; contractor_licence?: string; licence_holder?: "roi" | "sub" | null; title_company?: string; closing_date?: string; tax_id?: string; legal_description?: string;
   borrower_address?: string; signer_name?: string; guarantor_name?: string; completion_date?: string;
+  /* Printed in the papers: the date of ROI Blocks' agreement, every member of a company (names separated by ;), the date of the owner's deed. */
+  contract_date?: string; members?: string; deed_date?: string; deed_reference?: string;
+  /* How interest is charged to the owner: "free_6" | "free_3" | "free_12" | "day_one" (chosen on every file). The signer's title as the company's papers give it. */
+  interest?: string; signer_title?: string;
 };
 export type MoneyLine = { key: string; label: string; amount: number; note?: string | null };
 export type ForcedSale = { value: number; marked_down: number; after_selling: number; mortgage_ahead: number; mortgage_growth: number; holding: number; foreclosure_cost: number; months: number;
@@ -44,16 +48,20 @@ export type Item = {
   checks: string[]; fields: Field[]; confirm?: string | null; verify: "reading" | "rkb" | "filled"; status: "open" | "received" | "ok" | "rejected"; reason?: string | null;
   values?: Record<string, string | boolean>; files?: Paper[]; updated_at?: string;
   confirmed?: { by: string; by_name: string; at: string; note?: string | null; without_paper: boolean; over_a_failed_reading: boolean } | null;
+  /* `may_follow`: RKB may allow this line after closing, as an exception for one loan. `deferred`: it has. */
+  may_follow?: boolean; deferred?: { by_name?: string; at: string; note?: string | null; due?: string | null } | null;
 };
 export type Named = { key: string; party: string; name: string; label: string; status: string };
 export type Gates = {
   step: number; steps: { n: number; name: string; done: boolean; open: boolean }[]; verdict_ok: boolean; details_missing: string[]; more_missing?: string[]; file_complete: boolean;
   documents: { total: number; approved: number }; ready_to_sign: boolean; signed: boolean; can_fund: boolean;
-  waiting_file: Named[]; waiting_closing: Named[]; waiting_after: Named[]; optional_open: Named[]; counts: Record<string, number>; confirmed_on_rkbs_word: Named[];
+  waiting_file: Named[]; waiting_closing: Named[]; waiting_after: Named[]; optional_open: Named[]; counts: Record<string, number>; confirmed_on_rkbs_word: Named[]; allowed_after_closing?: Named[];
   foreclosure_file: { total: number; held: number; missing: Named[]; complete: boolean }; by_party: Record<string, { total: number; done: number; compulsory_left: number }>;
 };
 export type Block = { t: "title" | "terms" | "h" | "p" | "list" | "sign" | "notary" | "note" | "break"; text?: string; sub?: string | null; lead?: string | null; rows?: string[][]; items?: string[]; party?: string; lines?: string[] };
-export type DocMeta = { key: string; title: string; signers: string; early: boolean; missing: string[]; basis: string; version: number; edited?: boolean; behind_the_file?: boolean; foot?: string;
+/* `missing`: what RKB's own file still owes the paper (holds the tick). `for_title`: blanks the title company fills at closing (does not).
+   `audience` "not_borrower": between RKB, ROI Blocks and the contractor only; never in the Borrower's or the title company's set. */
+export type DocMeta = { key: string; title: string; signers: string; early: boolean; missing: string[]; for_title?: string[]; audience?: string; basis: string; version: number; edited?: boolean; behind_the_file?: boolean; foot?: string;
   saved_by?: string; saved_at?: string; approved?: { at?: string; by_name?: string; version?: number; voided_because?: string } | null };
 export type Doc = DocMeta & { blocks: Block[] };
 export type UwEvent = { at: string; by_name?: string; side?: string; what: string };
@@ -67,6 +75,7 @@ export type UwRow = { file_id: string; facts: Facts; assessment?: Partial<Assess
 export type UwConfig = {
   states: { code: string; name: string; instrument: string; foreclosure: { route: string; months: number; cost: number; estimate: boolean }; licence_register: string; notes: string[]; mechanics_lien: string }[];
   md_counties: string[]; owner_kinds: { key: string; label: string }[]; lien_status: { key: string; label: string }[]; scopes: { key: string; label: string; covers: string }[];
+  interest_plans?: { key: string; label: string }[];
   limits: { arv: number; rate: number; points: number; term_months: number };
 };
 export type ArvChoice = { analysis_id: string; address: string; state?: string; arv: number; as_is?: number; sqft?: number; by?: string; at?: string };
@@ -91,6 +100,9 @@ export const uw = {
   restoreDocument: (id: string, key: string) => api.patch<UwFile & { document: Doc }>(`/uw/files/${id}/documents/${key}`, { restore: true }),
   approveDocument: (id: string, key: string, approved: boolean) => api.patch<UwFile & { document: Doc }>(`/uw/files/${id}/documents/${key}`, { approved }),
   wordUrl: (id: string, key: string) => `/api/uw/files/${id}/documents/${key}/word`,
+  zipUrl: (id: string) => `/api/uw/files/${id}/documents.zip`,
+  allowLater: (id: string, key: string, password: string, note?: string) => api.post<UwFile>(`/uw/files/${id}/items/${key}/defer`, { password, note }),
+  beforeClosingAgain: (id: string, key: string) => api.post<UwFile>(`/uw/files/${id}/items/${key}/defer`, { undo: true }),
   sign: (id: string) => api.post<UwFile>(`/uw/files/${id}/sign`),
 };
 

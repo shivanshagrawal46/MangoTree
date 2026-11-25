@@ -38,6 +38,24 @@ LENDER_SIGNER, LENDER_TITLE = "Rakesh Bhargava", "President and Authorized Signa
 ROI, ROI_ADDR, ROI_SIGNER, ROI_TITLE = "ROI Blocks LLC", "15701 Victorias Crest Pl, Haymarket, VA 20169", "Wes Stone", "Founder and CEO"
 CUSTODIAN = "Margarita Gonzalez, KC Wilson & Associates, 2601 Main St, Ste 330, Irvine, CA 92614"
 
+#: The agreement between RKB and ROI Blocks on ROI's share. It is signed outside the closing and is
+#: never a borrower document; wherever a paper points to it, it is named in full (308 E 21st St, 23 Nov 2026).
+ALLOC = "Margin Allocation and Payoff Direction Agreement"
+#: ROI Blocks' Customer Agreement template, as read on the signed 21st St agreement (18 Nov 2026):
+#: 7.2 bars other financing, 7.3 gives ROI Blocks a lien, 10.10 is the arbitration clause. The
+#: Amendment in the loan set deletes them by number, and the file's contract line checks the numbers.
+ROI_LIEN_SECTIONS = "7.2 and 7.3"
+ROI_ARBITRATION_SECTION = "10.10"
+#: Lines of the file whose review notes are never printed in a paper the Borrower reads: they speak
+#: of the Contractor's cost, the markup or RKB's own steps.
+NOT_FOR_BORROWER = ("budget", "budget_look", "exception", "comps", "arv")
+#: ``audience`` of a document that is between RKB, ROI Blocks and the Contractor: never in the Borrower's
+#: or the title company's set.
+NOT_BORROWER = "not_borrower"
+_PRIVATE = re.compile(r"builder'?s cost|contractor'?s cost|mark-?up|margin|draw budget|management fee", re.I)
+_ENTITY = re.compile(r"\b(LLC|L\.L\.C\.|Inc\.?|Incorporated|Corp\.?|Corporation|Company|Co\.|Ltd\.?|LP|LLP|PLLC)\b", re.I)
+_TRADING = re.compile(r",?\s+(?:trading as|t/a|d/b/a|dba|doing business as)\s+", re.I)
+
 _ONES = "ZERO ONE TWO THREE FOUR FIVE SIX SEVEN EIGHT NINE TEN ELEVEN TWELVE THIRTEEN FOURTEEN FIFTEEN SIXTEEN SEVENTEEN EIGHTEEN NINETEEN".split()
 _TENS = "ZERO TEN TWENTY THIRTY FORTY FIFTY SIXTY SEVENTY EIGHTY NINETY".split()
 
@@ -85,6 +103,15 @@ def long_date(d: Optional[date]) -> str:
     return "%s %d, %d" % (d.strftime("%B"), d.day, d.year) if d else ""
 
 
+def today() -> date:
+    """The date a letter carries: the calendar day in New York, where RKB is, not the server's."""
+    try:
+        from zoneinfo import ZoneInfo
+        return datetime.now(ZoneInfo("America/New_York")).date()
+    except Exception:       # no time-zone data on this machine
+        return date.today()
+
+
 def loan_number(address: str) -> str:
     first = (address or "").split(",")[0]
     slug = "".join(w[:1].upper() + w[1:] for w in re.sub(r"[^A-Za-z0-9 ]", "", first).split())
@@ -129,19 +156,27 @@ BREAK = {"t": "break"}
 
 # ------------------------------------------------------------------ what each state changes in the papers
 STATE_TEXT: Dict[str, Dict[str, Any]] = {
+    # lic_body / lic_short / lic_site: how the contractor's licence is named in a sentence, in a short
+    # reference, and where it is looked up again the day before closing. book: how a recorded deed is cited.
     "MD": {"law": "the State of Maryland", "records": "the Land Records of {county}, Maryland", "notary": "STATE OF MARYLAND, CITY/COUNTY OF ____________________, TO WIT:",
-           "lien_law": "To the fullest extent permitted by Real Property Article §9-113 of the Annotated Code of Maryland, any lien claim of Contractor shall be subordinate to Lender's Deed of Trust.",
-           "courts": "the state or federal courts located in Maryland"},
+           "lien_law": "To the fullest extent permitted by applicable law, any lien claim of Contractor shall be subordinate to Assignee's Deed of Trust.",
+           "courts": "the state or federal courts located in Maryland",
+           "lic_body": "the Maryland Home Improvement Commission", "lic_short": "MHIC", "lic_site": "the Maryland Department of Labor site", "book": "in Liber [__], Folio [__]"},
     "VA": {"law": "the Commonwealth of Virginia", "records": "the land records of {county}, Virginia", "notary": "COMMONWEALTH OF VIRGINIA, CITY/COUNTY OF ____________________, to-wit:",
            "lien_law": "Under §43-21 of the Code of Virginia, Contractor subordinates every lien it has or may acquire on the Property, including any mechanic's lien under Title 43, to the lien of Lender's Deed of Trust and to every advance made under it.",
-           "courts": "the state or federal courts located in Virginia"},
+           "courts": "the state or federal courts located in Virginia",
+           "lic_body": "the Virginia Board for Contractors", "lic_short": "Virginia DPOR", "lic_site": "the Virginia DPOR licence lookup", "book": "in Deed Book [__], Page [__], or as Instrument No. [__]"},
     "DC": {"law": "the District of Columbia", "records": "the Recorder of Deeds of the District of Columbia", "notary": "DISTRICT OF COLUMBIA, ss:",
            "lien_law": "Contractor subordinates every lien it has or may acquire on the Property under D.C. Code §40-301.01 et seq. to the lien of Lender's Deed of Trust and to every advance made under it, and shall record no notice of mechanic's lien without thirty (30) days' prior written notice to Lender.",
-           "courts": "the courts of the District of Columbia"},
+           "courts": "the courts of the District of Columbia",
+           "lic_body": "the District of Columbia Department of Licensing and Consumer Protection", "lic_short": "DC DLCP", "lic_site": "the DLCP licence lookup", "book": "as Instrument No. [__]"},
     "FL": {"law": "the State of Florida", "records": "the Official Records of {county}, Florida", "notary": "STATE OF FLORIDA, COUNTY OF ____________________",
            "lien_law": "Contractor acknowledges that Lender's Mortgage is recorded before the notice of commencement and that, under §713.07, Florida Statutes, every lien under Chapter 713 is inferior to it. Contractor shall deliver a waiver and release of lien in the statutory form with each payment.",
-           "courts": "the state or federal courts located in Florida"},
+           "courts": "the state or federal courts located in Florida",
+           "lic_body": "the Florida Department of Business and Professional Regulation", "lic_short": "Florida DBPR", "lic_site": "the Florida DBPR licence lookup", "book": "in Official Records Book [__], Page [__]"},
 }
+
+_ACK_TAIL = "\n\n______________________________\nNotary Public\nPrinted name: ______________________\nMy commission expires: ______________          [NOTARIAL SEAL]"
 
 
 class Ctx:
@@ -154,6 +189,9 @@ class Ctx:
         self.a = doc.get("assessment") or E.assess(self.f)
         self.items = {i["key"]: i for i in doc.get("items") or []}
         self.missing: List[str] = []
+        #: Blanks the title company fills at the closing table (the legal description, the deed's
+        #: date). They are printed in brackets like any blank, but they do not hold Rakesh Sir's tick.
+        self.for_title: List[str] = []
         f, a = self.f, self.a
         self.state = (f.get("state") or "").upper()
         self.st = S.state_of(self.state) or {}
@@ -170,7 +208,9 @@ class Ctx:
         self.money, self.r = m, r
         self.rate, self.points, self.term, self.free = r["rate"], r["points"], r["term_months"], r["interest_free_months"]
         self.fee = round(self.principal * self.points / 100.0, 2)
-        self.min_months = int(E._n(f.get("minimum_interest_months")) or (0 if self.free else 6))
+        # A minimum-interest clause is written only when a person entered one, and never beside an
+        # interest-free period (the two contradict each other). It is not assumed (21st St, 25 Nov 2026).
+        self.min_months = 0 if self.free else int(E._n(f.get("minimum_interest_months")))
         self.min_interest = round(self.principal * self.rate / 100.0 * self.min_months / 12.0, 2)
         self.closing = _date(f.get("closing_date"))
         self.maturity = (self.closing.replace(year=self.closing.year + 1) - timedelta(days=1)) if self.closing else None
@@ -188,19 +228,115 @@ class Ctx:
             self.missing.append(label)
         return "[%s]" % label
 
-    def val(self, key: str, label: str, item: Optional[str] = None, field: Optional[str] = None) -> str:
+    def title_fill(self, label: str) -> str:
+        if label not in self.for_title:
+            self.for_title.append(label)
+        return "[%s]" % label
+
+    def raw(self, key: str, item: Optional[str] = None, field: Optional[str] = None) -> str:
+        """A value from page one or, failing that, from a line of the file. Empty when neither holds it."""
         v = self.f.get(key)
         if v in (None, "") and item:
             v = ((self.items.get(item) or {}).get("values") or {}).get(field or key)
-        return str(v).strip() if v not in (None, "") else self.need(label)
+        return str(v).strip() if v not in (None, "") else ""
+
+    def val(self, key: str, label: str, item: Optional[str] = None, field: Optional[str] = None) -> str:
+        return self.raw(key, item, field) or self.need(label)
+
+    def day(self, key: str, item: Optional[str] = None, field: Optional[str] = None) -> str:
+        """A date as a paper prints it (February 28, 2027). Empty when it is not known."""
+        return long_date(_date(self.raw(key, item, field)))
+
+    # -- the contractor: a company, or a person under his or her own licence
+    @property
+    def contractor_person(self) -> Optional[str]:
+        """The person's name when the licence is an individual's ("Duwayne Peirce Tutt, trading as
+        Tutt Painting and Remodeling"): he or she signs individually, never for a company."""
+        parts = _TRADING.split(self.raw("contractor_name", "licence", "legal_name"), maxsplit=1)
+        return parts[0].strip() if len(parts) == 2 and parts[0].strip() and not _ENTITY.search(parts[0]) else None
 
     @property
+    def contractor_ta(self) -> str:
+        """The short form used above a signature line: Duwayne Peirce Tutt, t/a Tutt Painting and Remodeling."""
+        if not self.contractor_person:
+            return self.contractor
+        return "%s, t/a %s" % (self.contractor_person, _TRADING.split(self.contractor, maxsplit=1)[1].strip())
+
+    @property
+    def lic_short(self) -> str:
+        return self.sx.get("lic_short") or ""
+
+    @property
+    def lic_no(self) -> str:
+        """MHIC licence No. 111574"""
+        return ("%s licence No. %s" % (self.lic_short, self.licence)).strip()
+
+    @property
+    def contractor_cite(self) -> str:
+        """Duwayne Peirce Tutt, t/a Tutt Painting and Remodeling (MHIC No. 111574)"""
+        return "%s (%s)" % (self.contractor_ta, ("%s No. %s" % (self.lic_short, self.licence)).strip())
+
+    def contractor_sign(self, cite: bool = False) -> Dict[str, Any]:
+        if self.contractor_person:
+            head = self.contractor_person.upper() + self.contractor_ta[len(self.contractor_person):]
+            if cite:
+                head += " (%s)" % ("%s No. %s" % (self.lic_short, self.licence)).strip()
+            return Sign("CONTRACTOR: %s" % head, ["______________________________", "%s, individually" % self.contractor_person, "Date: ______________"])
+        return Sign("CONTRACTOR: %s" % self.contractor.upper(),
+                    ["By: ______________________________", "Printed name: ______________________", "Title: ______________________", "Date: ______________"])
+
+    @property
+    def members(self) -> List[str]:
+        """Every member of the company, as the operating agreement names them."""
+        return [x.strip() for x in re.split(r"[;\n]+", str(self.f.get("members") or "")) if x.strip()]
+
+    @property
+    def guarantor_addr(self) -> str:
+        return self.val("guarantor_address", "Guarantor's home address", "guarantor", "guarantor_address")
+
+    # -- acknowledgments
+    def ack_company(self, person: str, title: str, company: str) -> Dict[str, Any]:
+        if self.state != "MD":
+            return Notary("%s\nThe foregoing instrument was acknowledged before me this ____ day of ______________, 20___, by %s, as %s of %s, on its behalf.%s" % (self.sx["notary"], person, title, company, _ACK_TAIL))
+        return Notary("%s\nI HEREBY CERTIFY that on this ____ day of ______________, 20___, before me, the subscriber, a Notary Public of the State aforesaid, personally appeared %s, who acknowledged "
+                      "himself/herself to be the %s of %s, and that he/she, as such %s, being authorized so to do, executed the foregoing instrument for the purposes therein contained by signing the "
+                      "name of the company by himself/herself as %s.%s" % (self.sx["notary"], person, title, company, title, title, _ACK_TAIL))
+
+    def ack_person(self, person: str, capacity: str = "") -> Dict[str, Any]:
+        if self.state != "MD":
+            return Notary("%s\nThe foregoing instrument was acknowledged before me this ____ day of ______________, 20___, by %s%s, who is personally known to me or has produced satisfactory "
+                          "evidence of identity.%s" % (self.sx["notary"], person, capacity, _ACK_TAIL))
+        return Notary("%s\nI HEREBY CERTIFY that on this ____ day of ______________, 20___, before me, the subscriber, a Notary Public of the State aforesaid, personally appeared %s%s, known to me "
+                      "(or satisfactorily proven) to be the person whose name is subscribed to the foregoing instrument, and acknowledged that he/she executed the same %sfor the purposes therein "
+                      "contained.%s" % (self.sx["notary"], person, capacity, "in that capacity " if capacity else "", _ACK_TAIL))
+
+    def ack_owner(self) -> Dict[str, Any]:
+        """The Borrower's acknowledgment on a recorded instrument: Maryland's full certificate there, the general form elsewhere."""
+        if self.state != "MD":
+            return self.notary()
+        if self.owner_kind == S.LLC:
+            return self.ack_company(self.signer, self.signer_title, self.borrower)
+        if self.owner_kind == S.INDIVIDUAL:
+            return self.ack_person(self.borrower)
+        return self.ack_person(self.signer, ", %s of %s" % (self.signer_title, self.borrower))
+
+    # The closing date is the title company's to give. Until it is entered the papers carry the blank,
+    # and the set can still be read, approved and sent to the title company with it (as on 21st St).
+    @property
     def closing_s(self) -> str:
-        return long_date(self.closing) or self.need("closing date")
+        return long_date(self.closing) or self.title_fill("closing date")
 
     @property
     def maturity_s(self) -> str:
-        return long_date(self.maturity) or self.need("maturity date (the day before the first anniversary of closing)")
+        return long_date(self.maturity) or self.title_fill("maturity date (the day before the first anniversary of closing)")
+
+    @property
+    def fee_line(self) -> str:
+        """The Borrower's loan fee as a terms table states it. With no points on the file there is none:
+        RKB's own points are then inside the Note principal and settled between RKB and ROI Blocks."""
+        if self.fee:
+            return "%s points = %s, earned in full at closing" % (_rate(self.points), usd(self.fee))
+        return "None. No loan fee, origination fee or points are payable by Borrower."
 
     @property
     def tax_id(self) -> str:
@@ -232,6 +368,15 @@ class Ctx:
 
     @property
     def signer_title(self) -> str:
+        """As the company's own papers and the title company give it. On 21st St our papers said
+        "Managing Member" while the title company's said "Sole Member": the two must read the same at the table."""
+        if self.owner_kind == S.INDIVIDUAL:
+            return ""
+        typed = self.raw("signer_title")
+        if typed:
+            return typed
+        if self.owner_kind == S.LLC and len(self.members) == 1:
+            return "Sole Member"
         return {S.LLC: "Managing Member", S.ESTATE: "Personal Representative", S.TRUST: "Trustee"}.get(self.owner_kind, "")
 
     @property
@@ -256,6 +401,16 @@ class Ctx:
         vals = (self.items.get("trustee") or {}).get("values") or {}
         name, addr = vals.get("trustee_name") or t.get("name"), vals.get("trustee_address") or t.get("address")
         return "%s, whose address is %s" % (name, addr) if name else self.need("trustee")
+
+    @property
+    def trustee_on_instrument(self) -> str:
+        """As the deed of trust names the trustee. Maryland's is an individual, and the instrument says where he resides."""
+        return self.trustee.replace(", whose address is", ", a resident of the State of Maryland, whose address is", 1) if self.state == "MD" else self.trustee
+
+    @property
+    def attorney(self) -> Dict[str, str]:
+        """The Maryland attorney who certifies the deed of trust (Real Property 3-104): RKB's trustee there."""
+        return self.st.get("attorney") or self.st.get("trustee") or {}
 
     @property
     def trustee_name(self) -> str:
@@ -332,9 +487,9 @@ def commitment(c: Ctx) -> List[Dict[str, Any]]:
     m, r, a = c.money, c.r, c.a
     arv = E._n(c.f.get("arv"))
     b: List[Dict[str, Any]] = [Title("CONDITIONAL LOAN COMMITMENT", "%s · %s" % (LENDER, LENDER_ADDR)),
-         Terms([["Date", long_date(date.today())], ["To", "%s, %s" % (c.borrower_full, c.borrower_addr)],
+         Terms([["Date", long_date(today())], ["To", "%s, %s" % (c.borrower_full, c.borrower_addr)],
                 ["And to", ("%s, individually, as Guarantor" % c.guarantor) if c.owner_kind == S.LLC else ""],
-                ["Copy", "%s, %s, %s; %s; %s" % (ROI_SIGNER, ROI_TITLE, ROI, c.contractor, c.title_co)], ["Re", c.property_line]]),
+                ["Copy", "%s, %s, %s; %s; %s" % (ROI_SIGNER, ROI_TITLE, ROI, c.contractor_cite, c.title_co)], ["Re", c.property_line]]),
          P("%s (\"Lender\") is prepared to make the loan described below to %s (\"Borrower\"), subject to and conditioned upon satisfaction of every condition in this letter, "
            "each of which must be satisfied in a manner acceptable to Lender in its sole discretion." % (LENDER, c.borrower)),
          P("This letter supersedes all prior discussions, term sheets and correspondence on this loan. It is not a commitment to fund. Lender's obligation to fund arises only when "
@@ -347,7 +502,7 @@ def commitment(c: Ctx) -> List[Dict[str, Any]]:
                 ["Interest rate", ("%s%% simple per annum on the full principal sum from the date the %s records, whether or not Lender has disbursed all of it. No periodic payments." % (_rate(c.rate), c.instrument))
                  if not c.free else ("No interest for the first %d months after the %s records; then %s%% simple per annum on the unpaid principal. No periodic payments." % (c.free, c.instrument, _rate(c.rate)))],
                 ["Minimum interest", ("%s (%d months), payable even on an earlier payoff" % (usd(c.min_interest), c.min_months)) if c.min_months else ""],
-                ["Loan fee", "%s points = %s, earned in full at closing" % (_rate(c.points), usd(c.fee))],
+                ["Loan fee", c.fee_line],
                 ["Maturity", "The earlier of (a) sale or transfer of the Property, or (b) the day before the first anniversary of the Note"],
                 ["Security", "%s-lien %s on the Property, with Loan Terms Rider, securing the full principal and all obligatory and protective advances%s"
                  % (c.lien_word.capitalize(), c.instrument, "; Continuing Personal Guaranty" if c.owner_kind == S.LLC else "")],
@@ -357,54 +512,142 @@ def commitment(c: Ctx) -> List[Dict[str, Any]]:
          # The builder's cost, what RKB funds and ROI Blocks' share are between RKB and ROI Blocks:
          # a paper the Borrower reads carries the Note principal only (2026-11-20).
          Terms([["Note principal / as-renovated value", "%.1f%%" % (100 * c.principal / arv) if arv else ""],
-                ["As-renovated value, determined by Lender", usd(arv)]]),
-         P("This loan is made on the security of the Property. Draws are measured against the Contractor's cost and not against the contract price."),
+                ["As-renovated value used by Lender", usd(arv)]]),
+         # The homeowner knows one number, the contract price. Not the figure of the builder's cost, and not the
+         # fact that there is one: no paper the Borrower signs speaks of the Contractor's cost, a contingency or a
+         # draw budget (said again on 25 Nov 2026: "they will only know the retail cost").
+         P("This loan is made on the security of the Property."),
          H("2. CONDITIONS PRECEDENT")]
-    open_lines = [i for i in c.doc.get("items") or [] if i["when"] == C.FILE and i.get("required", True) and i.get("status") != C.OK]
+    # RKB's own lines (the ARV file, Manju Sir's look at the budget, an exception) are RKB's steps,
+    # not conditions the Borrower satisfies: they are not printed in a letter the Borrower signs.
+    # Nor is the line that asks ROI Blocks for the builder's cost: that is between RKB and ROI Blocks.
+    open_lines = [i for i in c.doc.get("items") or [] if i["when"] == C.FILE and i.get("required", True) and i.get("status") != C.OK and i["party"] != C.RKB
+                  and i["key"] not in NOT_FOR_BORROWER]
     n = 0
     for party in C.PARTY_ORDER:
         rows = [i for i in open_lines if i["party"] == party]
         if not rows:
             continue
         b.append(P("", lead="From %s" % C.PARTY_LABEL[party].replace(" · ", " / ")))
-        items = []
-        for i in rows:
-            n += 1
-            items.append("%s. %s%s" % (i.get("name") or i["label"], i["label"] if i.get("name") and i["label"] != i.get("name") else "",
-                                      (" Returned: " + i["reason"]) if i.get("status") == C.REJECTED and i.get("reason") else ""))
-        b.append(L(items))
+        b.append(L([_condition(c, i) for i in rows]))
+        n += len(rows)
     if not n:
         b.append(P("Every condition of the file has been satisfied as of the date of this letter."))
     for extra in c.f.get("special_conditions") or []:
         b.append(P(str(extra)))
+    later = [i for i in c.doc.get("items") or [] if i.get("deferred")]
     b += [H("3. CLOSING, DISBURSEMENT AND DRAWS"),
           P("Borrower must sign personally. No power of attorney may be used for the Note%s. Borrower must receive a copy of every document signed." % (", the %s or the Guaranty" % c.instrument if c.owner_kind == S.LLC else " or the %s" % c.instrument), lead="3.1 Signing."),
           P("The final settlement statement must show $0.00 proceeds to Borrower. Renovation funds do not pass through settlement. Lender retains and disburses them directly.", lead="3.2 No proceeds to Borrower."),
           P("No advance of any kind will be made, and no work may begin and no materials may be delivered, until the %s has recorded and the settlement agent has confirmed the recording "
             "reference to Lender in writing. %s" % (c.instrument, c.st.get("mechanics_lien", "")), lead="3.3 Recording before any advance."),
-          P("Each draw request must be accompanied by the Contractor's itemized request against Schedule 1, photographs, partial lien releases from the Contractor and from every subcontractor and "
-            "supplier paid from the previous draw, and Lender's satisfactory inspection. Draws are funded at 90% of the cost of completed work. The remaining 10% is retained and released at "
+          P("Each draw request must be accompanied by the Contractor's itemized request, photographs, partial lien releases from the Contractor and from every subcontractor and "
+            "supplier paid from the previous draw, and Lender's satisfactory inspection. Lender funds 90% of each approved draw. The remaining 10% is retained and released at "
             "settlement of the sale of the Property, against final lien releases.", lead="3.4 Draws."),
           P("Lender funds only after approving the final settlement statement and confirming wire instructions by telephone with the settlement agent. Wire instructions received by email "
             "will not be relied upon without that call.", lead="3.5 Wire."),
           P("Within two business days of closing, scanned copies of all signed documents to Lender, and the original Note%s overnighted to Lender's custodian: %s."
-            % (" and original Guaranty" if c.owner_kind == S.LLC else "", CUSTODIAN), lead="3.6 Originals."),
-          H("4. GENERAL"),
+            % (" and original Guaranty" if c.owner_kind == S.LLC else "", CUSTODIAN), lead="3.6 Originals.")]
+    # A line RKB has allowed to come in after closing (on 21st St, the signed measurement): said in the
+    # letter in so many words, so that nobody reads its absence from the conditions as a waiver.
+    for k, i in enumerate(later, start=7):
+        due = long_date(_date((i.get("deferred") or {}).get("due")))
+        b.append(P("As an exception for this loan, the following is not a condition of closing: %s. %s shall deliver it to Lender %s."
+                   % (_lower_first(i["label"]), _WHO_DELIVERS.get(i["party"], "Borrower"), ("on or before %s" % due) if due else "after closing"), lead="3.%d %s." % (k, i.get("name") or i["label"])))
+    b += [H("4. GENERAL"),
           P("This commitment expires thirty (30) days after its date unless the loan has closed or Lender has extended it in writing.", lead="4.1 Expiration."),
           P("Lender has no obligation to advance any sum until every condition has been satisfied and Lender has confirmed that in writing. Conditions may be waived only by Lender in writing.", lead="4.2 Not an obligation to fund."),
-          P("Lender may withdraw this commitment if, before closing, there is any material adverse change in the Property, in the scope or cost of the Work, in the state of title, or in the insurance, "
+          P("Lender may withdraw this commitment if, before closing, there is any material adverse change in the Property, in the scope or price of the Work, in the state of title, or in the insurance, "
             "or if any information given to Lender proves materially inaccurate.", lead="4.3 Material adverse change; accuracy."),
           P("Borrower may not assign this commitment. Lender may assign it, and the loan, without Borrower's consent. %s and the Contractor receive this letter for information; neither is a party "
             "to the loan or a beneficiary of this commitment." % ROI, lead="4.4 Assignment; no third-party beneficiaries."),
           P("This commitment is governed by the laws of %s." % c.sx["law"], lead="4.5 Governing law."),
-          _lender_sign("%s" % LENDER.upper()),
+          _lender_sign(),
           P("The undersigned accepts this Conditional Loan Commitment and agrees to satisfy each of its conditions.", lead="ACCEPTED AND AGREED"), c.sig_block(seal=False)]
     if c.owner_kind == S.LLC:
         b.append(Sign("GUARANTOR", ["______________________________", "%s, individually" % c.guarantor, "Date: ______________"]))
     b += [P("%s confirms that it assigns the whole %s contract price to Lender and releases Borrower from paying it to %s, that it will look solely to Lender's draws for the amounts "
-            "Lender undertakes to fund, and that its own compensation is governed by its separate agreement with Lender." % (ROI, usd(c.principal), ROI), lead="ACKNOWLEDGED"),
-          _roi_sign(), Sign("CONTRACTOR: %s" % c.contractor.upper(), ["By: ______________________________", "Printed name: ______________________", "Date: ______________"])]
+            "Lender undertakes to fund, and that its own compensation is governed by the %s between %s and Lender." % (ROI, usd(c.principal), ROI, ALLOC, ROI), lead="ACKNOWLEDGED"),
+          _roi_sign(), c.contractor_sign(cite=True)]
     return b
+
+
+_WHO_DELIVERS = {C.OWNER: "Borrower", C.ROI: ROI, C.CONTRACTOR: "The Contractor", C.TITLE: "The settlement agent", C.INSURANCE: "Borrower's insurance agent", C.ATTORNEY: "Lender's attorney"}
+
+
+def _lower_first(s: str) -> str:
+    return (s[:1].lower() + s[1:]) if s[:1].isupper() and not s[:2].isupper() else s
+
+
+def _eastern_day(v: Any) -> str:
+    """The calendar day in New York of a stored moment, as a paper prints it."""
+    if isinstance(v, str):
+        try:
+            v = datetime.fromisoformat(v.replace("Z", "+00:00"))
+        except ValueError:
+            return long_date(_date(v))
+    if isinstance(v, datetime):
+        try:
+            from datetime import timezone
+            from zoneinfo import ZoneInfo
+            return long_date((v if v.tzinfo else v.replace(tzinfo=timezone.utc)).astimezone(ZoneInfo("America/New_York")).date())
+        except Exception:
+            return long_date(v.date())
+    return long_date(_date(v))
+
+
+def _condition(c: Ctx, i: Dict[str, Any]) -> str:
+    """One condition of the commitment: what is asked and, once something has come in, what was
+    received and exactly what is still needed. Nothing about the Contractor's cost is repeated here."""
+    name = i.get("name") or i["label"]
+    head = ("%s. %s" % (name, i["label"])) if i["label"] != name else name
+    if i["key"] in NOT_FOR_BORROWER:
+        return head
+    files = i.get("files") or []
+    last = files[-1] if files else {}
+    reading = last.get("reading") or {}
+    got = _eastern_day(last.get("uploaded_at")) if last else ""
+    got = (" " + got) if got else ""
+    # The letter speaks the rules as they stand today. A check the reading made and the paper met is
+    # settled; one it did not meet is repeated in the reading's own words; one the rules have gained since
+    # the paper was read is asked for as it is written; one the rules have dropped is not mentioned.
+    still: List[str] = []
+    if reading and reading.get("right_paper", True):
+        seen = {(r.get("check") or ""): r for r in reading.get("checks") or []}
+        for check in i.get("checks") or []:
+            r = seen.get(check)
+            if r and r.get("result") == "met":
+                continue
+            text = ((r or {}).get("note") or "").strip() or check
+            # On the agreement, the section numbers are RKB's own cross-check for the Amendment, and a check
+            # the old reading never made is covered by the sentence about the Amendment below.
+            if i["key"] == "contract" and (not r or check.startswith("Section ")):
+                continue
+            if not _PRIVATE.search("%s %s" % (check, text)):
+                still.append(text if text.endswith((".", "?", "!")) else text + ".")
+    if i["key"] == "contract" and (files or c.day("contract_date")):
+        # The signed agreement still gives ROI Blocks a lien and sends disputes to arbitration. That is
+        # cured by the Amendment signed at closing, not by asking for the agreement again.
+        signed = " and ".join(x for x in (("by %s" % c.raw("signer_name")) if c.raw("signer_name") and c.owner_kind != S.INDIVIDUAL else "", ("on %s" % c.day("contract_date")) if c.day("contract_date") else "") if x)
+        return ("%s Received: Customer Agreement signed%s, contract price %s. Still needed: the Amendment to Customer Agreement in this loan set, signed at closing by Owner and %s. "
+                "It deletes Sections %s, the fee provisions and the arbitration clause in Section %s.%s"
+                % (name + ".", (" " + signed.replace(" and on ", " on ")) if signed else "", usd(c.principal), ROI, ROI_LIEN_SECTIONS, ROI_ARBITRATION_SECTION, (" Also still needed: " + " ".join(still)) if still else ""))
+    if files and reading and not reading.get("right_paper", True):
+        return "%s Received%s: this is not the paper asked for%s." % (head + ("" if head.endswith(".") else "."), got, (" (it is %s)" % str(reading.get("what_it_is")).rstrip(".")) if reading.get("what_it_is") else "")
+    if i.get("status") == C.REJECTED:
+        if still:
+            return "%s Received%s. Still needed: %s" % (head + ("" if head.endswith(".") else "."), got, " ".join(still))
+        if i.get("reason") and not reading and not _PRIVATE.search(i["reason"]):
+            return "%s Returned: %s" % (head + ("" if head.endswith(".") else "."), i["reason"])
+        return "%s Received%s, not yet accepted by Lender." % (head + ("" if head.endswith(".") else "."), got)
+    if i.get("status") == C.RECEIVED and files:
+        return "%s Received%s; under review by Lender." % (head + ("" if head.endswith(".") else "."), got)
+    vals = i.get("values") or {}
+    have = [f for f in i.get("fields") or [] if str(vals.get(f["key"]) or "").strip()]
+    if have and len(have) < len(i.get("fields") or []):
+        shown = ["%s%s" % (f["label"], (" " + long_date(_date(vals[f["key"]]))) if f.get("type") == "date" and _date(vals[f["key"]]) else "") for f in have]
+        return "%s Received: %s. Still needed: %s." % (head + ("" if head.endswith(".") else "."), "; ".join(shown), "; ".join(_lower_first(f["label"]) for f in i["fields"] if f not in have))
+    return head
 
 
 # ------------------------------------------------------------------ 2. the note
@@ -427,7 +670,10 @@ def note(c: Ctx) -> List[Dict[str, Any]]:
                    "Interest-Free Period has not ended." % _rate(c.rate)))
     if c.min_months:
         b.append(P("Interest of not less than %s, being %s (%d) months' interest, is payable even if this Note is paid in full earlier." % (usd(c.min_interest), _small(c.min_months), c.min_months), lead="Minimum interest."))
-    b.append(P("A loan fee of %s percent (%s%%) of the principal sum, %s, is earned in full at closing." % (_small(int(c.points)), _rate(c.points), usd(c.fee)), lead="Loan fee."))
+    if c.fee:
+        b.append(P("A loan fee of %s percent (%s%%) of the principal sum, %s, is earned in full at closing." % (_small(int(c.points)), _rate(c.points), usd(c.fee)), lead="Loan fee."))
+    else:
+        b.append(P("No loan fee, origination fee or points are payable by Borrower under this Note.", lead="No loan fee."))
     if c.state == "FL":
         b.append(P("It is the intent of the parties that this Note comply with the usury laws of the State of Florida. If the interest, fees and charges contracted for, charged or received under this Note "
                    "would ever exceed the maximum lawful rate, they shall be reduced to that maximum, and any excess received shall be applied to principal or refunded to Borrower. No extension fee "
@@ -548,8 +794,13 @@ def security(c: Ctx) -> List[Dict[str, Any]]:
     inst = c.instrument.upper()
     grant = ("Borrower mortgages, grants and conveys to Lender" if c.is_mortgage else
              "Borrower irrevocably grants and conveys to Trustee, in trust, with power of sale%s," % (" and with assent to the passage of a decree" if c.state == "MD" else ""))
-    head = [Title(("CREDIT LINE " if c.state == "VA" else "") + inst, "%s Lien · Business-Purpose Loan · Secures %s Advances" % (c.lien_word.capitalize(), "Future" if c.is_mortgage else "Obligatory")),
-            Note("After recording return to: %s, %s  ·  Tax ID No. %s  ·  Title file: %s  ·  Loan No. %s" % (LENDER, LENDER_ADDR, c.tax_id, c.title_co, c.loan_no))]
+    title = Title(("CREDIT LINE " if c.state == "VA" else "") + inst, "%s Lien · Business-Purpose Loan · Secures %s Advances" % (c.lien_word.capitalize(), "Future" if c.is_mortgage else "Obligatory"))
+    ret = Note("After recording return to: %s, %s  ·  Tax ID No. %s  ·  Title file: %s  ·  Loan No. %s" % (LENDER, LENDER_ADDR, c.tax_id, c.title_co, c.loan_no))
+    if c.state == "MD" and c.attorney.get("name"):
+        # Maryland's first page: who prepared it, where it goes back, the recorder's space, then the title.
+        head = [Note("Prepared by: %s, %s" % (c.attorney["name"], c.attorney.get("address") or "")), ret, Note("[Space Above This Line For Recording Data]"), title]
+    else:
+        head = [title, ret]
     if c.state == "VA":
         head.append(Note("THIS IS A CREDIT LINE DEED OF TRUST. Maximum aggregate principal: %s. Noteholder for notices: %s, %s." % (usd(c.principal), LENDER, LENDER_ADDR)))
     if c.is_mortgage:
@@ -557,7 +808,7 @@ def security(c: Ctx) -> List[Dict[str, Any]]:
                       % (c.closing_s, c.borrower_full, c.borrower_addr, LENDER_FULL, LENDER_ADDR)))
     else:
         head.append(P("THIS DEED OF TRUST (this \"Security Instrument\") is made as of %s by %s (\"Borrower\"), as grantor, to %s (\"Trustee\"), as trustee, for the benefit of %s, whose address is %s "
-                      "(\"Lender\"), as beneficiary." % (c.closing_s, c.borrower_full, c.trustee, LENDER_FULL, LENDER_ADDR)))
+                      "(\"Lender\"), as beneficiary." % (c.closing_s, c.borrower_full, c.trustee_on_instrument, LENDER_FULL, LENDER_ADDR)))
     b = head + [
         H("DEFINITIONS"),
         P("\"Note\" means the Promissory Note of even date signed by Borrower and payable to the order of Lender in the principal amount of %s (%s), with %s, payable in full on the earlier of a sale or "
@@ -597,7 +848,8 @@ def security(c: Ctx) -> List[Dict[str, Any]]:
           "debt secured by this Security Instrument, bear interest at the Note rate from the date of disbursement, and are payable on demand." % (LENDER, c.lien_word), lead="4. Property Insurance."),
         P("In the event of loss, Borrower shall give prompt notice to the carrier and Lender, and Lender may make proof of loss. Insurance proceeds shall be applied to restoration of the Property if "
           "restoration is economically feasible and Lender's security is not lessened, with Lender holding and disbursing the proceeds as work is completed; otherwise the proceeds shall be applied to the "
-          "sums secured by this Security Instrument, whether or not then due, with any excess paid to Borrower. Borrower assigns to Lender Borrower's rights to insurance proceeds up to the amount unpaid "
+          "sums secured by this Security Instrument, whether or not then due, with any excess paid to Borrower. If Borrower abandons the Property, or does not respond within 30 days to Lender's notice "
+          "that the carrier has offered to settle a claim, Lender may negotiate and settle the claim. Borrower assigns to Lender Borrower's rights to insurance proceeds up to the amount unpaid "
           "under the Note and this Security Instrument."),
         P("Borrower shall not destroy, damage or impair the Property, allow it to deteriorate, or commit waste. Borrower shall cause the renovation of the Property to be carried out by properly licensed "
           "contractors, with all required permits, in a good and workmanlike manner, and in accordance with the Construction Draw Agreement. Lender and its agents may enter and inspect the Property, "
@@ -625,7 +877,8 @@ def security(c: Ctx) -> List[Dict[str, Any]]:
           "inspection and valuation fees. If any interest or other loan charge is finally determined to exceed the limit permitted by Applicable Law, the charge shall be reduced to the permitted limit "
           "and any excess collected shall be refunded or credited to principal.", lead="11. Loan Charges."),
         P("All notices under this Security Instrument must be in writing. Notice to Borrower is given when mailed by first-class mail or actually delivered to Borrower at %s, with a copy to the Property "
-          "Address, or to a substitute address Borrower designates by notice to Lender. Notice to Lender is given when actually received by Lender at %s or another address Lender designates."
+          "Address, or to a substitute address Borrower designates by notice to Lender. Notice to Lender is given when actually received by Lender at %s or another address Lender designates. "
+          "If a notice required by this Security Instrument is also required by Applicable Law, the Applicable Law requirement satisfies the requirement here."
           % (c.borrower_addr, LENDER_ADDR), lead="12. Notices."),
         P("This Security Instrument is governed by federal law and the laws of %s. If any provision of this Security Instrument or the Note conflicts with Applicable Law, the conflict shall not affect "
           "other provisions which can be given effect without the conflicting provision. The singular includes the plural, and the word \"may\" gives sole discretion without obligation." % c.sx["law"],
@@ -637,9 +890,10 @@ def security(c: Ctx) -> List[Dict[str, Any]]:
           % (" or by distribution from the estate" if c.owner_kind == S.ESTATE else " or by transfer of any interest in Borrower" if c.owner_kind in (S.LLC, S.TRUST) else ""),
           lead="15. Transfer of the Property; Due on Sale."),
         P("Borrower shall have the right to have enforcement of this Security Instrument discontinued at any time before the earlier of (a) the period allowed by Applicable Law, or (b) the sale of the "
-          "Property, if Borrower (i) pays Lender all sums which would then be due under the Note and this Security Instrument as if no acceleration had occurred, (ii) cures any other default, and "
+          "Property%s, if Borrower (i) pays Lender all sums which would then be due under the Note and this Security Instrument as if no acceleration had occurred, (ii) cures any other default, and "
           "(iii) pays all expenses incurred in enforcing this Security Instrument, including reasonable attorneys' fees. This right to reinstate does not apply in the case of acceleration under Section "
-          "15 or after the Maturity Date of the Note.", lead="16. Borrower's Right to Reinstate After Acceleration."),
+          "15 or after the Maturity Date of the Note." % (" under the power of sale or decree" if c.state == "MD" else "" if c.is_mortgage else " under the power of sale"),
+          lead="16. Borrower's Right to Reinstate After Acceleration."),
         P("The Note or a partial interest in the Note, together with this Security Instrument, may be sold or assigned one or more times without prior notice to Borrower.", lead="17. Sale of Note."),
         P("Borrower shall not cause or permit the presence, use, disposal, storage or release of any hazardous substances on or in the Property, other than small quantities generally recognized as "
           "appropriate to normal residential construction and maintenance, and shall promptly give Lender written notice of any governmental or private claim, investigation or condition relating to "
@@ -674,20 +928,29 @@ def security(c: Ctx) -> List[Dict[str, Any]]:
                    "time, the balance, payment status and payoff of the Senior Lien and a copy of every notice of default or sale." % senior, lead="26. Senior Lien."))
     b += [Note("NOTICE: THE DEBT SECURED HEREBY IS SUBJECT TO CALL IN FULL OR THE TERMS THEREOF BEING MODIFIED IN THE EVENT OF SALE OR CONVEYANCE OF THE PROPERTY CONVEYED."),
           P("BY SIGNING BELOW, Borrower accepts and agrees to the terms and covenants contained in this Security Instrument and in the Loan Terms Rider executed by Borrower and recorded with it. WITNESS "
-            "the hand and seal of Borrower."), c.sig_block(), c.notary()]
+            "the hand and seal of Borrower."), c.sig_block(), c.ack_owner()]
     if c.state == "MD":
         b += [BREAK, Title("AFFIDAVIT OF CONSIDERATION"),
               P("The undersigned, an authorized officer of %s, the secured party named in the foregoing Deed of Trust, hereby certifies under the penalties of perjury that the consideration recited in the "
                 "foregoing Deed of Trust is true and bona fide as therein set forth, and that the actual sum of money advanced at the closing transaction by the secured party was $______________ (closing "
                 "costs funded through settlement only; no cash to Borrower), the balance of the principal amount being secured as obligatory advances to be made under the Construction Draw Agreement and "
-                "in consideration of the assignment of the renovation contract price as recited in the Note." % LENDER), _lender_sign(LENDER.upper()),
-              P("This instrument was prepared by %s, %s, a party to it." % (LENDER, LENDER_ADDR), lead="Preparation.")]
+                "in consideration of the assignment of the renovation contract price as recited in the Note." % LENDER), _lender_sign(),
+              # Maryland takes a deed of trust for record only with an attorney's certificate that he prepared it
+              # (or a party's own). RKB's is its Maryland attorney's, as on the signed Marmon instrument.
+              P(""), H("ATTORNEY CERTIFICATION"),
+              P("I HEREBY CERTIFY that the within instrument was prepared by me or under my supervision, and that I am an attorney admitted to practice before the Supreme Court of Maryland."),
+              Sign("", ["______________________________", c.attorney.get("name") or c.need("Maryland attorney who certifies the deed of trust"), c.attorney.get("address") or "", "Date: ______________"])]
     elif c.state == "FL":
         b.append(Note("This instrument was prepared by: %s, %s, %s." % (LENDER_SIGNER, LENDER, LENDER_ADDR)))
     else:
         b.append(Note("Prepared by %s, %s, a party to this instrument." % (LENDER, LENDER_ADDR)))
-    b += [BREAK, Title("EXHIBIT A", "Legal Description"), P(c.val("legal_description", "legal description, from the title commitment")),
+    # Exhibit A is the title company's: the legal description from its commitment, and the deed the Borrower holds under.
+    holder = c.borrower if c.owner_kind != S.ESTATE else c.title_fill("name of the owner as on the deed")
+    b += [BREAK, Title("EXHIBIT A", "Legal Description"),
+          P(c.raw("legal_description") or c.title_fill("Legal description to be inserted by %s from the title commitment" % (c.raw("title_company") or "the title company"))),
           P("The improvements thereon being known as %s. Tax ID No. %s." % (c.address, c.tax_id)),
+          P("BEING the same property conveyed to %s by deed dated %s and recorded among %s %s." % (holder, c.day("deed_date") or c.title_fill("deed date"), c.records,
+                                                                                               ("in " + c.raw("deed_reference")) if c.raw("deed_reference") else c.sx.get("book") or "in Book [__], Page [__]")),
           BREAK, Title("EXHIBIT B", "LOAN TERMS RIDER · recorded with and incorporated into the %s dated %s" % (c.instrument, c.closing_s)),
           Terms([["Property", c.property_line], ["Borrower", c.borrower_full], ["Lender" + ("" if c.is_mortgage else " / Trustee"), LENDER + ("" if c.is_mortgage else " / " + c.trustee_name)],
                  ["Principal amount", "%s (maximum principal secured, exclusive of interest and protective advances)" % usd(c.principal)]]),
@@ -702,18 +965,20 @@ def security(c: Ctx) -> List[Dict[str, Any]]:
           P("The %s secures %s advances under the Construction Draw Agreement of even date and protective advances, as provided in Section 22." % (c.instrument, "future" if c.is_mortgage else "obligatory"),
             lead="6. Advances."),
           P("This Rider controls over any conflicting provision of the printed %s." % c.instrument, lead="7. Control."), c.sig_block()]
+    if c.state == "MD":
+        b.append(c.ack_owner())      # the Rider is recorded with the Deed of Trust and carries the same acknowledgment
     return b
 
 
 # ------------------------------------------------------------------ 4, 5. the company's papers
 def guaranty(c: Ctx) -> List[Dict[str, Any]]:
     return [Title("CONTINUING PERSONAL GUARANTY"),
-            Terms([["Date", c.closing_s], ["Guarantor", "%s, individually" % c.guarantor], ["Borrower", c.borrower_full], ["Lender", "%s, %s" % (LENDER_FULL, LENDER_ADDR)],
+            Terms([["Date", c.closing_s], ["Guarantor", "%s, individually" % c.guarantor], ["Guarantor's address", c.guarantor_addr], ["Borrower", c.borrower_full], ["Lender", "%s, %s" % (LENDER_FULL, LENDER_ADDR)],
                    ["Loan", "%s Promissory Note and %s-lien %s of even date on %s" % (usd(c.principal), c.lien_word, c.instrument, c.address)], ["Loan No.", c.loan_no]]),
             P("To induce Lender to make the Loan to Borrower, and for other good and valuable consideration, the receipt and sufficiency of which Guarantor acknowledges, Guarantor absolutely, unconditionally "
               "and irrevocably guarantees to Lender the full and punctual payment when due, whether at maturity, by acceleration or otherwise, of every sum now or hereafter owing under the Note, the %s and "
-              "the Construction Draw Agreement, including principal, interest, the loan fee, protective advances and costs of collection (the \"Obligations\"), and the performance of every covenant of "
-              "Borrower in those documents." % c.instrument, lead="1. Guaranty."),
+              "the Construction Draw Agreement, including principal, interest, %sprotective advances and costs of collection (the \"Obligations\"), and the performance of every covenant of "
+              "Borrower in those documents." % (c.instrument, "the loan fee, " if c.fee else ""), lead="1. Guaranty."),
             P("This is a guaranty of payment and not of collection. It is a continuing guaranty and remains in force until every Obligation has been paid in full. Guarantor's liability is primary and "
               "direct. Lender may enforce this Guaranty against Guarantor without first proceeding against Borrower, foreclosing on the Property or exhausting any other remedy.", lead="2. Nature of the guaranty."),
             P("Guarantor's liability is not released or reduced by any extension, renewal, modification or forbearance of the Obligations; by any release, substitution or impairment of the Property or other "
@@ -726,6 +991,8 @@ def guaranty(c: Ctx) -> List[Dict[str, Any]]:
             P("If any payment on the Obligations is rescinded or must be returned by Lender, this Guaranty is reinstated as to that payment as though it had not been made.", lead="6. Reinstatement."),
             P("This Guaranty binds Guarantor and Guarantor's heirs and personal representatives and benefits Lender and its successors and assigns. It is governed by the laws of %s. GUARANTOR AND LENDER "
               "KNOWINGLY AND VOLUNTARILY WAIVE TRIAL BY JURY IN ANY ACTION ARISING OUT OF THIS GUARANTY." % c.sx["law"], lead="7. General."),
+            P("Notices to Guarantor shall be delivered by hand, by nationally recognized overnight courier, or by certified mail to Guarantor's address stated above, or to another address Guarantor "
+              "designates in writing.", lead="8. Notices."),
             Sign("GUARANTOR", ["______________________________ (SEAL)", "%s, individually" % c.guarantor, "Date: ______________"]),
             Notary("%s\nThe foregoing instrument was acknowledged before me this ____ day of ______________, 20___, by %s, individually, who is personally known to me or has produced satisfactory evidence "
                    "of identity.\n\n______________________________\nNotary Public\nMy commission expires: ______________          [NOTARIAL SEAL]" % (c.sx["notary"], c.guarantor)),
@@ -733,8 +1000,23 @@ def guaranty(c: Ctx) -> List[Dict[str, Any]]:
 
 
 def resolution(c: Ctx) -> List[Dict[str, Any]]:
+    # Every member signs, each before a notary. The names come from the operating agreement; until
+    # they are entered the paper carries the blank and two signature blocks.
+    names = c.members
+    sole = len(names) == 1
+    who = (names[0] if sole else ", ".join(names[:-1]) + " and " + names[-1]) if names else c.need("member names")
+    all_of = "the sole member" if sole else "all of the members"
+
+    def member(head: str, name: str) -> List[Dict[str, Any]]:
+        return [Sign(head, ["______________________________", "Printed name: %s" % name, "Sole Member" if sole else "Member", "Date: ______________"]),
+                Notary("%s\nThe foregoing instrument was acknowledged before me this ____ day of ______________, 20___, by %s, as %s of %s, who is personally known to me or has produced "
+                       "satisfactory evidence of identity.%s" % (c.sx["notary"], name, "the sole member" if sole else "a member", c.borrower, _ACK_TAIL))]
+    signers = names or [c.need("member name")] * 2
+    blocks: List[Dict[str, Any]] = []
+    for n, name in enumerate(signers):
+        blocks += member("SOLE MEMBER" if sole else "MEMBERS (ALL OF THEM)" if n == 0 else "MEMBER", name)
     return [Title("AUTHORIZING RESOLUTION AND CERTIFICATE OF AUTHORITY", c.borrower),
-            P("The undersigned, being all of the members of %s (the \"Company\"), certify and resolve as follows:" % c.borrower_full),
+            P("The undersigned, %s, being %s of %s (the \"Company\"), certify and resolve as follows:" % (who, all_of, c.borrower_full)),
             P("The Company is duly organized, validly existing and in good standing. Its articles of organization and operating agreement, with every amendment, have been delivered to Lender and are in full "
               "force. Nothing in them restricts the Company's power to borrow or to mortgage or encumber its property.", lead="1. Existence."),
             P("The Company is authorized to borrow from %s on a Promissory Note in the principal amount of %s, to secure it by a %s-lien %s on %s, and to enter into the Construction Draw Agreement, the "
@@ -742,9 +1024,7 @@ def resolution(c: Ctx) -> List[Dict[str, Any]]:
               lead="2. The loan is authorized."),
             P("%s, as %s, acting alone, is authorized to sign and deliver those documents on the Company's behalf, in the form that person approves, the signature being conclusive evidence of the approval."
               % (c.signer, c.signer_title), lead="3. Who signs."),
-            P("Lender and the title insurer may rely on this certificate until Lender receives written notice of any change, signed by all of the members.", lead="4. Reliance."),
-            Sign("MEMBERS (ALL OF THEM)", ["______________________________", "Printed name: ______________________", "", "______________________________", "Printed name: ______________________", "Date: ______________"]),
-            c.notary()]
+            P("Lender and the title insurer may rely on this certificate until Lender receives written notice of any change, signed by %s." % all_of, lead="4. Reliance.")] + blocks
 
 
 # ------------------------------------------------------------------ 6 to 9. the owner's statements
@@ -764,8 +1044,9 @@ def affidavit(c: Ctx) -> List[Dict[str, Any]]:
             P(auth % c.title_co, lead="1. Authority."),
             P("The loan is being obtained solely to finance the renovation of the Property so that it can be sold. No part of the loan is for personal, family or household purposes. I understand that the "
               "loan is a business-purpose loan and is not subject to the consumer-credit disclosure requirements or right of rescission that apply to consumer loans secured by a dwelling.", lead="2. Business purpose."),
-            P("The Property is vacant. It is not my residence and not the residence of any owner, heir, beneficiary or member, and none of them intends to occupy it. No one holds a lease or any other right "
-              "to occupy the Property. The Property will be listed for sale when the renovation is complete.", lead="3. Non-owner occupancy."),
+            P("The Property is vacant. It is not my residence and not the residence of %s, and none of them intends to occupy it. No one holds a lease or any other right "
+              "to occupy the Property. The Property will be listed for sale when the renovation is complete."
+              % ("any member, manager or affiliate of Borrower" if c.owner_kind == S.LLC else "any owner, heir, beneficiary or member"), lead="3. Non-owner occupancy."),
             P("No loan proceeds are being paid to me or to Borrower. Lender will pay for the renovation work on Borrower's behalf under the Construction Draw Agreement.", lead="4. No cash to Borrower."),
             P("Borrower has contracted with %s for the renovation under a Customer Agreement, as amended on the date of this affidavit, for a contract price of %s. %s has assigned that contract price to "
               "Lender, and Borrower's Promissory Note to Lender replaces Borrower's obligation to pay %s." % (ROI, usd(c.principal), ROI, ROI), lead="5. Renovation contract."),
@@ -780,7 +1061,9 @@ def occupancy(c: Ctx) -> List[Dict[str, Any]]:
     return [Title("OCCUPANCY CERTIFICATION", "Non-Owner-Occupied Property"),
             Terms([["Property", c.address], ["Owner / Borrower", c.borrower_full], ["Lender", "%s, its successors and/or assigns" % LENDER], ["Loan No.", c.loan_no], ["Closing date", c.closing_s]]),
             P("I, the undersigned Owner / Borrower, certify to Lender as follows:"),
-            L(["No owner lives at the Property. The last person to live there moved out on or about ____________________ (date).",
+            # A company never lived in the house: its statement runs from the day it took title.
+            L([("No person has lived at the Property since Borrower acquired it on %s." % (c.day("deed_date") or c.title_fill("date of Borrower's deed"))) if c.owner_kind == S.LLC else
+               "No owner lives at the Property. The last person to live there moved out on or about ____________________ (date).",
                "The Property is vacant and is not the principal residence of any owner. No one is living at the Property, and no one has a lease or any other right to occupy it.",
                "No owner intends to move back into the Property. The Property is being repaired so that it can be listed and sold.",
                "The owner's current mailing address is: %s." % c.borrower_addr,
@@ -814,8 +1097,8 @@ def acknowledgment(c: Ctx) -> List[Dict[str, Any]]:
             H("PAYMENT TERMS"),
             P("The renovation contract price under the Customer Agreement is %s. %s has assigned that contract price to Lender. The Owner's only obligation to pay for the renovation is the %s Promissory "
               "Note to Lender, secured by a %s on the Property. The Owner owes nothing directly to %s for the renovation." % (usd(c.principal), ROI, usd(c.principal), c.instrument, ROI), lead="1."),
-            P("Under the Note: %s; a loan fee of %s is earned at closing; no monthly payments are due; and all amounts are due at the earlier of the sale or transfer of the Property or %s. No late charge "
-              "is payable under the Note." % (terms, usd(c.fee), c.maturity_s), lead="2."),
+            P("Under the Note: %s; %s; no monthly payments are due; and all amounts are due at the earlier of the sale or transfer of the Property or %s. No late charge "
+              "is payable under the Note." % (terms, ("a loan fee of %s is earned at closing" % usd(c.fee)) if c.fee else "no loan fee or points are payable by the Owner", c.maturity_s), lead="2."),
             P("Any late fee, interest or other charge under the original Customer Agreement, including any per-30-day late fee and any 180-day payment term, is waived in full and deleted. No such fee will "
               "be charged to the Owner or collected from the sale proceeds.", lead="3."),
             H("LISTING AND SALE COVENANTS"),
@@ -829,12 +1112,14 @@ def acknowledgment(c: Ctx) -> List[Dict[str, Any]]:
 
 # ------------------------------------------------------------------ 10 to 12. the three-party papers
 def draw_agreement(c: Ctx) -> List[Dict[str, Any]]:
-    m = c.money
+    expires = c.day("licence_expires", "licence", "expires_on")
     return [Title("CONSTRUCTION DRAW AGREEMENT", "Renovation of %s" % c.address),
             Terms([["Date", c.closing_s], ["Owner / Borrower", "%s (\"Borrower\")" % c.borrower_full], ["Lender", "%s, ISAOA/ATIMA, %s (\"Lender\")" % (LENDER, LENDER_ADDR)],
-                   ["Project manager", "%s, %s (\"ROI Blocks\")" % (ROI, ROI_ADDR)], ["Performing contractor", "%s, licence no. %s (\"Contractor\")" % (c.contractor, c.licence)],
-                   ["Scope of work", "Schedule 1, signed by the Contractor and Borrower (the \"Work\")"], ["Contract price", "%s, assigned by ROI Blocks to Lender" % usd(c.principal)],
-                   ["Target completion", c.val("completion_date", "completion date", "schedule", "completion_date")]]),
+                   ["Project manager", "%s, %s (\"ROI Blocks\")" % (ROI, ROI_ADDR)], ["Performing contractor", "%s, %s (\"Contractor\")" % (c.contractor, c.lic_no)],
+                   # The Contractor's priced scope is not part of this paper: the Borrower signs it, and the Borrower sees the
+                   # contract price only. The priced scope, signed by the Contractor alone, goes with Schedule 2.
+                   ["Scope of work", "Schedule 1 (the \"Work\")"], ["Contract price", "%s, assigned by ROI Blocks to Lender" % usd(c.principal)],
+                   ["Target completion", c.day("completion_date", "schedule", "completion_date") or c.need("completion date")]]),
             H("1. FUNDING AND DIRECTION TO PAY"),
             P("Lender agrees to pay for the Work on Borrower's behalf, in draws against completed work, under this Agreement. Borrower irrevocably authorizes and directs Lender to make those payments to ROI "
               "Blocks, the Contractor, or directly to subcontractors and suppliers, as Lender determines.", lead="1.1"),
@@ -847,21 +1132,22 @@ def draw_agreement(c: Ctx) -> List[Dict[str, Any]]:
             P("A dwelling-fire or builder's risk policy is in force with a vacancy and renovation endorsement, naming %s, ISAOA/ATIMA, as %s mortgagee and loss payee." % (LENDER, c.lien_word), lead="2.2"),
             P("Lender holds a certificate of general liability insurance for the Contractor naming %s, ISAOA/ATIMA, as additional insured and referencing the Property, and evidence of workers' compensation "
               "coverage or a written exemption." % LENDER, lead="2.3"),
-            P("The Contractor's licence (%s) is verified by Lender, and the Contractor confirms in writing that it will pull all required permits and use licensed electrical, plumbing and HVAC trades."
-              % c.st.get("licence_register", "the state contractor licence"), lead="2.4"),
+            P("The Contractor's licence (%s) is verified by Lender, and the Contractor confirms in writing that it will pull all required permits and use licensed electrical, plumbing and HVAC trades.%s"
+              % (c.st.get("licence_register", "the state contractor licence"),
+                 (" Contractor's licence expires %s. If the Work is not complete by that date, no further draw will be funded until Lender receives evidence of renewal." % expires) if expires else ""), lead="2.4"),
         ] + ([P("The notice of commencement has been recorded after the Mortgage and a certified copy is posted at the Property, as required by §713.13, Florida Statutes.", lead="2.5")] if c.state == "FL" else []) + [
             H("3. DRAW PROCEDURE"),
             P("ROI Blocks submits each draw request to Lender with the Contractor's invoice for completed work measured against Schedule 1, photographs, and signed partial lien releases from the Contractor "
               "and every subcontractor and supplier paid from the previous draw.", lead="3.1"),
-            P("Each draw is funded at ninety percent (90%) of the Contractor's cost of the completed work. The remaining ten percent (10%) is retained by Lender and paid directly to the "
+            P("Lender funds ninety percent (90%) of each approved draw. The remaining ten percent (10%) is retained by Lender and paid directly to the "
               "Contractor at settlement of the sale of the Property, against final lien releases from the Contractor and from every subcontractor and supplier.", lead="3.2"),
             P("Lender or its inspector may verify the work before funding. Lender will fund approved draws within five (5) business days after approval.", lead="3.3"),
             P("Lender may withhold or reduce a draw if the work is not complete or not in accordance with the scope or applicable codes; if lien releases are missing; if a required permit or inspection is "
               "outstanding; if required insurance is not in force; if a lien or claim has been filed against the Property; or if Borrower or ROI Blocks is in default under the Note, the %s, or this "
               "Agreement." % c.instrument, lead="3.4"),
-            H("4. CHANGE ORDERS AND CONTINGENCY"),
-            P("No change to the scope or price of the Work is effective unless set out in a written change order signed by Borrower, ROI Blocks and Lender. Any contingency allowance is released only on Lender's "
-              "prior written approval. Cost overruns not covered by a signed change order are the sole responsibility of ROI Blocks. No change order increases the amount Borrower owes under the Note "
+            H("4. CHANGE ORDERS"),
+            P("No change to the scope or price of the Work is effective unless set out in a written change order signed by Borrower, ROI Blocks and Lender. "
+              "Cost overruns not covered by a signed change order are the sole responsibility of ROI Blocks. No change order increases the amount Borrower owes under the Note "
               "unless Borrower signs a written modification of the Note."),
             H("5. ROI BLOCKS' UNDERTAKINGS"),
             P("ROI Blocks shall cause the Work to be completed by the target completion date, in a good and workmanlike manner, by properly licensed contractors, and in compliance with all permits and codes.", lead="5.1"),
@@ -874,18 +1160,41 @@ def draw_agreement(c: Ctx) -> List[Dict[str, Any]]:
               "Borrower's principal obligation is determined under the Principal Adjustment provision of the Note." % c.instrument),
             H("7. PAYOFF AT SALE"),
             P("At settlement of the sale of the Property, the settlement agent shall pay Lender the full payoff under the Note and %s before any other distribution to Borrower. Any amounts owed by Lender to "
-              "ROI Blocks or the Contractor are Lender's obligation under its separate agreement with ROI Blocks and are not an additional charge to Borrower." % c.instrument),
+              "ROI Blocks or the Contractor are Lender's obligation under the %s of even date between Lender and ROI Blocks and are not an additional charge to Borrower." % (c.instrument, ALLOC)),
             H("8. GENERAL"),
             P("This Agreement is a loan document. As between Borrower and Lender, it controls over any conflicting provision of the Customer Agreement. It is governed by the laws of %s and may be signed in "
               "counterparts, including by electronic signature." % c.sx["law"]),
-            c.sig_block(seal=False), _roi_sign(), Sign("CONTRACTOR: %s" % c.contractor.upper(), ["By: ______________________________", "Printed name: ______________________", "Date: ______________"]),
+            c.sig_block(seal=False), _roi_sign(), c.contractor_sign(),
             _lender_sign(), BREAK, Title("SCHEDULE 1", "Scope of Work"),
             # No cost figure here: the Contractor's cost and the draw budget are between Lender, ROI Blocks
             # and the Contractor. The Borrower's one number is the contract price, which is the Note (2026-11-20).
             Terms([["Contract price", usd(c.principal)], ["Measured area", "%s sq ft above grade, %s sq ft below grade" % (_num(c.f.get("sqft_above")), _num(c.f.get("sqft_below")))],
                    ["Bedrooms and bathrooms after the Work", "%s bedrooms, %s bathrooms" % (c.f.get("beds") or "[ ]", c.f.get("baths") or "[ ]")]]),
-            P("The scope of work, signed by the Contractor and by Borrower, is attached and forms part of this Schedule. The Contractor's cost of the Work and the draw budget are kept in a "
-              "separate schedule between Lender, ROI Blocks and the Contractor. They do not change the contract price or what Borrower owes under the Note.")]
+            P("The Work is the work described in ROI Blocks' proposal under the Customer Agreement, for the contract price stated above. The schedule of draws is kept "
+              "between Lender, ROI Blocks and the Contractor. It does not change the contract price or what Borrower owes under the Note.")]
+
+
+def schedule_2(c: Ctx) -> List[Dict[str, Any]]:
+    """The draw budget: the one paper that states the Contractor's cost. It is between RKB, ROI Blocks
+    and the Contractor, and is never signed by, shown to or sent with the papers of the Borrower."""
+    m = c.money
+    cost = round(m["work"] + m["contingency"], 2)
+    draws = round(cost * E.FUNDED_SHARE, 2)
+    address = c.raw("contractor_address", "licence", "address")
+    return [Title("SCHEDULE 2", "Draw Budget · Construction Draw Agreement for %s" % c.address),
+            Note("NOT A BORROWER DOCUMENT · Between Lender, ROI Blocks and the Contractor only"),
+            Terms([["Date", c.closing_s], ["Property", c.property_line], ["Lender", "%s, %s" % (LENDER, LENDER_ADDR)], ["Project manager", "%s, %s" % (ROI, ROI_ADDR)],
+                   ["Contractor", "%s, %s%s" % (c.contractor, (address + ", ") if address else "", c.lic_no)]]),
+            P("This Schedule 2 is the schedule of draws referred to in Schedule 1 of the Construction Draw Agreement of even date. It states the Contractor's cost of the Work and the draw budget. "
+              "The scope of work with the Contractor's prices, signed by the Contractor, is attached to it."),
+            Terms([["Contractor's cost of the Work", usd(cost) + (", including contingency of %s" % usd(m["contingency"]) if m["contingency"] else "")],
+                   ["Draws", "%d%% of the Contractor's cost of completed work, up to %s" % (round(100 * E.FUNDED_SHARE), usd(draws))],
+                   ["Retainage", "%d%% = %s, paid to the Contractor at the sale of the Property, against final lien releases" % (round(100 * (1 - E.FUNDED_SHARE)), usd(cost - draws))]]),
+            P("Draws and the retainage are made as provided in Section 3 of the Construction Draw Agreement, measured on the Contractor's cost of the completed work. Any contingency is released only "
+              "on Lender's prior written approval. This Schedule 2 is signed by Lender, ROI Blocks and the "
+              "Contractor only. It is not a borrower document, is not signed by or delivered to the Borrower, and does not change the contract price or what the Borrower owes under the Note."),
+            _lender_sign(), _roi_sign(), c.contractor_sign()] + \
+        ([] if (c.items.get("scope") or {}).get("status") == C.OK else [Note("[The attached scope of work must be signed by %s before closing.]" % (c.contractor_person or "the Contractor"))])
 
 
 def _num(v: Any) -> str:
@@ -894,29 +1203,37 @@ def _num(v: Any) -> str:
 
 def amendment(c: Ctx) -> List[Dict[str, Any]]:
     b = [Title("AMENDMENT TO CUSTOMER AGREEMENT", c.address)]
-    if c.state == "MD":
+    signed_on = c.day("contract_date") or c.need("date of Customer Agreement")
+    # Maryland's home-improvement notice and three-day right to cancel are for a person's own contract.
+    # A business-purpose loan to a company carries no rescission language at all (21st St, 23 Nov 2026).
+    if c.state == "MD" and c.owner_kind != S.LLC:
         b += [P("THIS CONTRACT CREATES A MORTGAGE OR LIEN AGAINST YOUR PROPERTY TO SECURE PAYMENT AND MAY CAUSE A LOSS OF YOUR PROPERTY IF YOU FAIL TO PAY THE AMOUNT AGREED UPON. YOU HAVE THE RIGHT TO "
                 "CONSULT AN ATTORNEY. YOU HAVE THE RIGHT TO RESCIND THIS CONTRACT WITHIN 3 BUSINESS DAYS AFTER THE DATE YOU SIGN IT BY NOTIFYING THE CONTRACTOR IN WRITING THAT YOU ARE RESCINDING THE "
                 "CONTRACT.", lead="NOTICE:"),
               P("Owner's initials acknowledging this notice: ________   Date: ______________"),
               P("Written notice of rescission may be given to %s, %s, with a copy to %s, %s, and to %s. Lender will not record the Deed of Trust or make any advance until the rescission period has expired "
                 "without a rescission." % (ROI, ROI_ADDR, LENDER, LENDER_ADDR, c.title_co))]
-    b += [P("This Amendment is made %s between %s, %s (\"ROI Blocks\"), and %s (\"Owner\"), and amends the Customer Agreement between them (the \"Agreement\"). %s (\"Lender\") joins to consent and as an "
-            "intended third-party beneficiary." % (c.closing_s, ROI, ROI_ADDR, c.borrower_full, LENDER)),
+    body = c.sx.get("lic_body")
+    b += [P("This Amendment is made %s between %s, %s (\"ROI Blocks\"), and %s (\"Owner\"), and amends the Customer Agreement between them dated %s (the \"Agreement\"). %s (\"Lender\") joins to consent and as an "
+            "intended third-party beneficiary." % (c.closing_s, ROI, ROI_ADDR, c.borrower_full, signed_on, LENDER)),
           H("AMENDMENTS"),
           P("Every reference in the Agreement to the property is to %s. The owner and customer under the Agreement is %s." % (c.property_line, c.borrower_full), lead="1. Property and parties."),
-          P("The contract price for the work is %s." % usd(c.principal), lead="2. Contract price."),
+          # ROI Blocks' Customer Agreement is its signed proposal: one paper, one date.
+          P("The contract price for the work is %s, as stated in ROI Blocks' proposal dated %s." % (usd(c.principal), signed_on), lead="2. Contract price."),
           P("ROI Blocks has assigned the contract price to Lender. Owner's obligation to pay the contract price is satisfied in full by Owner's execution and delivery to Lender of a Promissory Note for %s "
-            "secured by a %s on the Property. ROI Blocks releases Owner from any obligation to pay ROI Blocks directly, and shall look solely to Lender for payment under ROI Blocks' separate agreement with "
-            "Lender." % (usd(c.principal), c.instrument), lead="3. Payment."),
+            "secured by a %s on the Property. ROI Blocks releases Owner from any obligation to pay ROI Blocks directly, and shall look solely to Lender for payment under the %s of even date between ROI "
+            "Blocks and Lender." % (usd(c.principal), c.instrument, ALLOC), lead="3. Payment."),
           P("All provisions of the Agreement imposing late fees, interest, a 180-day payment term, or any fee measured from the recording of a lien are deleted.", lead="4. Fees deleted."),
-          P("Every provision of the Agreement granting ROI Blocks a lien on, security interest in, or right to record against the Property, barring other financing, or requiring Owner's consent to such a "
-            "lien, is deleted. ROI Blocks shall not record or file any lien, memorandum or claim against the Property. ROI Blocks consents to the %s-priority %s in favor of Lender."
-            % (c.lien_word, c.instrument), lead="5. Lien provisions deleted."),
-          P("The work shall be performed by %s, %s no. %s, or another contractor licensed in %s and approved in writing by Lender, under all required permits."
-            % (c.contractor, c.st.get("licence_register", "contractor licence"), c.licence, c.state_name), lead="6. Contractor and licensing."),
-          P("The Agreement is governed by the laws of %s. Any arbitration clause, and any reference to the law of another country or state, is deleted. Any dispute between Owner and ROI Blocks shall be "
-            "resolved in %s. Nothing in the Agreement limits Lender's rights under the Note or %s, including foreclosure." % (c.sx["law"], c.sx["courts"], c.instrument), lead="7. Governing law and disputes."),
+          P("Sections %s of the Agreement are deleted in their entirety. Every provision of the Agreement granting ROI Blocks a lien on, security interest in, or right to record against the Property, barring "
+            "other financing, or requiring Owner's consent to such a lien, is deleted. ROI Blocks shall not record or file any lien, memorandum or claim against the Property. ROI Blocks consents to the "
+            "%s-priority %s in favor of Lender." % (ROI_LIEN_SECTIONS, c.lien_word, c.instrument), lead="5. Lien provisions deleted."),
+          P(("The work shall be performed by %s, %s licence No. %s, or another contractor licensed by %s and approved in writing by Lender, under all required %s permits."
+             % (c.contractor, body[4:] if body.startswith("the ") else body, c.licence, body, c.county or c.state_name)) if body else
+            ("The work shall be performed by %s, %s no. %s, or another contractor licensed in %s and approved in writing by Lender, under all required permits."
+             % (c.contractor, c.st.get("licence_register", "contractor licence"), c.licence, c.state_name)), lead="6. Contractor and licensing."),
+          P("The Agreement is governed by the laws of %s. Any arbitration clause, including Section %s of the Agreement, and any reference to the law of another country or state, is deleted. Any dispute "
+            "between Owner and ROI Blocks shall be resolved in %s. Nothing in the Agreement limits Lender's rights under the Note or %s, including foreclosure."
+            % (c.sx["law"], ROI_ARBITRATION_SECTION, c.sx["courts"], c.instrument), lead="7. Governing law and disputes."),
           P("The work shall be funded under the Construction Draw Agreement of even date among Owner, ROI Blocks and Lender, which controls over the Agreement on funding, draws, change orders and payment.",
             lead="8. Construction Draw Agreement."),
           P("Except as amended here, the Agreement remains in full force. If there is any conflict between this Amendment and the Agreement, this Amendment controls.", lead="9. Ratification."),
@@ -925,13 +1242,15 @@ def amendment(c: Ctx) -> List[Dict[str, Any]]:
 
 
 def assignment(c: Ctx) -> List[Dict[str, Any]]:
+    person = c.contractor_person
     return [Title("ASSIGNMENT OF CONTRACT RECEIVABLE, RELEASE AND LIEN COVENANT", c.address),
-            P("This Assignment is made %s by %s (\"Assignor\") to %s (\"Assignee\"), with the joinder of %s (\"Contractor\")." % (c.closing_s, ROI, LENDER_FULL, c.contractor)),
+            P("This Assignment is made %s by %s (\"Assignor\") to %s (\"Assignee\"), with the joinder of %s, %s (\"Contractor\")." % (c.closing_s, ROI, LENDER_FULL, c.contractor, c.lic_no)),
             H("RECITALS"),
             P("Under a Customer Agreement, as amended on the date of this Assignment (the \"Customer Agreement\"), %s (\"Owner\") is obligated to pay Assignor a contract price of %s (the \"Receivable\") for "
               "the renovation of %s (the \"Property\")." % (c.borrower_full, usd(c.principal), c.address), lead="A."),
-            P("Assignee is funding the renovation under a Construction Draw Agreement of even date and has agreed with Assignor on the payment of Assignor's compensation (the \"Allocation Agreement\"). Owner "
-              "is delivering to Assignee a Promissory Note for %s secured by a %s on the Property in substitution for the Receivable." % (usd(c.principal), c.instrument), lead="B."),
+            P("Assignee is funding the renovation under a Construction Draw Agreement of even date and has agreed with Assignor on the payment of Assignor's compensation under the %s of even date (the "
+              "\"Allocation Agreement\"). Owner is delivering to Assignee a Promissory Note for %s secured by a %s on the Property in substitution for the Receivable."
+              % (ALLOC, usd(c.principal), c.instrument), lead="B."),
             H("ASSIGNMENT AND RELEASE"),
             P("For value received, consisting of Assignee's funding undertaking and the payments provided in the Allocation Agreement, the receipt and sufficiency of which Assignor acknowledges, Assignor "
               "assigns, transfers and sets over to Assignee all of Assignor's right, title and interest in the Receivable and in all rights and remedies securing or relating to the Receivable, including "
@@ -946,14 +1265,13 @@ def assignment(c: Ctx) -> List[Dict[str, Any]]:
               "recorded, it has performed no work and delivered no materials to the Property. Contractor shall deliver a partial lien release with each draw for all work paid to date, and shall give "
               "Assignee at least thirty (30) days' written notice and an opportunity to cure before filing or recording any lien claim against the Property. %s" % (c.instrument, c.sx["lien_law"]), lead="5."),
             P("This Assignment is governed by the laws of %s and binds and benefits the parties' successors and assigns." % c.sx["law"], lead="6."),
-            _roi_sign("ASSIGNOR: ROI BLOCKS LLC"),
-            Notary("%s\nThe foregoing instrument was acknowledged before me this ____ day of ______________, 20___, by %s, as %s of %s, on its behalf.\n\n______________________________\nNotary Public\n"
-                   "My commission expires: ______________          [NOTARIAL SEAL]" % (c.sx["notary"], ROI_SIGNER, ROI_TITLE, ROI)),
-            Sign("CONTRACTOR: %s" % c.contractor.upper(), ["By: ______________________________", "Printed name: ______________________", "Title: ______________________"]),
-            Notary("%s\nThe foregoing instrument was acknowledged before me this ____ day of ______________, 20___, by ______________________, as ______________________ of %s, on its behalf.\n\n"
-                   "______________________________\nNotary Public\nMy commission expires: ______________          [NOTARIAL SEAL]" % (c.sx["notary"], c.contractor)),
+            _roi_sign("ASSIGNOR: ROI BLOCKS LLC"), c.ack_company(ROI_SIGNER, ROI_TITLE, ROI),
+            c.contractor_sign(),
+            # A contractor who holds the licence in his or her own name signs and is acknowledged as a person, with no company title.
+            c.ack_person(person) if person else c.ack_company("______________________", "______________________", c.contractor),
             _lender_sign("ACCEPTED: ASSIGNEE"),
-            Sign("ACKNOWLEDGED BY OWNER", ["______________________________", c.signer, "Date: ______________"])]
+            Sign("ACKNOWLEDGED BY OWNER", ["______________________________", c.signer, "Date: ______________"]) if c.owner_kind == S.INDIVIDUAL else
+            Sign("ACKNOWLEDGED BY OWNER: %s" % c.borrower.upper(), ["By: ______________________________", c.signer, c.signer_title, "Date: ______________"])]
 
 
 # ------------------------------------------------------------------ 13. to the title company
@@ -964,13 +1282,32 @@ def instructions(c: Ctx, docs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
               "DC": "Record with %s: the Deed of Trust with Exhibits A and B, with the security-interest recordation tax return and any exemption affidavit the Property qualifies for.",
               "FL": "Record in %s, in this order and no other: (1) the Mortgage with Exhibits A and B, with documentary stamp tax and non-recurring intangible tax paid on the principal amount; "
                     "(2) the Notice of Commencement. No construction money moves and no work starts before both are recorded."}.get(c.state, "Record among %s the security instrument with Exhibits A and B.") % c.records
-    signed = [d for d in docs if d["key"] not in ("instructions", "commitment_letter")]
+    # What the title company has signed at its table. The commitment is signed before; Schedule 2 and the
+    # Allocation Agreement are between RKB, ROI Blocks and the Contractor and never go to the title company.
+    signed = [d for d in docs if d["key"] not in ("instructions", "commitment_letter") and d.get("audience") != NOT_BORROWER]
+
+    def line(d: Dict[str, Any]) -> str:
+        if d["key"] == "security" and c.state == "MD":
+            return "%s: %s. Attorney Certification signed by %s; Affidavit of Consideration signed by Lender." % (d["title"], d["signers"], c.attorney.get("name") or "Lender's Maryland attorney")
+        if d["key"] == "assignment":
+            return "Assignment of Contract Receivable, Release and Lien Covenant: %s" % d["signers"]
+        return "%s: %s" % (d["title"], d["signers"])
+    # What the notary has the Borrower initial: the terms a borrower most often says later he was not told.
+    points = (["no interest accrues for the first %s (%d) months after the %s is recorded, and after that interest accrues at %s%% per year on the unpaid principal until it is paid"
+               % (_small(c.free), c.free, c.instrument, _rate(c.rate))] if c.free else
+              ["interest accrues on the full %s from the date the %s is recorded, whether or not advanced" % (usd(c.principal), c.instrument)]) + \
+        (["the minimum interest is %s" % usd(c.min_interest)] if c.min_months else []) + \
+        (["%s personally guarantees the whole loan" % c.guarantor] if c.owner_kind == S.LLC else [])
+    lettered = ["(%s) %s: ______" % ("abc"[n], p) for n, p in enumerate(points)]
+    initials = (" The notary is also to confirm that the Borrower understands each of the following, and the Borrower initials each point: %s."
+                % ("; ".join(lettered[:-1]) + ("; and " if len(lettered) > 1 else "") + lettered[-1])) if lettered else ""
+    recheck = (" Lender has re-verified on %s, no earlier than the day before closing, that %s is active." % (c.sx["lic_site"], c.lic_no)) if c.sx.get("lic_site") else ""
     return [Title("LENDER CLOSING INSTRUCTIONS", "%s to %s · %s" % (LENDER, c.title_co, c.closing_s)),
             P("Lender's name must appear in every document, in the commitment and on the policy as \"%s\", a New York corporation. Any other spelling, abbreviation or entity form is to be corrected before "
               "closing." % LENDER, lead="Please note:"),
             Terms([["Lender", "%s, %s" % (LENDER_FULL, LENDER_ADDR)], ["Settlement agent", c.title_co], ["Loan number", c.loan_no], ["Borrower", "%s, %s" % (c.borrower_full, c.borrower_addr)],
                    ["Guarantor", ("%s, individually" % c.guarantor) if c.owner_kind == S.LLC else ""], ["Property", c.property_line], ["Note principal", usd(c.principal)],
-                   ["Interest", c.terms_short.replace("this Security Instrument", "the " + c.instrument)], ["Loan fee", "%s points = %s, earned in full at closing" % (_rate(c.points), usd(c.fee))],
+                   ["Interest", c.terms_short.replace("this Security Instrument", "the " + c.instrument)], ["Loan fee", c.fee_line],
                    ["Note date / maturity", "%s / earlier of sale or %s" % (c.closing_s, c.maturity_s)],
                    ["Lien position", ("Second lien, behind %s only." % " and ".join(l["holder"] for l in c.liens_staying)) if c.second else "First lien. No other lien may remain."],
                    ["Trustee", "" if c.is_mortgage else c.trustee]]),
@@ -984,19 +1321,23 @@ def instructions(c: Ctx, docs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                "Taxes, water and municipal charges are paid or collected on the settlement statement. There is no tax sale and no tax-sale certificate outstanding.",
                ("Payoff letters good through the closing date are in the file for: %s. Each is paid in full and released." % ", ".join(l["holder"] for l in c.liens_paid)) if c.liens_paid else "",
                ("The senior lien of %s remains. Its current statement is in the file and it is not in default." % " and ".join(l["holder"] for l in c.liens_staying)) if c.second else "",
-               "Lender has confirmed in writing that it holds the signed scope, the insurance, the contractor's licence and insurance, and that no work has begun and no materials have been delivered."]),
+               "Lender has confirmed in writing that it holds the signed scope, the insurance, the contractor's licence and insurance, and that no work has begun and no materials have been delivered." + recheck]),
             H("2. DOCUMENTS TO BE SIGNED"),
-            L(["%s: %s" % (d["title"], d["signers"]) for d in signed]),
+            L([line(d) for d in signed]),
             P("Use only the execution versions sent by Lender. The Note%s are signed in wet ink; the originals go to Lender's custodian and are not recorded." % (" and the Guaranty" if c.owner_kind == S.LLC else "")),
             H("3. SIGNING REQUIREMENTS"),
             L(["Every signer must sign personally. No power of attorney may be used for the Note%s." % (", the %s or the Guaranty" % c.instrument if c.owner_kind == S.LLC else " or the %s" % c.instrument),
-               "The notary is to confirm before signing that the Borrower has read, or had read to him or her, the Note and the %s, and understands the principal amount of %s, the interest, the loan fee "
-               "of %s, and that the whole amount is due at the sale or at maturity." % (c.instrument, usd(c.principal), usd(c.fee)),
+               "The notary is to confirm before signing that the Borrower has read, or had read to him or her, the Note and the %s, and understands the principal amount of %s, the interest%s, "
+               "and that the whole amount is due at the sale or at maturity.%s" % (c.instrument, usd(c.principal), (", the loan fee of %s" % usd(c.fee)) if c.fee else "", initials),
                "The Borrower must be given a copy of every document signed.",
                "The Social Security number, date of birth and government-issued photo identification of every signer%s go directly to Lender's attorney. They are not retained in the settlement file "
                "and are not sent to Lender by email." % (" and of the guarantor" if c.owner_kind == S.LLC else "")]),
             H("4. DISBURSEMENT"),
-            L(["No loan proceeds are to be paid to the Borrower. The final settlement statement must show $0.00 proceeds to the Borrower.",
+            # The title company once prepared this file for the amount RKB funds, with a lender fee charged to
+            # the Borrower (21st St, 24 Nov 2026). The statement follows the Note, and the Borrower brings nothing.
+            L(["The loan amount on the settlement statement, in the title commitment and on the policy is the Note principal of %s. Recordation tax is collected on that amount." % usd(c.principal),
+               "No loan proceeds are to be paid to the Borrower. The final settlement statement must show $0.00 proceeds to the Borrower.",
+               "" if c.fee else "No lender loan fee, origination fee or points are to appear on the settlement statement, and nothing is due from the Borrower at closing: the closing costs are paid from Lender's wire.",
                "Lender funds through settlement only the closing costs%s shown on the final settlement statement approved by Lender in writing. Provide the final statement at least one business day before "
                "closing." % (" and payoffs" if c.liens_paid else ""),
                "Lender retains and disburses the renovation funds itself, directly, after closing. Confirm in writing that you will act on no instruction from the Borrower, %s or the Contractor to release "
@@ -1015,7 +1356,7 @@ def instructions(c: Ctx, docs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                "Send the recorded %s and the final loan policy, with the construction-loan endorsement, to the custodian when available." % c.instrument]),
             P("Please confirm receipt and acceptance of these instructions in writing before closing. Any condition in these instructions may be waived only by Lender in writing. If any instruction here "
               "conflicts with the title commitment or with any other instruction you hold, do not close: contact Lender first."),
-            _lender_sign(LENDER.upper()), Sign("ACCEPTED: %s" % c.title_co.upper(), ["By: ______________________________", "Printed name: ______________________", "Date: ______________"])]
+            _lender_sign(), Sign("ACCEPTED: %s" % c.title_co.upper(), ["By: ______________________________", "Printed name: ______________________", "Title: ______________________", "Date: ______________"])]
 
 
 # ------------------------------------------------------------------ the extra papers some deals need
@@ -1081,19 +1422,28 @@ def build(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
              ("acknowledgment", "Acknowledgment of payment terms and listing covenants", "Owner and ROI Blocks", acknowledgment, False),
              ("draw_agreement", "Construction draw agreement with Schedule 1", "Owner, ROI Blocks, contractor and RKB", draw_agreement, False),
              ("amendment", "Amendment to ROI Blocks customer agreement", "Owner and ROI Blocks; RKB consents", amendment, False),
-             ("assignment", "Assignment of contract price, release and no-lien covenant", "ROI Blocks and the contractor, notarized; RKB accepts. Signed before the %s is released for recording" % c.instrument.lower(), assignment, False)]
+             ("assignment", "Assignment of contract receivable, release and lien covenant",
+              "ROI Blocks and Contractor%s, notarized; Owner acknowledges; RKB accepts. Signed before the %s is released for recording." % ((" (%s)" % c.contractor_person) if c.contractor_person else "", c.instrument),
+              assignment, False)]
     if c.second:
         plan.append(("senior_authorization", "Authorization to the first mortgage lender", "Owner", senior_authorization, False))
     if c.state == "FL":
         plan.append(("notice_of_commencement", "Notice of commencement", "Owner, sworn. Recorded after the mortgage", notice_of_commencement, False))
     out: List[Dict[str, Any]] = []
+
+    def made(key: str, title: str, signers: str, cc: Ctx, blocks: List[Dict[str, Any]], early: bool = False, audience: Optional[str] = None) -> Dict[str, Any]:
+        d = {"key": key, "title": title, "signers": signers, "early": early, "blocks": blocks, "missing": cc.missing, "for_title": cc.for_title, "basis": basis, "version": 1, "foot": cc.foot(), "state": c.state}
+        if audience:
+            d["audience"] = audience
+        return d
     for key, title, signers, fn, early in plan:
         cc = Ctx(doc)
-        blocks = fn(cc)
-        out.append({"key": key, "title": title, "signers": signers, "early": early, "blocks": blocks, "missing": cc.missing, "basis": basis, "version": 1, "foot": cc.foot(), "state": c.state})
+        out.append(made(key, title, signers, cc, fn(cc), early))
     cc = Ctx(doc)
-    out.append({"key": "instructions", "title": "Lender closing instructions", "signers": "RKB; the title company accepts", "early": False, "blocks": instructions(cc, out), "missing": cc.missing,
-                "basis": basis, "version": 1, "foot": cc.foot(), "state": c.state})
+    out.append(made("instructions", "Lender closing instructions", "RKB; the title company accepts", cc, instructions(cc, out)))
+    # Last, and apart: the draw budget. It is the only paper with the Contractor's cost on it.
+    cc = Ctx(doc)
+    out.append(made("schedule_2", "Schedule 2 - Draw budget", "RKB, ROI Blocks and the contractor only. Not the Borrower", cc, schedule_2(cc), audience=NOT_BORROWER))
     return out
 
 

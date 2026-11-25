@@ -105,6 +105,8 @@ export function DocumentsPage({ f, run, go }: PageProps) {
         <span className="font-semibold">{done} of {docs.length} approved.</span>
         <span className="flex h-2 rounded-full overflow-hidden bg-sunken min-w-[140px] flex-1"><span className="bg-good" style={{ width: `${(100 * done) / docs.length}%` }} /></span>
         <span className="text-[12px] text-muted">{waiting ? `${waiting} needed line${waiting === 1 ? "" : "s"} of the file are still open: only the commitment letter can be approved until the file is complete.` : "Only Rakesh Sir's tick approves a document. A correction, or a change on page 1, takes the tick away."}</span>
+        <a className="inline-flex items-center h-8 px-3 text-xs rounded-lg font-medium bg-elev border border-line hover:bg-sunken" href={uw.zipUrl(f.file_id)}
+          title="Every document as a Word file, in two folders: the closing set, and apart from it the papers that are not for the Borrower or the title company.">Download the whole set (Word)</a>
         {done === docs.length && <Button variant="primary" size="sm" className="h-8" onClick={() => go(6)}>Go to review and sign</Button>}
       </Panel>
       <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,5fr)_minmax(0,8fr)] gap-3 mt-3 items-start">
@@ -115,6 +117,7 @@ export function DocumentsPage({ f, run, go }: PageProps) {
               <tr key={d.key} onClick={() => { setSel(d.key); setDraft(null); }} className={cn("cursor-pointer", cur?.key === d.key ? "bg-accent-soft" : "hover:bg-sunken")}>
                 <td className={cn(td, "text-muted tnum w-8")}>{String(i + 1).padStart(2, "0")}</td>
                 <td className={td}><span className="font-medium">{d.title}</span>{d.edited && <span className="text-faint ml-1.5">Corrected</span>}
+                  {d.audience === "not_borrower" && <span className="block text-[12px] text-muted">Not for the Borrower or the title company</span>}
                   {d.missing.length > 0 && <span className="block text-[12px] text-high">{d.missing.length} value{d.missing.length === 1 ? "" : "s"} still to come from the file</span>}</td>
                 <td className={td}>{d.approved?.at ? <Status tone="done">Approved</Status> : <Status tone="needed">To approve</Status>}</td>
               </tr>))}</tbody>
@@ -136,9 +139,11 @@ export function DocumentsPage({ f, run, go }: PageProps) {
                       Approved by Rakesh Sir</label></>}
               </div>
             </div>
-            {(cur.missing.length > 0 || cur.behind_the_file || cur.approved?.voided_because || draft) && (
+            {(cur.missing.length > 0 || (cur.for_title || []).length > 0 || cur.audience === "not_borrower" || cur.behind_the_file || cur.approved?.voided_because || draft) && (
               <div className="px-3 py-2 border-b border-line text-[12.5px] flex flex-col gap-1">
                 {draft && <span className="text-info">Correcting. Change the wording in the boxes; saving makes a new version and takes the tick away.</span>}
+                {cur.audience === "not_borrower" && <span className="text-muted"><b className="text-fg">Not a borrower document.</b> It states the contractor&apos;s cost. It is signed by RKB, ROI Blocks and the contractor only, and is never sent to the Borrower or the title company.</span>}
+                {(cur.for_title || []).length > 0 && <span className="text-muted"><b className="text-fg">Left for the title company to fill at closing:</b> {(cur.for_title || []).join("; ")}. The set can be approved and sent with these blank; enter them on the remaining-details page when they are known.</span>}
                 {cur.missing.length > 0 && <span className="text-high"><b>Still to come from the file:</b> {cur.missing.join("; ")}. Enter them on the remaining-details page or on the file page and this document fills itself.</span>}
                 {cur.behind_the_file && <span className="text-high">This document was corrected by hand, and the file has changed since. Check its figures, or write it again from the file.</span>}
                 {cur.approved?.voided_because && <span className="text-high">To be approved again: {cur.approved.voided_because}.</span>}

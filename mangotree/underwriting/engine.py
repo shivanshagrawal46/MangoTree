@@ -62,8 +62,29 @@ REVIEW_CHANGE = 0.07         # a verified figure this far from the one the check
 SECOND_MORTGAGE_OK_IF_PAID_OFF = True
 
 DEFAULT_RATE = 18.0
-DEFAULT_POINTS = 2.0
+#: Points charged to the OWNER on top of the note. None, unless a person enters them: RKB's own 2 points
+#: are inside the note and come out of ROI Blocks' margin (COST_POINTS above). On 21st St the papers first
+#: charged the owner 2 points as well, and they had to be taken out of five documents (24 Nov 2026).
+DEFAULT_POINTS = 0.0
 DEFAULT_TERM = 12
+
+#: How interest is charged to the owner. It is chosen on every file, never assumed: on 21st St "interest
+#: from day one" was carried in from a letter when the signed loans before it (Marmon, Lodestone) were six
+#: months interest-free, and every paper had to be redone. key -> (interest-free months, what the screen says)
+INTEREST_PLANS = {"free_6": (6, "Interest-free for 6 months, then interest (the usual terms)"),
+                  "free_3": (3, "Interest-free for 3 months, then interest"),
+                  "free_12": (12, "Interest-free for 12 months"),
+                  "day_one": (0, "Interest from day one")}
+
+
+def interest_plan(facts: Dict[str, Any]) -> Optional[str]:
+    """The plan chosen on the file. A file from before the choice existed says it by its number of
+    interest-free months, when that was entered."""
+    if facts.get("interest") in INTEREST_PLANS:
+        return facts["interest"]
+    if facts.get("interest_free_months") not in (None, ""):
+        return next((k for k, (months, _) in INTEREST_PLANS.items() if months == int(_n(facts["interest_free_months"]))), None)
+    return None
 
 LIEN_CURRENT, LIEN_LATE_30, LIEN_LATE_MORE, LIEN_FORECLOSURE = "current", "late_30", "late_more", "foreclosure"
 LIEN_STATUS_LABEL = {LIEN_CURRENT: "Paid up to date", LIEN_LATE_30: "Up to 30 days late", LIEN_LATE_MORE: "More than 30 days late", LIEN_FORECLOSURE: "In foreclosure"}
@@ -178,7 +199,7 @@ def rule_65(facts: Dict[str, Any], m: Dict[str, Any]) -> Dict[str, Any]:
     rate = _n(facts.get("rate")) or DEFAULT_RATE
     points = _n(facts.get("points")) if facts.get("points") not in (None, "") else DEFAULT_POINTS
     term = int(_n(facts.get("term_months")) or DEFAULT_TERM)
-    free = int(_n(facts.get("interest_free_months")))
+    free = INTEREST_PLANS[facts["interest"]][0] if facts.get("interest") in INTEREST_PLANS else int(_n(facts.get("interest_free_months")))
     # The note and its rate are the homeowner's terms: shown, and checked against the state's
     # limits, but NOT what the 65% counts. The 65% counts the mortgage that stays and RKB's own money.
     exposure = m["staying"] + m["at_risk"]
@@ -434,5 +455,6 @@ def more_missing(facts: Dict[str, Any]) -> List[str]:
     want(f.get("contingency") not in (None, ""), "Contingency (0 if none)")
     want(f.get("measured") in (True, False), "Whether the area has been measured")
     want(_n(f.get("contract_price")) > 0, "Price to the owner (the note)")
+    want(interest_plan(f) is not None, "How interest is charged (interest-free for a time, or from day one)")
     want(f.get("closing_costs") not in (None, ""), "Closing costs, estimated (0 if not known yet)")
     return need

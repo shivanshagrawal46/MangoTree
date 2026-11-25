@@ -47,11 +47,12 @@ def test_amounts_in_words_and_the_loan_number():
 
 
 def test_the_maryland_company_set_is_the_thirteen_documents_of_the_21st_st_package():
-    s, doc = _file()
+    s, doc = _file(minimum_interest_months=6)        # interest from day one with a minimum, as RKB's letter of 19 Nov 2026 had it: written only when entered
     docs = D.build(doc)
     assert [d["key"] for d in docs] == ["commitment_letter", "note", "security", "guaranty", "resolution", "affidavit", "occupancy", "correction", "acknowledgment",
-                                        "draw_agreement", "amendment", "assignment", "instructions"]
+                                        "draw_agreement", "amendment", "assignment", "instructions", "schedule_2"]
     assert [d["key"] for d in docs if d["early"]] == ["commitment_letter"]
+    assert [d["key"] for d in docs if d.get("audience") == D.NOT_BORROWER] == ["schedule_2"]                     # the draw budget is not part of the closing set
     by = _by(docs)
     note = _text(by["note"])
     assert "ONE HUNDRED TWENTY THOUSAND THREE HUNDRED FOUR AND 86/100 DOLLARS ($120,304.86)" in note
@@ -59,7 +60,9 @@ def test_the_maryland_company_set_is_the_thirteen_documents_of_the_21st_st_packa
     sec = _text(by["security"])
     assert "assent to the passage of a decree" in sec and "Real Property Article \\u00a77-102" in sec and "AFFIDAVIT OF CONSIDERATION" in sec
     assert "Brian T. Gallagher" in sec and "First Lien" in sec
-    assert "3 BUSINESS DAYS" in _text(by["amendment"])                                                           # Maryland's lien notice on the contract
+    assert "3 BUSINESS DAYS" not in _text(by["amendment"]) and "rescission period" not in _text(by["amendment"])   # a business loan to a company carries no rescission language
+    s1, person = _file(owner_kind="individual", owner_name="Thelma B. Chapman")
+    assert "3 BUSINESS DAYS" in _text(_by(D.build(person))["amendment"])                                        # Maryland's lien notice on a person's own contract
     assert "RKB Consulting Group, Inc." in _text(by["instructions"]) and "$0.00 proceeds" in _text(by["instructions"])
     assert all("Marmon" in d["basis"] for d in docs)
 
@@ -67,13 +70,17 @@ def test_the_maryland_company_set_is_the_thirteen_documents_of_the_21st_st_packa
 def test_nothing_is_printed_blank_without_being_listed():
     s, doc = _file()
     note = _by(D.build(doc))["note"]
-    assert "closing date" in note["missing"] and "[closing date]" in _text(note)
+    # The closing date is the title company's to give: the blank is printed and listed, apart from what RKB's own file still owes.
+    assert "closing date" in note["for_title"] and "closing date" not in note["missing"] and "[closing date]" in _text(note)
+    assert "tax ID of the property" in note["missing"]
     full = dict(E21, closing_date="2026-12-01", tax_id="12-13-3813-060", borrower_address="510 Archer Street, Baltimore, MD 21230", signer_name="George Parker",
-                guarantor_name="George Parker", contractor_name="Tutt Construction LLC", contractor_licence="MHIC 12345", title_company="Smart Settlements LLC",
-                legal_description="BEING KNOWN AS LOT 060", completion_date="2027-03-01")
+                guarantor_name="George Parker", contractor_name="Tutt Construction LLC", contractor_licence="12345", title_company="Smart Settlements LLC",
+                legal_description="BEING KNOWN AS LOT 060", completion_date="2027-03-01", contract_date="2026-11-18", members="George Parker", deed_date="2026-08-14")
     s2, doc2 = _file(**full)
+    st.fill(doc2, "guarantor", {"guarantor_name": "George Parker", "guarantor_address": "510 Archer Street, Baltimore, MD 21230"}, SHIV)
     docs = D.build(doc2)
-    assert all(d["missing"] == [] for d in docs), [(d["key"], d["missing"]) for d in docs if d["missing"]]
+    assert all(d["missing"] == [] and d["for_title"] == [] for d in docs), [(d["key"], d["missing"], d["for_title"]) for d in docs if d["missing"] or d["for_title"]]
+    assert "March 1, 2027" in _text(_by(docs)["draw_agreement"]) and "2027-03-01" not in _text(_by(docs)["draw_agreement"])   # a date is printed as a paper prints it
     note2 = _text(_by(docs)["note"])
     import re
     assert "December 1, 2026" in note2 and "November 30, 2027" in note2
@@ -153,7 +160,7 @@ def test_documents_are_written_once_the_quick_check_passes_and_follow_the_file()
         st.make_documents(half, WES)
     s, doc = _file()
     st.make_documents(doc, WES)
-    assert doc["gates"]["documents"] == {"total": 13, "approved": 0}
+    assert doc["gates"]["documents"] == {"total": 14, "approved": 0}
     st.approve_document(doc, "commitment_letter", RAKESH)
     assert doc["gates"]["documents"]["approved"] == 1
     st.set_facts(doc, {"contract_price": 121000}, WES)
@@ -236,10 +243,164 @@ def test_no_document_shows_the_builders_cost_or_what_rkb_funds():
     m = doc["assessment"]["money"]
     hidden = [D.usd(x) for x in (m["work"], m["funded"], round(m["work"] * 0.1, 2), m["contingency"], m["roi_at_closing"], m["cash_out"], m["at_risk"]) if x]
     for d in docs:
+        if d.get("audience") == D.NOT_BORROWER:
+            continue
         t = _text(d)
         assert not [h for h in hidden if h in t], d["key"]
         assert "Total funding undertaking" not in t and "limit 65%" not in t
+        # nor the words: the homeowner knows the contract price and nothing of a builder's cost behind it (25 Nov 2026)
+        low = t.lower().replace("builder's risk", "")
+        assert not [w for w in ("builder's cost", "contractor's cost", "cost of the work", "cost of completed work", "cost of the completed work", "contingency", "draw budget", "markup", "margin ")
+                    if w in low.replace("margin allocation", "")], d["key"]
     assert D.usd(m["principal"]) in _text(_by(docs)["commitment_letter"]) and "Contract price" in _text(_by(docs)["draw_agreement"])
+    # The one paper that carries the contractor's cost is Schedule 2: marked, signed without the Borrower, and never listed for the title company.
+    s2 = _text(_by(docs)["schedule_2"])
+    assert "NOT A BORROWER DOCUMENT" in s2 and "$93,047.88, including contingency of $9,304.78" in s2 and "up to $83,743.09" in s2 and "10% = $9,304.79" in s2
+    assert "BORROWER:" not in s2 and "Schedule 2" not in _text(_by(docs)["instructions"]).replace("SCHEDULE 2", "")
+
+
+TUTT = dict(contractor_name="Duwayne Peirce Tutt, trading as Tutt Painting and Remodeling", contractor_licence="111574", licence_holder="sub", signer_name="George Parker",
+            guarantor_name="George Parker", title_company="Smart Settlements LLC", tax_id="12-13-3813-060", borrower_address="510 Archer Street, Baltimore, MD 21230")
+
+
+def test_what_was_corrected_by_hand_on_21st_st_is_written_by_the_generator():
+    """The corrections of 23 and 24 Nov 2026 on 308 E 21st St, each of which the set now carries on its own."""
+    s, doc = _file(**dict(TUTT, contract_date="2026-11-18", completion_date="2027-02-28"))
+    by = _by(D.build(doc))
+    sec = _text(by["security"])
+    assert sec.index("Prepared by: Brian T. Gallagher, Esq.") < sec.index("[Space Above This Line For Recording Data]") < sec.index("DEED OF TRUST")
+    assert "a resident of the State of Maryland, whose address is" in sec and "ATTORNEY CERTIFICATION" in sec and "This instrument was prepared by RKB" not in sec
+    assert sec.count("I HEREBY CERTIFY that on this") == 2 and "under the power of sale or decree" in sec          # the instrument and its rider, in Maryland's full form
+    assert "Lender may negotiate and settle the claim" in sec and "the Applicable Law requirement satisfies the requirement here" in sec
+    assert "BEING the same property conveyed to 510 A Holdings LLC by deed dated [deed date]" in sec and "Liber [__], Folio [__]" in sec
+    assert "[Legal description to be inserted by Smart Settlements LLC from the title commitment]" in sec
+    am = _text(by["amendment"])
+    assert "dated November 18, 2026 (the" in am and "Sections 7.2 and 7.3 of the Agreement are deleted in their entirety" in am and "including Section 10.10 of the Agreement" in am
+    assert "Maryland Home Improvement Commission licence No. 111574" in am and "under all required Baltimore City permits" in am
+    for key in ("amendment", "assignment", "draw_agreement", "commitment_letter"):
+        t = _text(by[key])
+        assert "Margin Allocation and Payoff Direction Agreement" in t and "separate agreement" not in t, key
+    a = _text(by["assignment"])
+    assert by["assignment"]["title"] == "Assignment of contract receivable, release and lien covenant" and "9-113" not in a and "subordinate to Assignee's Deed of Trust" in a
+    assert "CONTRACTOR: DUWAYNE PEIRCE TUTT, t/a Tutt Painting and Remodeling" in a and "Duwayne Peirce Tutt, individually" in a      # he signs as a person, not for a company
+    assert "personally appeared Duwayne Peirce Tutt, known to me" in a and "ACKNOWLEDGED BY OWNER: 510 A HOLDINGS LLC" in a
+    dr = _text(by["draw_agreement"])
+    assert "MHIC licence No. 111574" in dr and "February 28, 2027" in dr and "and by Borrower" not in dr
+    # the contractor's priced scope, signed by him alone, goes with Schedule 2; the paper the Borrower signs points to ROI Blocks' proposal
+    assert "The Work is the work described in ROI Blocks' proposal under the Customer Agreement" in dr and "scope of work must be signed" not in dr
+    assert "[The attached scope of work must be signed by Duwayne Peirce Tutt before closing.]" in _text(by["schedule_2"])
+    ins = _text(by["instructions"])
+    assert "Attorney Certification signed by Brian T. Gallagher, Esq.; Affidavit of Consideration signed by Lender." in ins
+    assert "(a) interest accrues on the full $120,304.86 from the date the Deed of Trust is recorded, whether or not advanced: ______; and (b) George Parker personally guarantees the whole loan: ______." in ins
+    assert "minimum interest" not in ins.lower() and "inimum interest" not in _text(by["note"])                       # no minimum interest unless a person entered one
+    assert "re-verified on the Maryland Department of Labor site, no earlier than the day before closing, that MHIC licence No. 111574 is active" in ins
+    cl = _text(by["commitment_letter"])
+    assert "Duwayne Peirce Tutt, t/a Tutt Painting and Remodeling (MHIC No. 111574)" in cl and "As-renovated value used by Lender" in cl
+    for d in by.values():
+        assert "RKB CONSULTING GROUP, INC.: RKB CONSULTING GROUP, INC." not in _text(d), d["key"]                  # the lender's name was printed twice
+    assert "any member, manager or affiliate of Borrower" in _text(by["affidavit"])
+    assert "No person has lived at the Property since Borrower acquired it on [date of Borrower's deed]." in _text(by["occupancy"])
+    g = _text(by["guaranty"])
+    assert "Guarantor's address" in g and "8. Notices." in g
+    # the licence's expiry date, once it is on the licence line, is a condition of the later draws
+    st.fill(doc, "licence", {"expires_on": "2027-06-04"}, SHIV)
+    assert "Contractor's licence expires June 4, 2027." in _text(_by(D.build(doc))["draw_agreement"])
+
+
+def test_a_loan_with_no_points_charges_the_borrower_no_fee_anywhere():
+    """21st St, 24 Nov 2026: RKB's 2 points are inside the Note (they come out of ROI Blocks' margin), so no paper
+    charges the Borrower a loan fee and the title company is told to show none."""
+    s, doc = _file(**dict(TUTT, points=0, deed_date="2026-05-11", deed_reference="Liber 29133, Folio 436"))
+    by = _by(D.build(doc))
+    for d in by.values():
+        t = _text(d)
+        assert "$2,406.10" not in t and "earned in full at closing" not in t and "the loan fee" not in t, d["key"]
+    assert "No loan fee, origination fee or points are payable by Borrower under this Note." in _text(by["note"])
+    assert "None. No loan fee, origination fee or points are payable by Borrower." in _text(by["commitment_letter"])
+    ins = _text(by["instructions"])
+    assert "is the Note principal of $120,304.86. Recordation tax is collected on that amount." in ins
+    assert "No lender loan fee, origination fee or points are to appear on the settlement statement, and nothing is due from the Borrower at closing" in ins
+    assert "by deed dated May 11, 2026 and recorded among the Land Records of Baltimore City, Maryland in Liber 29133, Folio 436." in _text(by["security"])
+    s, doc = _file(**TUTT)                                                       # with points on the file the fee is stated as before
+    assert "2 points = $2,406.10, earned in full at closing" in _text(_by(D.build(doc))["commitment_letter"])
+
+
+def test_the_terms_as_they_were_finally_sent_for_21st_st():
+    """Six months interest-free and then 18%, as the signed Marmon note; no fee to the owner; the signer's title as the title company has it."""
+    s, doc = _file(**dict(TUTT, interest="free_6", minimum_interest_months=6, points=0, members="George Parker, III", signer_name="George Parker, III"))
+    assert doc["facts"]["interest_free_months"] == 6 and doc["facts"]["minimum_interest_months"] == 0 and doc["assessment"]["rule_65"]["points"] == 0
+    by = _by(D.build(doc))
+    note = _text(by["note"])
+    assert "No interest accrues for the six (6) consecutive calendar months beginning on the date the Deed of Trust securing this Note is recorded" in note
+    assert "If the Property is sold and this Note is paid in full during the Interest-Free Period, no interest is due." in note
+    assert "No loan fee, origination fee or points are payable by Borrower under this Note." in note
+    for d in by.values():
+        t = _text(d)
+        assert "inimum interest" not in t and "There is no interest-free period" not in t and "earned in full at closing" not in t, d["key"]
+    assert "(a) no interest accrues for the first six (6) months after the Deed of Trust is recorded, and after that interest accrues at 18% per year on the unpaid principal until it is paid: ______; and (b) George Parker personally guarantees the whole loan: ______." in _text(by["instructions"])
+    sec = _text(by["security"])
+    assert "George Parker, III, who acknowledged himself/herself to be the Sole Member of 510 A Holdings LLC" in sec and "Managing Member" not in sec
+    s, doc = _file(**dict(TUTT, signer_title="Authorized Member", points=0))
+    assert "Authorized Member" in _text(_by(D.build(doc))["security"])
+    # the title company's papers are checked against the note, not against what RKB funds
+    k = {i["key"]: i for i in doc["items"]}
+    assert any("$120,304.86" in c and "not the smaller amount RKB funds" in c for c in k["commitment"]["checks"])
+    assert any("The loan amount shown is the note amount, $120,304.86" == c for c in k["settlement"]["checks"])
+    assert any("No lender loan fee" in c for c in k["settlement"]["checks"]) and any("Nothing is due from the borrower" in c for c in k["settlement"]["checks"])
+
+
+def test_every_member_of_the_company_signs_the_resolution_before_a_notary():
+    s, doc = _file(**TUTT)
+    r = _by(D.build(doc))["resolution"]
+    assert "member names" in r["missing"] and "The undersigned, [member names], being all of the members of" in _text(r)
+    s, doc = _file(**dict(TUTT, members="George Parker; Ann Parker"))
+    r = _by(D.build(doc))["resolution"]
+    t = _text(r)
+    assert r["missing"] == [] and "The undersigned, George Parker and Ann Parker, being all of the members of" in t
+    assert t.count("as a member of 510 A Holdings LLC") == 2 and "Printed name: Ann Parker" in t
+    s, doc = _file(**dict(TUTT, members="George Parker"))
+    t = _text(_by(D.build(doc))["resolution"])
+    assert "being the sole member of" in t and "SOLE MEMBER" in t and "all of the members" not in t
+
+
+def test_the_commitment_says_what_came_in_and_what_is_still_needed():
+    s, doc = _file(**dict(TUTT, contract_date="2026-11-18"))
+    items = {i["key"]: i for i in doc["items"]}
+    assert any("Signed by Duwayne Peirce Tutt personally" in c for c in items["scope"]["checks"]) and not any("owner" in c for c in items["scope"]["checks"])   # the contractor alone signs the scope
+    assert not any("right to cancel" in c for c in items["contract"]["checks"])
+    cert = {"sha256": "a" * 64, "filename": "Tutt COI.pdf", "uploaded_at": "2026-11-23T16:28:00+00:00"}
+    st.add_file(doc, "liability", dict(cert), SHIV)
+    reading = {"what_it_is": "certificate", "right_paper": True, "passed": False, "checks": [
+        {"n": n, "check": c, "result": "met" if n in (1, 4) else "not_met", "quote": "", "note": "" if n in (1, 4) else ("RKB is the certificate holder only. Name it as additional insured." if n == 2 else "No property is named")}
+        for n, c in enumerate(items["liability"]["checks"], start=1)]}
+    st.add_reading(doc, "liability", "a" * 64, reading)
+    st.add_file(doc, "budget", {"sha256": "b" * 64, "filename": "proposal.xlsx", "uploaded_at": "2026-11-23T16:28:00+00:00"}, SHIV)
+    st.add_reading(doc, "budget", "b" * 64, {"what_it_is": "proposal", "right_paper": True, "passed": False, "checks": [
+        {"n": 1, "check": items["budget"]["checks"][0], "result": "not_met", "quote": "", "note": "Contingency carries a 25% markup on the builder's cost of $9,304.78."}]})
+    t = _text(_by(D.build(doc))["commitment_letter"])
+    assert "Received November 23, 2026. Still needed: RKB is the certificate holder only. Name it as additional insured. No property is named." in t
+    assert "Received: Customer Agreement signed by George Parker on November 18, 2026, contract price $120,304.86. Still needed: the Amendment to Customer Agreement" in t
+    assert "markup" not in t and "$9,304.78" not in t and "Manju Sir" not in t and '"lead": "From RKB"}' not in t  # nothing of the cost, and no step of RKB's own, in a letter the Borrower signs
+    assert "Workers' compensation" in t                                                                             # asked for before closing since 24 Nov 2026
+
+
+def test_rkb_can_allow_a_line_after_closing_as_an_exception():
+    s, doc = _file(**TUTT)
+    st.make_documents(doc, WES)
+    assert "measurement" in [w["key"] for w in doc["gates"]["waiting_file"]]
+    with pytest.raises(st.Refused):
+        st.defer(doc, "commitment", SHIV)                                       # the title commitment is what the lien stands on
+    with pytest.raises(st.Refused):
+        st.defer(doc, "insurance", SHIV)
+    st.defer(doc, "measurement", SHIV, note="Rakesh Sir, 24 Nov")
+    g = doc["gates"]
+    assert "measurement" not in [w["key"] for w in g["waiting_file"]] and "measurement" in [w["key"] for w in g["waiting_after"]]
+    assert [w["key"] for w in g["allowed_after_closing"]] == ["measurement"]
+    t = _text(st.document_of(doc, "commitment_letter"))
+    assert "3.7 Signed measurement." in t and "As an exception for this loan" in t and "ROI Blocks LLC shall deliver it to Lender after closing." in t
+    assert "Signed measurement. Signed measurement with a sketch" not in t      # it is no longer among the conditions
+    st.defer(doc, "measurement", SHIV, undo=True)
+    assert "measurement" in [w["key"] for w in doc["gates"]["waiting_file"]] and "3.7" not in _text(st.document_of(doc, "commitment_letter"))
 
 
 def test_every_document_becomes_a_word_file():

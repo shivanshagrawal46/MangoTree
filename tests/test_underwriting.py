@@ -258,7 +258,8 @@ def test_every_paper_names_the_lender_exactly():
     assert any("RKB Consulting Group, Inc." in c for c in k["commitment"]["checks"])
     assert any("$0.00" in c for c in k["settlement"]["checks"])
     assert any("24 Oak Lane, Roslyn Heights, NY 11577" in c for c in k["insurance"]["checks"])
-    assert any("7.2 and 7.3" in c for c in k["contract"]["checks"])
+    # ROI Blocks' lien and arbitration clauses are deleted by the Amendment at closing; the line checks that the Amendment names the right sections
+    assert any("7.2" in c and "7.3" in c and "10.10" in c for c in k["contract"]["checks"])
 
 
 def test_compulsory_and_optional_lines():
@@ -293,7 +294,8 @@ def test_page_one_asks_only_for_the_builders_cost_and_the_mortgage_and_the_rest_
     # what has not been asked yet is not a finding: nobody is sent to look at the budget for it
     assert a["budget"]["pending"] == ["whether the area has been measured", "the contingency"] and not a["budget"]["looks"] and not a["person_checks"]
     assert E.more_missing(two) == ["Who owns the house", "Owner's name as on the deed", "Whether the owner lives in the house", "Contingency (0 if none)",
-                                   "Whether the area has been measured", "Price to the owner (the note)", "Closing costs, estimated (0 if not known yet)"]
+                                   "Whether the area has been measured", "Price to the owner (the note)",
+                                   "How interest is charged (interest-free for a time, or from day one)", "Closing costs, estimated (0 if not known yet)"]
     assert E.more_missing(E21) == []
     s = st.UwStore(FakeMongo())
     doc = st.create(s, two, WES)
@@ -301,7 +303,11 @@ def test_page_one_asks_only_for_the_builders_cost_and_the_mortgage_and_the_rest_
     with pytest.raises(st.Refused, match="remaining details"):
         st.make_documents(doc, RAKESH)
     # the remaining details come in: the check is run again on everything, and the file opens
+    # how interest is charged is chosen on every file, never assumed (21st St, 25 Nov 2026)
     doc = st.set_facts(doc, {k: E21[k] for k in ("owner_kind", "owner_name", "owner_lives_there", "contingency", "measured", "contract_price", "closing_costs")}, WES)
+    assert doc["gates"]["step"] == 3 and doc["gates"]["more_missing"] == ["How interest is charged (interest-free for a time, or from day one)"]
+    doc = st.set_facts(doc, {"interest": "free_6"}, WES)
+    assert doc["facts"]["interest_free_months"] == 6 and doc["assessment"]["rule_65"]["interest_free_months"] == 6 and doc["assessment"]["rule_65"]["points"] == 0
     assert doc["gates"]["step"] == 4 and doc["gates"]["more_missing"] == [] and doc["assessment"]["money"]["commission"]["known"]
     # an answer on that page can still stop the deal: the owner living in the house
     stopped = st.set_facts(doc, {"owner_kind": "individual", "owner_lives_there": True}, WES)
@@ -444,6 +450,34 @@ def test_the_reading_passes_a_line_or_sends_it_back_with_the_reason():
     lic = st.item_of(doc, "licence")["checks"]
     st.add_reading(doc, "licence", "lic", reader.tidy({"right_paper": True, "checks": [{"n": i, "result": "met", "quote": "q", "note": ""} for i in range(1, len(lic) + 1)]}, lic))
     assert st.item_of(doc, "licence")["status"] == C.RECEIVED
+
+
+def test_the_work_may_be_done_under_a_subcontractors_licence_where_roi_blocks_holds_none():
+    s, doc = _file(dict(E21, contractor_name="Tutt Construction LLC"))
+    lic = st.item_of(doc, "licence")
+    assert lic["values"]["legal_name"] == "Tutt Construction LLC" and "Tutt Construction LLC" in lic["checks"][1]     # not asked yet: the contractor named in the file
+    step = doc["gates"]["step"]
+    st.set_facts(doc, {"licence_holder": "sub", "contractor_name": "Duwayne Peirce Tutt, trading as Tutt Painting and Remodeling", "contractor_licence": "111574"}, SHIV)
+    lic = st.item_of(doc, "licence")
+    assert lic["label"].startswith("Subcontractor's licence") and "ROI Blocks holds no licence" in lic["why"] and lic["hard"]
+    assert lic["checks"] == ["Licence is active and not expired",
+                             "The licence is in the name of the subcontractor: Duwayne Peirce Tutt, trading as Tutt Painting and Remodeling (as the licensee or its trade name)"]
+    assert lic["values"] == {"legal_name": "Duwayne Peirce Tutt, trading as Tutt Painting and Remodeling", "licence_number": "111574"}      # the line follows the fact
+    assert any("subcontractor whose licence" in c and "Duwayne Peirce Tutt" in c for c in st.item_of(doc, "contract")["checks"])
+    assert doc["gates"]["step"] == step and "Whose licence the work is done under changed from blank to A subcontractor's licence" in [e["what"] for e in doc["events"]]
+    # a paper that was sent back and is then read as passing waits for RKB again; RKB still confirms the line
+    st.add_file(doc, "licence", {"sha256": "lic", "filename": "MHIC license.pdf"}, WES)
+    C.set_status(st.item_of(doc, "licence"), C.REJECTED, by="system", reason="The name on the licence is the name on the contract: no contract given")
+    assert st.item_of(doc, "licence")["status"] == C.REJECTED
+    st.add_reading(doc, "licence", "lic", reader.tidy({"right_paper": True, "checks": [{"n": 1, "result": "met", "quote": "q", "note": ""}, {"n": 2, "result": "met", "quote": "q", "note": ""}]}, lic["checks"]))
+    assert st.item_of(doc, "licence")["status"] == C.RECEIVED and not st.item_of(doc, "licence")["reason"]
+    # ROI Blocks' own licence, and a name typed on the line by a person is not overwritten
+    st.fill(doc, "licence", {"legal_name": "Typed by hand"}, SHIV)
+    st.set_facts(doc, {"licence_holder": "roi", "contractor_name": "ROI Blocks LLC"}, SHIV)
+    own = st.item_of(doc, "licence")
+    assert own["label"].startswith("ROI Blocks' own licence") and own["checks"][1] == "The licence is in the name of ROI Blocks, the name on the contract" and own["values"]["legal_name"] == "Typed by hand"
+    assert not any("subcontractor" in c for c in st.item_of(doc, "contract")["checks"])
+    assert st.clean_facts({"licence_holder": ""}) == {"licence_holder": None}
 
 
 def test_the_reader_never_returns_an_identity_number():

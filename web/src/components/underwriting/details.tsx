@@ -57,46 +57,65 @@ function first(cfg: UwConfig | undefined, f: Facts): Section[] {
   ];
 }
 
+const LICENCE_HOLDERS = [{ key: "roi", label: "ROI Blocks' own licence" }, { key: "sub", label: "A subcontractor's licence" }];
+/* The same four choices the server gives (shown until its answer arrives). */
+const INTEREST_PLANS = [{ key: "free_6", label: "Interest-free for 6 months, then interest (the usual terms)" }, { key: "free_3", label: "Interest-free for 3 months, then interest" },
+  { key: "free_12", label: "Interest-free for 12 months" }, { key: "day_one", label: "Interest from day one" }];
+
 /* Page 3: everything page 1 left out. */
 function rest(cfg: UwConfig | undefined, f: Facts): Section[] {
   const person = f.owner_kind === "individual" || !f.owner_kind;
+  const sub = f.licence_holder === "sub";
   return [
     { key: "owner", title: "The owner", fields: [
       { key: "owner_kind", label: "Who owns the house", kind: "select", required: true, options: cfg?.owner_kinds },
       { key: "owner_name", label: "Owner's name as on the deed", kind: "text", required: true },
       { key: "owner_lives_there", label: "Does the owner live in the house?", kind: "yesno", required: true },
       { key: "borrower_address", label: "Owner's mailing address (not the property)", kind: "text" },
-      { key: "signer_name", label: "Who signs for the owner", kind: "text", show: () => !person },
+      { key: "signer_name", label: "Who signs for the owner", kind: "text", hint: "the full legal name, as the title company has it", show: () => !person },
+      /* Our papers and the title company's must give the signer the same title (21st St: "Managing Member" against "Sole Member"). */
+      { key: "signer_title", label: "The signer's title", kind: "text", hint: "e.g. Sole Member, Managing Member. Blank: Sole Member when the company has one member", show: () => !person },
       { key: "guarantor_name", label: "Personal guarantor", kind: "text", show: () => f.owner_kind === "llc" },
+      /* Every member signs the resolution before a notary; the names are printed in it (21st St, 25 Nov 2026). */
+      { key: "members", label: "Every member of the company", kind: "text", hint: "as in the operating agreement; separate names with ;", show: () => f.owner_kind === "llc" },
     ] },
     { key: "work", title: "The work", fields: [
       { key: "scope", label: "Scope", kind: "select", required: true, options: cfg?.scopes },
       { key: "contingency", label: "Contingency", kind: "money", required: true, hint: "0 if none" },
       { key: "measured", label: "Has the area been measured, with a sketch?", kind: "yesno", required: true },
-      { key: "contractor_name", label: "Contractor's exact legal name", kind: "text" },
-      { key: "contractor_licence", label: "Contractor's licence number", kind: "text" },
+      /* ROI Blocks uses its own licence where it holds one; where it holds none the work is done under a subcontractor's (2026-11-23). */
+      { key: "licence_holder", label: "Whose licence is the work done under?", kind: "select", options: LICENCE_HOLDERS },
+      { key: "contractor_name", label: sub ? "Subcontractor's exact legal name, as on the licence" : "Contractor's exact legal name", kind: "text" },
+      { key: "contractor_licence", label: sub ? "Subcontractor's licence number" : "Contractor's licence number", kind: "text" },
       { key: "completion_date", label: "Work complete by", kind: "date" },
     ] },
     { key: "loan", title: "The loan", fields: [
       { key: "contract_price", label: "Price to the owner (the note)", kind: "money", required: true },
+      /* The Amendment names ROI Blocks' agreement by its date. */
+      { key: "contract_date", label: "Customer agreement signed on", kind: "date" },
       { key: "closing_costs", label: "Closing costs, estimated", kind: "money", required: true, hint: "0 if not known yet" },
       { key: "cash_to_owner", label: "Cash to the owner", kind: "money" },
+      /* Chosen on every file, never assumed: interest-free for a time (the usual terms), or interest from day one. */
+      { key: "interest", label: "How is interest charged to the owner?", kind: "select", required: true, options: cfg?.interest_plans ?? INTEREST_PLANS },
       { key: "rate", label: "Rate", kind: "percent", unit: "% a year" },
-      { key: "points", label: "Points", kind: "percent" },
+      { key: "minimum_interest_months", label: "Minimum interest", kind: "number", unit: "months", hint: "0 if none", show: () => f.interest === "day_one" },
+      /* RKB's own 2 points are inside the note and come out of ROI Blocks' margin: the owner is charged a fee only if one is entered here. */
+      { key: "points", label: "Loan fee charged to the owner, on top of the note", kind: "percent", unit: " points", hint: "0 = none" },
       { key: "term_months", label: "Term", kind: "number", unit: "months" },
-      { key: "interest_free_months", label: "Interest-free months", kind: "number", unit: "months" },
     ] },
     { key: "closing", title: "The closing", fields: [
       { key: "title_company", label: "Title company", kind: "text" },
       { key: "closing_date", label: "Closing date", kind: "date" },
       { key: "tax_id", label: "Tax ID of the property", kind: "text" },
       { key: "legal_description", label: "Legal description (from the title commitment)", kind: "long" },
+      { key: "deed_date", label: "Date of the owner's deed (from the title commitment)", kind: "date" },
+      { key: "deed_reference", label: "Where the owner's deed is recorded", kind: "text", hint: "as the title commitment gives it, e.g. Liber 29133, Folio 436" },
     ] },
   ];
 }
 
 /* What the loan runs on when nothing is entered. These count as answered. */
-const DEFAULTS: Partial<Record<keyof Facts, string>> = { rate: "18", points: "2", term_months: "12", interest_free_months: "0", cash_to_owner: "0" };
+const DEFAULTS: Partial<Record<keyof Facts, string>> = { rate: "18", points: "0", term_months: "12", cash_to_owner: "0", minimum_interest_months: "0" };
 
 function show(field: F, v: unknown, cfg?: UwConfig): React.ReactNode {
   if (blank(v)) return <span className="text-faint font-normal">{DEFAULTS[field.key] !== undefined ? `${DEFAULTS[field.key]}${field.unit ? (field.kind === "percent" ? "" : " ") + field.unit : ""}` : "Not entered"}</span>;

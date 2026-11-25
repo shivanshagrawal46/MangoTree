@@ -23,6 +23,7 @@ file records only who confirmed it and when.
 """
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -57,14 +58,26 @@ NAMES = {
     "arv": "ARV file", "trustee": "Virginia trustee", "budget_look": "Manju Sir's answer on the budget", "exception": "Rakesh Sir's decision",
 }
 
-#: Asked for because they help; they never hold the file.
-OPTIONAL = ("photos", "comps", "related", "listing", "workers_comp", "endorsements", "w9")
+#: Asked for because they help; they never hold the file. Workers' compensation was here until
+#: 25 Nov 2026: RKB's letter of 24 Nov on 21st St asks for it (or the written exemption) before closing.
+OPTIONAL = ("photos", "comps", "related", "listing", "endorsements", "w9")
+
+#: A line RKB may allow to come in after closing, on its password, as an exception for one loan
+#: (on 21st St, the signed measurement). Never a line the foreclosure file needs, and never one that
+#: is about who may sign or whether the lien is good.
+MAY_FOLLOW = ("measurement", "photos", "comps", "schedule", "related", "listing", "workers_comp", "w9", "endorsements")
+
+_TRADING = re.compile(r",?\s+(?:trading as|t/a|d/b/a|dba|doing business as)\s+", re.I)
 
 #: Items only a person at RKB may mark done. ROI Blocks compiles the file; RKB verifies it.
 RKB_VERIFIES = ("identity", "recording", "licence", "trustee", "budget_look", "exception", "original_note", "request_for_notice",
                 "notice_of_commencement", "cpl", "guarantor", "owners_all")
 #: Who at RKB answers an item that is one named person's call.
 ONLY = {"budget_look": "manjunath", "exception": "rakesh"}
+
+#: Whose licence the work is done under: ROI Blocks' own, or a subcontractor's where ROI Blocks holds none.
+OWN, SUB = "roi", "sub"
+LICENCE_HOLDERS = {OWN: "ROI Blocks' own licence", SUB: "A subcontractor's licence"}
 
 LENDER_NAME = "RKB Consulting Group, Inc."
 LENDER_CLAUSE = "RKB Consulting Group, Inc., its successors and/or assigns (ISAOA/ATIMA), 24 Oak Lane, Roslyn Heights, NY 11577"
@@ -141,12 +154,26 @@ def build(facts: Dict[str, Any], assessment: Optional[Dict[str, Any]] = None) ->
               checks=["Listing agreement, or a signed letter naming the agent", "The owner agrees to list within 10 business days of completion and to keep it listed"]))
 
     # ------------------------------------------------------------- Wes · ROI Blocks
+    # ROI Blocks' agreement still gives ROI Blocks a lien (7.3), bars other financing (7.2) and sends disputes
+    # to arbitration (10.10). That is not a reason to send it back: the Amendment in the loan set deletes
+    # those sections by number at closing (21st St, 24 Nov 2026). What the reading checks is that the
+    # numbers the Amendment names are the right ones, and that the agreement is signed and dated.
     contract_checks = ["The property address is exactly %s" % address, "The owner named is the owner on the deed",
-                       "No clause gives ROI Blocks a lien or deed of trust, and none bars other financing (old sections 7.2 and 7.3)",
-                       "The dispute clause names %s law and courts" % (st.get("name") or "the property's state"),
+                       "Signed by the owner, with the date of signing",
+                       "Section 7.2 is the clause barring other financing, section 7.3 is ROI Blocks' lien clause, and section 10.10 is the arbitration clause "
+                       "(the Amendment signed at closing deletes them by these numbers)",
                        "The contract price is stated and matches the note amount"]
-    contract_checks += list(st.get("contract_must_have") or [])
-    add(_item("contract", ROI, "Signed customer agreement on the current template", "The note is given for the contract price; the contract must not give anyone else a lien.", hard=True, checks=contract_checks))
+    # Maryland's lien notice and three-day right to cancel are for a person's own home-improvement contract, not for a company's.
+    contract_checks += [x for x in st.get("contract_must_have") or [] if not (owner == S.LLC and "right to cancel" in x)]
+    # Whose licence the work is done under (2026-11-23). ROI Blocks uses its own where it holds one;
+    # where it holds none, the work is done under a subcontractor's (308 E 21st St: Duwayne Tutt's).
+    holder = facts.get("licence_holder")
+    contractor = str(facts.get("contractor_name") or "").strip()
+    if holder == SUB:
+        contract_checks.append("The contract names the subcontractor whose licence the work is done under%s, and the licence number on it is that subcontractor's"
+                               % ((" (%s)" % contractor) if contractor else ""))
+    add(_item("contract", ROI, "Signed customer agreement on the current template",
+              "The note is given for the contract price. The clauses that give ROI Blocks a lien and send disputes to arbitration are deleted by the Amendment signed at closing.", hard=True, checks=contract_checks))
     add(_item("budget", ROI, "Proposal, and the builder's cost line by line", "Draws are measured against the builder's cost, never against the price to the owner.",
               checks=["Every line of the proposal has a cost; no line shows $0 for work the proposal says is included", "Contingency is on its own line with no markup",
                       "Permit fees are a line, or the sheet says who pays them", "The total equals the builder's cost entered in the quick check"]))
@@ -165,15 +192,37 @@ def build(facts: Dict[str, Any], assessment: Optional[Dict[str, Any]] = None) ->
               when=CLOSING, file=False, hard=True, confirm="ROI Blocks and the contractor each confirm, on the day of recording, that no work has been done and nothing delivered."))
 
     # ------------------------------------------------------------- the contractor
-    add(_item("licence", CONTRACTOR, "Exact legal name and licence number: " + register, "An unlicensed contractor's contract may be void, and with it the price our note stands on.", hard=True,
-              fields=[_f("legal_name", "Exact legal name"), _f("licence_number", "Licence number"), _f("checked_on_register", "Looked up on the state register on", "date"), _f("checked_by", "Looked up by")],
-              checks=["Licence is active and not expired", "The name on the licence is the name on the contract"]))
+    unlicensed = "An unlicensed contractor's contract may be void, and with it the price our note stands on."
+    named = (": %s" % contractor) if contractor else " entered on this line"
+    if holder == SUB:
+        lic_label = "Subcontractor's licence the work is done under: exact legal name and licence number (%s)" % register
+        lic_why = "ROI Blocks holds no licence of its own here, so the work is done under the subcontractor's. " + unlicensed
+        lic_name, lic_check = "Subcontractor's exact legal name, as on the licence", "The licence is in the name of the subcontractor%s (as the licensee or its trade name)" % named
+    elif holder == OWN:
+        lic_label, lic_why = "ROI Blocks' own licence: exact legal name and licence number (%s)" % register, unlicensed
+        lic_name, lic_check = "Exact legal name, as on the licence", "The licence is in the name of ROI Blocks, the name on the contract"
+    else:
+        lic_label, lic_why, lic_name = "Exact legal name and licence number: " + register, unlicensed, "Exact legal name"
+        lic_check = ("The licence is in the name of the contractor%s (as the licensee or its trade name)" % named) if contractor else "The name on the licence is the name on the contract"
+    add(_item("licence", CONTRACTOR, lic_label, lic_why, hard=True,
+              # The expiry date and the address are printed in the papers: a licence that runs out before the work
+              # is done stops the draws until it is renewed (Construction Draw Agreement 2.4).
+              fields=[_f("legal_name", lic_name), _f("licence_number", "Licence number"), _f("expires_on", "Licence expires on", "date"), _f("address", "Address on the licence"),
+                      _f("checked_on_register", "Looked up on the state register on", "date"), _f("checked_by", "Looked up by")],
+              checks=["Licence is active and not expired", lic_check]))
     add(_item("liability", CONTRACTOR, "General liability certificate naming RKB", "An injury or damage on site must not land on the lender.",
-              checks=["$1,000,000 each occurrence and $2,000,000 aggregate, or more", "%s is named as additional insured" % LENDER_NAME, "In force through the completion date"]))
+              checks=["$1,000,000 each occurrence and $2,000,000 aggregate, or more",
+                      "%s, ISAOA/ATIMA, is named as additional insured (being the certificate holder is not enough)" % LENDER_NAME,
+                      "The certificate refers to the property, %s" % address, "In force through the completion date"]))
     add(_item("workers_comp", CONTRACTOR, "Workers' compensation, or the state's written exemption", "Required by law where the contractor has employees.",
               checks=["Certificate in force, or the exemption document"]))
-    add(_item("scope", CONTRACTOR, "Scope of work signed by the contractor (Schedule 1)", "The contractor agrees the money finishes the job.", hard=True,
-              checks=["Signed by the contractor and by the owner", "Areas, bedrooms and bathrooms agree with the measurement"]))
+    # The scope carries the contractor's cost, which the owner is not shown: the contractor alone signs it
+    # (24 Nov 2026). A contractor licensed as a person signs in that name, not in a company's.
+    person = _TRADING.split(contractor, maxsplit=1)[0].strip() if len(_TRADING.split(contractor, maxsplit=1)) == 2 else ""
+    add(_item("scope", CONTRACTOR, "Scope of work signed by the contractor",
+              "The contractor agrees the money finishes the job. It carries the contractor's prices, so it goes with Schedule 2 and is never attached to a paper the owner signs.", hard=True,
+              checks=[("Signed by %s personally, in the name on the licence, and not in a company's name" % person) if person else "Signed by the contractor, in the name on the licence",
+                      "Areas, bedrooms and bathrooms agree with the measurement"]))
     add(_item("w9", CONTRACTOR, "Form W-9", "RKB pays the contractor directly.", checks=["Name matches the licence", "Tax number present"]))
     add(_item("no_lien", CONTRACTOR, "No-lien and subordination covenant signed by ROI Blocks and the contractor",
               "Whatever they are owed stands behind RKB's lien. Signed before the %s is released for recording." % instrument.lower(), when=CLOSING, hard=True, foreclosure=True,
@@ -181,9 +230,19 @@ def build(facts: Dict[str, Any], assessment: Optional[Dict[str, Any]] = None) ->
 
     # ------------------------------------------------------------- the title company
     position = "second" if staying else "first"
+    # The title company's papers follow the NOTE. On 21st St they were made for the smaller amount RKB funds
+    # ($99,861.00 against a note of $120,304.86) with a lender fee charged to the owner and $5,027.22 due from
+    # him, because that is what RKB had written to the title company. These checks catch each of those.
+    note = "${:,.2f}".format(a["money"]["principal"])
+    fee_charged = E._n(a["rule_65"].get("points")) > 0
+    signer = str(facts.get("signer_name") or "").strip()
     title_checks = ["Proposed insured reads exactly: %s, its successors and/or assigns" % LENDER_NAME,
-                    "Amount of insurance is at least the note amount", "Our lien is insured in %s position" % position,
+                    "Amount of insurance is the note amount, %s, or more (not the smaller amount RKB funds)" % note,
+                    "The requirement for our %s gives the loan as %s" % (instrument.lower(), note),
+                    "Our lien is insured in %s position" % position,
                     "The owner shown is the person or company signing", "Every requirement in Schedule B-I is listed with who clears it"]
+    if owner != S.INDIVIDUAL:
+        title_checks.append("The signer for the owner%s, and the signer's title, read the same as in the loan documents" % ((" (%s)" % signer) if signer else ""))
     if state == "MD":
         title_checks.append("Ground rent: none, or redeemed and insured as fee simple")
     add(_item("commitment", TITLE, "Title commitment", "It says who owns the house, what is against it, and that our lien can be insured where we expect.", hard=True, foreclosure=True, checks=title_checks))
@@ -198,7 +257,12 @@ def build(facts: Dict[str, Any], assessment: Optional[Dict[str, Any]] = None) ->
         add(_item("foreclosure_status", TITLE, "Written status of the old lender's foreclosure, with any sale date", "RKB must close before a sale date, with time to spare.", hard=True,
                   checks=["From the lender or its foreclosure attorney", "Says whether a sale is set, and when"]))
     add(_item("settlement", TITLE, "Settlement statement for RKB's approval", "No loan money goes to the owner, and every fee is one we agreed.", hard=True,
-              checks=["Lender is %s" % LENDER_NAME, "Cash to the borrower is $0.00", "Recording tax and recording fees are shown", "Every payoff matches its payoff letter"]))
+              checks=["Lender is %s" % LENDER_NAME, "The loan amount shown is the note amount, %s" % note, "Cash to the borrower is $0.00",
+                      ("The lender's loan fee shown is the fee in the note" if fee_charged else "No lender loan fee, origination fee or points are charged to the borrower"),
+                      "Nothing is due from the borrower at closing: the closing costs are paid from RKB's wire",
+                      "Recording tax is worked out on the note amount, and the recording fees are shown",
+                      "The borrower's name, signer and mailing address are those in the file%s" % ((" (%s)" % facts["borrower_address"]) if facts.get("borrower_address") else ""),
+                      "Every payoff matches its payoff letter"]))
     add(_item("cpl", TITLE, "Closing protection letter and the agent's wire instructions", "The insurer stands behind the settlement agent who holds our money.",
               checks=["Closing protection letter addressed to %s" % LENDER_NAME, "Wire instructions on the agent's letterhead"],
               fields=[_f("wire_confirmed_by_phone", "Wire details confirmed by phone with", "text"), _f("wire_confirmed_on", "On", "date")]))
@@ -253,6 +317,7 @@ def build(facts: Dict[str, Any], assessment: Optional[Dict[str, Any]] = None) ->
         extra[l["key"]] = l
         add(item)
     for i in out:
+        i["may_follow"] = i["key"] in MAY_FOLLOW and i["when"] == FILE and not i["foreclosure"]
         i["required"] = bool(extra[i["key"]].get("required", True)) if i["key"] in extra else i["key"] not in OPTIONAL
         if i["key"] in extra:
             i["name"] = extra[i["key"]]["name"]
@@ -271,9 +336,11 @@ def merge(old: List[Dict[str, Any]], new: List[Dict[str, Any]]) -> List[Dict[str
     for item in new:
         prev = by_key.get(item["key"])
         if prev:
-            for k in ("status", "values", "files", "reading", "reason", "history", "updated_at", "updated_by", "confirmed"):
+            for k in ("status", "values", "files", "reading", "reason", "history", "updated_at", "updated_by", "confirmed", "deferred"):
                 if k in prev:
                     item[k] = prev[k]
+        if item.get("deferred") and item["when"] == FILE:
+            item["when"] = AFTER        # allowed to follow the closing: it no longer holds the file, and is chased on the closing page
         out.append(item)
     return out
 
@@ -340,6 +407,6 @@ def gates(items: List[Dict[str, Any]], assessment: Dict[str, Any], *, details_mi
             "ready_to_sign": done[4], "signed": signed, "can_fund": done[5] and not closing_left,
             "waiting_file": names(file_left), "waiting_closing": names(closing_left), "waiting_after": names(after_left),
             "optional_open": names([i for i in items if not i.get("required", True) and i.get("status") not in DONE]),
-            "counts": counts, "confirmed_on_rkbs_word": names(on_word),
+            "counts": counts, "confirmed_on_rkbs_word": names(on_word), "allowed_after_closing": names([i for i in items if i.get("deferred")]),
             "foreclosure_file": {"total": len(kit), "held": len(kit) - len(kit_left), "missing": names(kit_left), "complete": not kit_left},
             "by_party": by_party}

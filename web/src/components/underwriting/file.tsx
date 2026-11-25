@@ -76,6 +76,12 @@ export function LinePanel({ f, item, onClose, run, save }: { f: UwFile; item: It
     const r = await act(uw.confirm(f.file_id, item.key, pw, note || undefined), `${item.name}: confirmed by RKB.`);
     if (r) { setPw(""); setNote(""); }
   };
+  /* An exception for this loan: the line may come in after closing (on 21st St, the signed measurement). Same password, same log. */
+  const later = async () => {
+    if (!pw) { toast.error("Enter RKB's confirmation password."); return; }
+    const r = await act(uw.allowLater(f.file_id, item.key, pw, note || undefined), `${item.name}: allowed after closing. The commitment letter now says so.`);
+    if (r) { setPw(""); setNote(""); }
+  };
   return (
     <Panel className="p-3.5 flex flex-col gap-3 lg:sticky lg:top-3 max-h-[calc(100vh-1.5rem)] overflow-y-auto">
       <div className="flex items-start justify-between gap-2">
@@ -86,6 +92,8 @@ export function LinePanel({ f, item, onClose, run, save }: { f: UwFile; item: It
       {k === "back" && <div className="bg-critical-soft text-critical rounded-lg px-2.5 py-2 text-[12.5px]"><b>Sent back.</b>{" "}
         {rd && rd.right_paper ? `${rd.checks.filter((c) => c.result !== "met").length} of ${rd.checks.length} checks did not pass. Each is marked below with what must change.` : item.reason}</div>}
       {item.confirmed && <div className="text-[12.5px] text-info">Confirmed by {item.confirmed.by_name}{item.confirmed.without_paper ? " without a paper" : item.confirmed.over_a_failed_reading ? " over the system's reading" : ""}{item.confirmed.note ? `: ${item.confirmed.note}` : ""}. Rakesh Sir sees this at review.</div>}
+      {item.deferred && <div className="text-[12.5px] text-info">Allowed after closing by {item.deferred.by_name}, {day(item.deferred.at)}{item.deferred.note ? `: ${item.deferred.note}` : ""}. It does not hold the closing; the commitment letter says so, and Rakesh Sir sees this at review.
+        {f.me.can_confirm && !done && <>{" "}<button type="button" className={linkBtn} disabled={busy} onClick={() => act(uw.beforeClosingAgain(f.file_id, item.key), "A condition of closing again.")}>Make it a condition of closing again</button></>}</div>}
       <div><Lab>What is asked</Lab><div className="mt-0.5">{item.label}</div></div>
       <div><Lab>Why RKB needs it</Lab><div className="mt-0.5">{item.why}</div></div>
       {item.confirm && !done && <div className="text-[12.5px] text-info">{item.confirm}</div>}
@@ -135,7 +143,8 @@ export function LinePanel({ f, item, onClose, run, save }: { f: UwFile; item: It
           {!f.me.confirm_password_set && <span className="text-[12px] text-critical">RKB&apos;s confirmation password has not been set yet.</span>}
           <input className={input} type="password" placeholder="RKB's confirmation password" autoComplete="new-password" value={pw} onChange={(e) => setPw(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") confirm(); }} />
           <input className={input} placeholder="Note: where the paper is held, or why" value={note} onChange={(e) => setNote(e.target.value)} />
-          <div><Button size="sm" className="h-8" disabled={busy} onClick={confirm}>Confirm</Button></div>
+          <div className="flex flex-wrap items-center gap-2"><Button size="sm" className="h-8" disabled={busy} onClick={confirm}>Confirm</Button>
+            {item.may_follow && !item.deferred && <Button size="sm" className="h-8" disabled={busy} onClick={later} title="An exception for this loan: this line may come in after closing. It moves to the closing page, and the commitment letter says so.">Allow after closing</Button>}</div>
         </div>
       )}
       {f.me.can_confirm && done && <button type="button" className={cn(linkBtn, "self-start font-normal text-[12.5px]")} disabled={busy} onClick={() => act(uw.reopen(f.file_id, item.key), "Reopened.")}>Reopen this line</button>}

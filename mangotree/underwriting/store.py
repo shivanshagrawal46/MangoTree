@@ -33,10 +33,15 @@ SIGNER = "rakesh"
 FACT_KEYS = ("address", "state", "county", "arv", "as_is_value", "arv_analysis_id", "sqft_above", "sqft_below", "measured", "beds", "baths", "scope",
              "owner_kind", "owner_name", "owner_lives_there", "anyone_lives_there", "liens", "builder_cost", "contingency", "contract_price",
              "roi_at_closing", "closing_costs", "cash_to_owner", "guaranteed_price", "rate", "points", "term_months", "interest_free_months",
-             "first_six_inside_note", "monthly_holding", "contractor_name", "title_company", "closing_date", "property_id", "has_mortgage",
+             "first_six_inside_note", "monthly_holding", "contractor_name", "licence_holder", "title_company", "closing_date", "property_id", "has_mortgage",
              # what the documents print and no test needs
              "tax_id", "legal_description", "borrower_address", "signer_name", "guarantor_name", "contractor_licence", "loan_number", "minimum_interest_months",
-             "completion_date", "special_conditions")
+             "completion_date", "special_conditions",
+             # what the 21st St set had to be corrected for by hand (25 Nov 2026): the date of ROI Blocks' agreement,
+             # every member of a company, and the date of the deed the owner holds under
+             "contract_date", "members", "deed_date", "deed_reference",
+             # how interest is charged (chosen on every file), and the signer's title as the company's papers give it
+             "interest", "signer_title")
 
 
 class Refused(Exception):
@@ -74,6 +79,17 @@ def clean_facts(raw: Dict[str, Any]) -> Dict[str, Any]:
         out["liens"] = liens
     if out.get("has_mortgage") is False:
         out["liens"] = []           # "no mortgage" clears any lender typed earlier
+    if "licence_holder" in out and out["licence_holder"] not in C.LICENCE_HOLDERS:
+        out["licence_holder"] = None        # "Choose" left as it was
+    if "interest" in out:
+        if out["interest"] in E.INTEREST_PLANS:
+            out["interest_free_months"] = E.INTEREST_PLANS[out["interest"]][0]      # the one number the tests and the papers read
+            if out["interest_free_months"]:
+                out["minimum_interest_months"] = 0                                 # no minimum interest beside an interest-free period
+        else:
+            out.pop("interest")             # "Choose" left as it was
+    elif out.get("interest_free_months") not in (None, ""):
+        out["interest"] = E.interest_plan({"interest_free_months": out["interest_free_months"]})     # the months entered directly: the plan follows
     return out
 
 
@@ -142,6 +158,8 @@ def delete(doc: Dict[str, Any], user: Dict[str, Any]) -> Dict[str, Any]:
 def refresh(doc: Dict[str, Any]) -> Dict[str, Any]:
     """Rebuild everything derived: the assessment, the list, the locks."""
     facts = doc.get("facts") or {}
+    if facts.get("interest") not in E.INTEREST_PLANS and E.interest_plan(facts):
+        facts["interest"] = E.interest_plan(facts)      # a file from before the choice existed: said by its months
     a = E.assess(facts)
     items = C.merge(doc.get("items") or [], C.build(facts, a))
     for item in items:
@@ -205,7 +223,11 @@ LABELS = {"arv": "Value after repair", "as_is_value": "Value today", "sqft_above
           "builder_cost": "Builder's cost", "contingency": "Contingency", "contract_price": "Contract price (the note)", "roi_at_closing": "Paid to ROI Blocks at closing",
           "closing_costs": "Closing costs", "rate": "Rate", "points": "Points", "term_months": "Term", "interest_free_months": "Interest-free months",
           "owner_kind": "Who owns the house", "owner_name": "Owner's name", "owner_lives_there": "Owner lives in the house", "has_mortgage": "Mortgage on the house",
-          "liens": "The mortgage", "state": "State", "county": "County", "scope": "Scope", "measured": "Area measured", "cash_to_owner": "Cash to the owner"}
+          "liens": "The mortgage", "state": "State", "county": "County", "scope": "Scope", "measured": "Area measured", "cash_to_owner": "Cash to the owner",
+          "licence_holder": "Whose licence the work is done under", "contractor_name": "Contractor", "contractor_licence": "Contractor's licence number",
+          "contract_date": "Customer agreement signed on", "members": "Members of the company", "deed_date": "Date of the owner's deed", "completion_date": "Work complete by",
+          "closing_date": "Closing date", "title_company": "Title company", "interest": "How interest is charged", "signer_title": "Signer's title",
+          "minimum_interest_months": "Minimum interest (months)"}
 
 
 def set_facts(doc: Dict[str, Any], facts: Dict[str, Any], user: Dict[str, Any], from_arv: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -220,6 +242,12 @@ def set_facts(doc: Dict[str, Any], facts: Dict[str, Any], user: Dict[str, Any], 
     changed = [k for k in doc["facts"] if doc["facts"].get(k) != before.get(k)]
     if not changed:
         return refresh(doc)
+    # A line that was filled from a fact follows the fact when it changes; what a person typed on the line stays.
+    for item in doc.get("items") or []:
+        for field, fact in (FROM_FACTS.get(item["key"]) or {}).items():
+            vals = item.get("values") or {}
+            if fact in changed and doc["facts"].get(fact) not in (None, "") and str(vals.get(field) or "").strip() == str(before.get(fact) or "").strip():
+                item.setdefault("values", {})[field] = str(doc["facts"][fact])
     for k in changed:
         if k in LABELS and k != "liens":
             log(doc, user, "%s changed from %s to %s" % (LABELS[k], _show(before.get(k)), _show(doc["facts"].get(k))), field=k)
@@ -249,6 +277,10 @@ def _show(v: Any) -> str:
         return "blank"
     if isinstance(v, bool):
         return "yes" if v else "no"
+    if isinstance(v, str) and v in C.LICENCE_HOLDERS:
+        return C.LICENCE_HOLDERS[v]
+    if isinstance(v, str) and v in E.INTEREST_PLANS:
+        return E.INTEREST_PLANS[v][1]
     if isinstance(v, (int, float)) and abs(v) >= 1000:
         return "{:,.2f}".format(v).rstrip("0").rstrip(".")
     return str(v)
@@ -325,6 +357,32 @@ def confirm(doc: Dict[str, Any], key: str, user: Dict[str, Any], note: Optional[
     return refresh(doc)
 
 
+def defer(doc: Dict[str, Any], key: str, user: Dict[str, Any], note: Optional[str] = None, due: Optional[str] = None, undo: bool = False) -> Dict[str, Any]:
+    """RKB allows a line to come in after closing, as an exception for this loan (on 21st St the signed
+    measurement, 24 Nov 2026). The route has already checked the confirmation password. The line stops
+    holding the file and is chased on the closing page instead; the commitment letter says so in words,
+    and Rakesh Sir sees it at review. ``undo`` puts the line back among the conditions of closing."""
+    if is_contractor(user):
+        raise Refused("Only RKB can do this.")
+    item = item_of(doc, key)
+    if undo:
+        if not item.get("deferred"):
+            return doc
+        item.pop("deferred")
+        item["when"] = C.FILE
+        log(doc, user, "A condition of closing again: %s" % item["label"], item=key)
+    else:
+        if key not in C.MAY_FOLLOW or item.get("foreclosure"):
+            raise Refused("This line cannot be left until after closing: the loan or a foreclosure rests on it.")
+        if item.get("status") in C.DONE:
+            raise Refused("This line is already done.")
+        item["deferred"] = {"by": user.get("user_id"), "by_name": user.get("name"), "at": _now(), "note": (note or "").strip()[:300] or None, "due": (due or "").strip()[:10] or None}
+        log(doc, user, "Allowed after closing, as an exception for this loan: %s%s" % (item["label"], (" (" + item["deferred"]["note"] + ")") if item["deferred"]["note"] else ""), item=key)
+    refresh(doc)
+    rewrite_documents(doc)      # the commitment letter lists it as an exception, not as a condition
+    return doc
+
+
 def add_file(doc: Dict[str, Any], key: str, rec: Dict[str, Any], user: Dict[str, Any]) -> Dict[str, Any]:
     item = item_of(doc, key)
     if not item.get("needs_file"):
@@ -358,6 +416,8 @@ def add_reading(doc: Dict[str, Any], key: str, sha: str, reading: Optional[Dict[
             C.set_status(item, C.OK, by="system")
             log(doc, system, "Read and passed: %s" % item["label"], item=key)
         else:
+            if item.get("status") == C.REJECTED:      # sent back on an earlier reading; this one passed, so it waits for RKB again
+                C.set_status(item, C.RECEIVED, by="system")
             log(doc, system, "Read and passed; RKB confirms this line: %s" % item["label"], item=key)
     else:
         why = reader.reason_for(reading)

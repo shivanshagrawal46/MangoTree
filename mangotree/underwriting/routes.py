@@ -40,6 +40,13 @@ class ConfirmBody(BaseModel):
     note: Optional[str] = None
 
 
+class DeferBody(BaseModel):
+    password: Optional[str] = None
+    note: Optional[str] = None
+    due: Optional[str] = None            # a calendar day, YYYY-MM-DD; blank means "after closing"
+    undo: bool = False
+
+
 class StateApproveBody(BaseModel):
     password: str
     drop: Optional[List[str]] = None     # extra lines the person approving does not want in the file
@@ -144,6 +151,7 @@ def install(app, mongo, jobs) -> None:
                 "lien_status": [{"key": k, "label": v} for k, v in E.LIEN_STATUS_LABEL.items()],
                 "scopes": [{"key": k, "label": v["label"], "covers": v["covers"]} for k, v in SCOPE_TIERS.items()],
                 "kinds": E.KIND_LABEL, "parties": [{"key": p, "label": C.PARTY_LABEL[p]} for p in C.PARTY_ORDER],
+                "interest_plans": [{"key": k, "label": label} for k, (_, label) in E.INTEREST_PLANS.items()],
                 "limits": {"arv": E.LIMIT, "markdown": E.MARKDOWN, "selling_cost": E.SELLING_COST, "funded_share": E.FUNDED_SHARE, "contingency": E.MIN_CONTINGENCY,
                            "rate": E.DEFAULT_RATE, "points": E.DEFAULT_POINTS, "term_months": E.DEFAULT_TERM}}
 
@@ -224,6 +232,42 @@ def install(app, mongo, jobs) -> None:
             store.save(doc)
             raise HTTPException(403, verdict["why"])
         return _out(store.save(_do(st.confirm, doc, key, user, body.note)), user)
+
+    @app.post("/uw/files/{fid}/items/{key}/defer")
+    def uw_defer(fid: str, key: str, body: DeferBody, user=CurrentUwUser):
+        """RKB allows a line to come in after closing, as an exception for this loan (or takes that back).
+        Allowing it asks for RKB's confirmation password, like a confirmation; taking it back does not."""
+        doc = _get(fid, user)
+        if is_contractor(user):
+            raise HTTPException(403, "Only RKB can do this.")
+        if not body.undo:
+            verdict = secret.check(mongo, body.password or "", user)
+            if not verdict["ok"]:
+                st.log(doc, user, "An exception was refused: %s" % verdict["why"], item=key)
+                store.save(doc)
+                raise HTTPException(403, verdict["why"])
+        return _out(store.save(_do(st.defer, doc, key, user, body.note, body.due, body.undo)), user)
+
+    @app.get("/uw/files/{fid}/documents.zip")
+    def uw_documents_zip(fid: str, user=CurrentUwUser):
+        """The whole set as Word files, in two folders: the closing set (for the title company and ROI
+        Blocks), and apart from it the papers that are never shown to the Borrower or the title company."""
+        import io
+        import zipfile
+        from . import documents as D
+        doc = _get(fid, user)
+        docs = doc.get("documents") or []
+        if not docs:
+            raise HTTPException(409, "The documents are not written yet.")
+        first = (doc.get("facts") or {}).get("address", "").split(",")[0]
+        slug = lambda s: re.sub(r"[^A-Za-z0-9]+", "-", s).strip("-")
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+            for d in docs:
+                folder = "2 - RKB, ROI Blocks and contractor only - not for the Borrower or the title company" if d.get("audience") == D.NOT_BORROWER else "1 - Closing set"
+                z.writestr("%s/%s.docx" % (folder, slug("%s %s" % (first, d["title"]))), D.to_docx(d))
+        return Response(buf.getvalue(), media_type="application/zip",
+                        headers={"Content-Disposition": 'attachment; filename="%s-Loan-documents-%s.zip"' % (slug(first), D.today().isoformat())})
 
     @app.post("/uw/files/{fid}/documents")
     def uw_documents_make(fid: str, user=CurrentUwUser):

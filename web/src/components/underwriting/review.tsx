@@ -51,6 +51,8 @@ export function ReviewPage({ f, go, run }: PageProps) {
           {word.length ? word.map((i) => <KV key={i.key} k={i.name}><Status tone="confirmed">{i.confirmed!.by_name}, {day(i.confirmed!.at)}</Status>
             <span className="font-normal text-muted">{i.confirmed!.without_paper ? "without a paper" : i.confirmed!.over_a_failed_reading ? "over the system's reading" : "with its record"}{i.confirmed!.note ? ` · ${i.confirmed!.note}` : ""}</span></KV>)
             : <KV k="Lines confirmed by RKB">None: every line passed on its own paper or its own record.</KV>}
+          {f.items.filter((i) => i.deferred).map((i) => <KV key={i.key} k={i.name}><Status tone="confirmed">Allowed after closing · {i.deferred!.by_name}, {day(i.deferred!.at)}</Status>
+            <span className="font-normal text-muted">an exception for this loan{i.deferred!.note ? ` · ${i.deferred!.note}` : ""}</span></KV>)}
         </Panel>
         {(f.edited || []).length > 0 && (
           <Panel className="overflow-hidden"><SectionHead title="Changed from the ARV file" />
