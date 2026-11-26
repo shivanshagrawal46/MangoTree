@@ -6,6 +6,8 @@
     GET  /brain/drafts                        replies waiting      GET/PATCH /brain/drafts/{id}
     POST /brain/drafts/{id}/redo              rewrite with an instruction (job)
     POST /brain/drafts/{id}/outlook           put it in the Outlook Drafts folder
+    POST /brain/drafts/{id}/send              send it now from Rakesh Sir's mailbox (Rakesh Sir only)
+    POST /brain/drafts/{id}/team              hand it to people on the team: on their list, and an email to them
     GET  /brain/chat/threads                  chat threads for a property (or the portfolio)
     POST /brain/chat/threads                  start one            GET /brain/chat/threads/{id}
     POST /brain/chat/threads/{id}/files       attach files
@@ -129,6 +131,11 @@ class TaskBody(BaseModel):
 
 class RedoBody(BaseModel):
     instruction: str = ""
+
+
+class TeamBody(BaseModel):
+    to: List[str]
+    note: str = ""
 
 
 class ThreadBody(BaseModel):
@@ -586,6 +593,9 @@ def install(app: FastAPI, mongo: Mongo, jobs) -> None:
         if last:
             res = last["detail"]["result"]
             out["check"] = {"at": last["at"], "emails": res.get("emails"), **(res["people"].get(me) or {"left": 0, "replies_left": 0, "closed": [], "n_closed": 0})}
+            # "Left" is what is on the To do list now, the same number the page shows above it — not the count
+            # at the time of the run, which a to-do done or put aside since then has already made wrong.
+            out["check"]["left"] = sum(1 for c in out["now"] + out["later"] if c["type"] != "reply")
         return data.clean(out)
 
     @app.post("/brain/tasks")
@@ -833,6 +843,43 @@ def install(app: FastAPI, mongo: Mongo, jobs) -> None:
             logger.warning("outlook draft failed: %s", exc)
             raise HTTPException(502, f"Could not reach the Outlook mailbox: {str(exc)[:200]}")
 
+    @app.post("/brain/drafts/{draft_id}/send")
+    def brain_draft_send(draft_id: str, user=CurrentUser):
+        """"Send": the reply goes out now, from Rakesh Sir's mailbox, to the people it is addressed to.
+        The mailbox is his, so the press is his: anyone else hands the reply over with "Send to team"."""
+        if user.get("role") != "ceo":
+            raise HTTPException(403, "Only Rakesh Sir can send from his mailbox. Use Send to team, or put it in Outlook Drafts.")
+        try:
+            out = writer.send(draft_id, user)
+        except KeyError:
+            raise HTTPException(404, "draft not found")
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        except Exception as exc:
+            logger.warning("send of draft %s failed: %s", draft_id, exc)
+            raise HTTPException(502, str(exc)[:400])
+        swr.clear()
+        return data.clean(_draft_view(out))
+
+    @app.post("/brain/drafts/{draft_id}/team")
+    def brain_draft_team(draft_id: str, body: TeamBody, user=CurrentUser):
+        """"Send to team": the reply is handed to one or more of Manjunath Sir, JP Sir, Shivansh and Payeal Ma'am.
+        It moves to their list of replies, an email with the whole reply goes to them, and it stays there until it has gone out."""
+        try:
+            out = myday.hand_reply(user, draft_id=draft_id, to=body.to, note=body.note)
+        except KeyError:
+            raise HTTPException(404, "draft not found")
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        swr.clear()
+        return data.clean({**_draft_view(store.get_draft(draft_id) or {}), "team_email": out["email"]})
+
+    @app.get("/brain/team-for-replies")
+    def brain_team_for_replies(user=CurrentUser):
+        """The people a reply can be sent to with "Send to team"."""
+        from .myday import HAND_TO
+        return [{"person": p, "name": t["name"]} for p, t in HAND_TO.items()]
+
     # -------------------------------------------------------------- lessons
     @app.get("/brain/lessons")
     def brain_lessons(user=CurrentUser):
@@ -875,7 +922,7 @@ def install(app: FastAPI, mongo: Mongo, jobs) -> None:
                 for d in m.get("drafts") or []:
                     cur = store.get_draft(d["draft_id"])
                     if cur:
-                        d.update({k: cur.get(k) for k in ("to", "cc", "subject", "body", "note", "status")})
+                        d.update({k: cur.get(k) for k in ("to", "cc", "subject", "body", "note", "status", "sender", "stale", "team", "sent_by", "sent_at", "closed_note")})
             out["messages"] = msgs
             out["active"] = [{"job_id": j.job_id, "text": (j.meta or {}).get("text")} for j in list(jobs.jobs.values())
                              if j.kind == "brain_chat" and j.status in ("queued", "running") and (j.meta or {}).get("thread_id") == t["thread_id"]]

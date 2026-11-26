@@ -279,9 +279,10 @@ def test_the_morning_email_keeps_replies_and_to_dos_apart_and_a_due_date_is_a_ca
     mail = md.morning_mail("rakesh", today=NOW)
     text = mail["text"]
     assert mail["subject"] == "Your day, 18 Nov: 1 reply to send, 3 to-dos, 1 late"
-    assert text.index("REPLIES TO SEND (1)") < text.index("MY TO-DOS (3)")                       # two sections, never one mixed list
+    assert text.index("REPLIES TO SEND (1)") < text.index("TO DO (3)")                           # the replies, then ONE list named To do
     assert "- Wes Stone — Draw 5" in text and "waiting 4 days" in text and "Waiting longer (1)" in text
-    assert "Decide (1)" in text and "Do (2)" in text
+    assert "Decide (" not in text and "Do (" not in text and "MY TO-DOS" not in text             # decisions are in the one list, not a list of their own
+    assert mail["decide"] == 1 and mail["todos"] == 3
     assert "due 19 Nov" in text and "due today" in text and "2 days late" in text                # the day as written, not shifted by a time zone
     assert text.index("Call the title company") < text.index("Send the payoff letter")           # late first
     assert "The team:" in text and "/team" in text                                               # one line for Rakesh Sir, nothing more
@@ -522,3 +523,73 @@ def test_the_daily_reading_over_puts_nothing_aside_for_being_old(monkeypatch):
     assert out["files"]["varnum"]["put_aside"] == 0 and out["files"]["varnum"]["done"] == 1
     assert [i["title"] for i in BrainStore.open_items(store.get_file("varnum"))] == ["Decide the maturity position"]
     assert sw.run(["varnum"])["files"]["varnum"]["put_aside"] == 1                       # only when asked for by hand
+
+
+# ------------------------------------------- one list named To do; a written reply handed to the team
+def test_a_follow_up_on_a_bill_is_in_the_one_to_do_list_of_the_morning_email():
+    m, st = _store()
+    follow = [{"key": "approve_bill:varnum:abc", "kind": "approve_bill", "property_id": "varnum", "property": "1512 Varnum", "owner": "manju", "title": "Approve or query: Framing — $5,100.00",
+               "detail": "", "since": NOW - timedelta(days=5), "days": 5, "level": "high", "tab": "sheet", "amount": 5100.0}]
+    st.save_file("varnum", {"open_items": []})
+    md = MyDay(m, st, follow=lambda: follow, outbox=FakeOutbox())
+    st.add_item("varnum", title="Walk the site with Wes", owner="manjunath", due="2026-11-20")
+    st.add_item("varnum", title="Decide on the extra decking", owner="manjunath", kind="decision")
+    mail = md.morning_mail("manjunath", today=NOW)
+    assert mail["subject"] == "Your day, 18 Nov: 3 to-dos, 1 late" and "TO DO (3)" in mail["text"]
+    assert "BILLS AND SITE CHECKS" not in mail["text"] and "Approve or query: Framing" in mail["text"] and "Decide on the extra decking" in mail["text"]
+
+
+def _reply(st, **more):
+    st.drafts.insert_one({"draft_id": "d1", "status": "ready", "sender": "rakesh", "subject": "Re: Draw 5", "body": "Wes,\n\nPlease send the lien waiver first.\n\nRakesh", "property_ids": ["varnum"],
+                          "created_at": NOW, "reply_to_sha": "sha-draw5", "to": [{"name": "Wes Stone", "email": "wes@roiblocks.com"}], "cc": [{"name": "Kelly", "email": "kelly@roiblocks.com"}],
+                          "in_reply_to": {"from_name": "Wes Stone", "subject": "Draw 5", "date": NOW - timedelta(days=1)}, **more})
+
+
+def test_a_reply_sent_to_the_team_moves_to_their_list_with_its_to_do_and_an_email_goes():
+    m, st = _store()
+    md = _day(st)
+    _reply(st)
+    st.add_item("varnum", title="Reply to Wes about draw 5", owner="rakesh", kind="reply", source_sha="sha-draw5")
+    assert [c["type"] for c in md.cards("rakesh", today=NOW)] == ["reply"] and md.cards("manjunath", today=NOW) == []
+    out = md.hand_reply({"user_id": "rakesh", "name": "Rakesh Sir"}, draft_id="d1", to=["manjunath", "payeal"], note="Check the amount first.")
+    assert out["team"]["names"] == ["Manjunath Sir", "Payeal Ma'am"] and st.get_draft("d1")["team"]["to"] == ["manjunath", "payeal"]
+    assert md.cards("rakesh", today=NOW) == []                                                     # off the list it was on: nothing is left behind
+    mine = md.cards("manjunath", today=NOW)
+    assert len(mine) == 1 and mine[0]["type"] == "reply" and mine[0]["draft_id"] == "d1" and mine[0]["assigned_by_name"] == "Rakesh Sir"
+    item = st.get_file("varnum")["open_items"][0]
+    assert item["owner"] == "manjunath" and item["assigned_by"] == "rakesh" and item["status"] == "open"     # the follow-up: it stays open until the reply has gone
+    mail = md._outbox.sent[0]
+    assert mail["kind"] == "reply_to_team" and mail["to"] == [("Manjunath Sir", "manjunath@mtreh.com"), ("Payeal Ma'am", "payeal.mtreh@gmail.com")]
+    assert mail["subject"] == "From Rakesh Sir, for you to send: Re: Draw 5"
+    assert "Please send the lien waiver first." in mail["text"] and "Check the amount first." in mail["text"] and "wes@roiblocks.com" in mail["text"] and "/replies/d1" in mail["text"]
+    assert all("wes@roiblocks.com" not in a for _, a in mail["to"])                                # nothing goes to the people the reply is for
+
+
+def test_a_reply_goes_only_to_the_four_and_only_while_it_waits():
+    m, st = _store()
+    md = _day(st)
+    _reply(st)
+    for bad in (["wes"], ["rakesh"], [], ["jp", "kelly"]):
+        try:
+            md.hand_reply({"user_id": "rakesh"}, draft_id="d1", to=bad)
+            assert False, "should have refused"
+        except ValueError:
+            pass
+    st.update_draft("d1", {"status": "sent"})
+    try:
+        md.hand_reply({"user_id": "rakesh"}, draft_id="d1", to=["jp"])
+        assert False, "a reply that has gone cannot be handed on"
+    except ValueError:
+        pass
+    assert md._outbox.sent == [] and "team" not in st.get_draft("d1")
+
+
+def test_send_is_refused_for_a_reply_that_is_out_of_date_or_not_from_rakesh_sirs_mailbox():
+    from mangotree.brain.drafts import DraftWriter
+    w = DraftWriter.__new__(DraftWriter)                 # only the rule is tested: nothing is sent
+    ok = {"status": "ready", "sender": "rakesh", "body": "Hello", "to": [{"email": "wes@roiblocks.com"}]}
+    assert w.cannot_send(ok) is None
+    assert "out of date" in w.cannot_send({**ok, "stale": {"why": "Wes wrote again."}})
+    assert "his own mailbox" in w.cannot_send({**ok, "sender": "manjunath"})
+    assert "nobody in To" in w.cannot_send({**ok, "to": []})
+    assert "no longer waiting" in w.cannot_send({**ok, "status": "sent"})

@@ -39,7 +39,13 @@ export type Draft = {
   sent_sha?: string | null;
   outlook?: { web_link?: string; saved_at?: string; as_reply?: boolean; mailbox?: string; why_not?: string; to?: string[]; cc?: string[] };
   original?: { sha256: string; subject?: string; date?: string; from?: string; body?: string; attachments?: string[] };
+  /** Set when the reply was handed to people on the team with "Send to team": it is on their list until it has gone out. */
+  team?: { to: string[]; names: string[]; by?: string; by_name?: string; at?: string; note?: string } | null;
+  /** Set by "Send": the reply went out from here, and whether it went inside the conversation. */
+  sent_from_app?: boolean; sent_as_reply?: boolean; why_not?: string;
 };
+/** Someone a reply can be handed to with "Send to team". */
+export type HandTo = { person: string; name: string };
 
 export type MoneySource = { file: string; kind?: string; as_of?: string; rows: { item: string; value: string; note?: string }[] };
 

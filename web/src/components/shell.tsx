@@ -8,7 +8,7 @@ import { Command } from "cmdk";
 // The menu uses the same icon set as Twenty (Tabler), drawn thin, each in one of Twenty's own colours.
 import { IconGavel as Gavel, IconTag as Tag, IconHome as LayoutGrid, IconBuildingSkyscraper as Building2, IconCheckbox as CheckSquare, IconInbox as Inbox, IconUsers as Users,
   IconMessageCircle as MessageSquare, IconSearch as Search, IconLogout as LogOut, IconMoon as Moon, IconSun as Sun, IconAlertTriangle as AlertTriangle, IconChevronRight as ChevronRight,
-  IconHammer as HardHat, IconListCheck as ClipboardList, IconBell as BellRing, IconCertificate as FileBadge, IconCalculator as Calculator, IconArchive as Archive, IconChevronDown as ChevronDown,
+  IconHammer as HardHat, IconListCheck as ClipboardList, IconCertificate as FileBadge, IconCalculator as Calculator, IconArchive as Archive, IconChevronDown as ChevronDown,
   IconMail as Reply, IconReceipt as Receipt, IconHeartHandshake as Handshake, IconPhone as Phone, IconFileCheck as FileCheck } from "@tabler/icons-react";
 import { api } from "@/lib/api";
 import { useUser } from "@/components/providers";
@@ -17,7 +17,10 @@ import { PropertyMark, usePropertyColours } from "@/components/property-mark";
 import { cn, initials, propertyLabel } from "@/lib/utils";
 import type { PropertySummary } from "@/lib/types";
 
-/* Three things: today, a chat that knows the files, and the replies waiting.
+/* Follow-ups left the menu on 2026-11-26: a person's follow-ups are rows of the one "To do" list on Today
+   (the page with everyone's is still at /chase, linked from that list).
+
+   Three things: today, a chat that knows the files, and the replies waiting.
    The analysis tools follow. Everything the system used to show as its own
    screen (next steps, follow-ups, tasks, cards) now lives on the property file
    as open items; those screens stay reachable under "Older screens" — except the
@@ -30,13 +33,15 @@ const TINT: Record<string, string> = {
   "/sold": "var(--t-color-bronze)", construction: "var(--t-color-orange)", market: "var(--t-color-green)", nonperforming: "var(--t-color-red)",
 };
 const tint = (key: string) => (TINT[key] ? { color: TINT[key] } : undefined);
+/* The three lists of properties say what they are by their heading's colour (2026-11-26): the deals that are moving,
+   Construction and On market, in our green; Foreclosure in red. The icon and the count take the same colour. */
+const HEADING: Record<string, string> = { construction: "text-accent", market: "text-accent", nonperforming: "text-critical" };
 
 const NAV = [
   { href: "/", label: "Today", icon: LayoutGrid },
   { href: "/replies", label: "To reply", icon: Reply },
   { href: "/team", label: "Team", icon: Users },
   { href: "/bills", label: "Bills", icon: Receipt },
-  { href: "/chase", label: "Follow-ups", icon: BellRing },
   { href: "/calls", label: "Calls", icon: Phone },
   { href: "/brokers", label: "Brokers", icon: Handshake },
   { href: "/ask", label: "Ask", icon: MessageSquare },
@@ -57,7 +62,6 @@ const TEAM_NAV = [
   { href: "/", label: "Today", icon: LayoutGrid },
   { href: "/replies", label: "To reply", icon: Reply },
   { href: "/bills", label: "Bills", icon: Receipt },
-  { href: "/chase", label: "Follow-ups", icon: BellRing },
   { href: "/calls", label: "Calls", icon: Phone },
   { href: "/ask", label: "Ask", icon: MessageSquare },
 ];
@@ -206,8 +210,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               reading that draws the progress bar on the property's page. */}
           {rkb && propertyGroups(props.data || [], counts.data?.groups, recent.data?.recent).map((g) => (
             <React.Fragment key={g.key}>
-              <div className="mt-3 h-7 px-2 flex items-center gap-1.5 text-[12px] font-medium text-faint">
-                <g.icon size={14} strokeWidth={1.6} style={tint(g.key)} /> <span>{g.label}</span> <span className={cn(COUNT, "text-[11px]")}>{g.rows.length}</span>
+              <div className={cn("mt-3 h-7 px-2 flex items-center gap-1.5 text-[12px] font-medium", HEADING[g.key] || "text-faint")}>
+                <g.icon size={14} strokeWidth={1.6} style={HEADING[g.key] ? undefined : tint(g.key)} /> <span>{g.label}</span> <span className={cn(COUNT, "text-[11px]")}>{g.rows.length}</span>
               </div>
               <nav className="flex flex-col gap-0.5">
                 {g.rows.map((p) => {

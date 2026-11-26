@@ -15,7 +15,7 @@ import { Chip, PageBody, PageHead, Tag, TD, TH, type Tone } from "@/components/d
 import { PropertyMark, usePropertyColours } from "@/components/property-mark";
 import { DraftCard } from "@/components/brain/draft";
 import { cn, fmtDate } from "@/lib/utils";
-import { errText, type Draft } from "@/lib/brain";
+import { OWNER_LABEL, errText, type Draft } from "@/lib/brain";
 
 type State = { label: string; cls: string; tone: Tone; rank: number };
 
@@ -61,9 +61,9 @@ export function ReplyList({ drafts, limit }: { drafts: Draft[]; limit?: number }
   if (!rows.length) return <div className="h-8 px-4 flex items-center text-[13px] text-faint">No email is waiting for a reply.</div>;
   return (
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[900px] table-fixed border-collapse">
-        <colgroup><col style={{ width: 176 }} /><col /><col style={{ width: 200 }} /><col style={{ width: 92 }} /><col style={{ width: 224 }} /></colgroup>
-        <thead><tr><th className={TH}>From</th><th className={TH}>Email</th><th className={TH}>Property</th><th className={TH}>Waiting</th><th className={TH}>Reply</th></tr></thead>
+      <table className="w-full min-w-[1040px] table-fixed border-collapse">
+        <colgroup><col style={{ width: 176 }} /><col /><col style={{ width: 200 }} /><col style={{ width: 92 }} /><col style={{ width: 224 }} /><col style={{ width: 168 }} /></colgroup>
+        <thead><tr><th className={TH}>From</th><th className={TH}>Email</th><th className={TH}>Property</th><th className={TH}>Waiting</th><th className={TH}>Reply</th><th className={TH}>With</th></tr></thead>
         <tbody>
           {rows.map((d) => {
             const s = replyState(d);
@@ -80,6 +80,10 @@ export function ReplyList({ drafts, limit }: { drafts: Draft[]; limit?: number }
                 <td className={cn(TD, ROOM)}>{props.length ? <Chip icon={<PropertyMark label={props[0].name} colour={colourOf(props[0].property_id)} />}>{props.map((p) => p.name).join(", ")}</Chip> : <span className="text-faint">General</span>}</td>
                 <td className={cn(TD, ROOM, "tnum text-muted", late && "text-critical")} title={d.in_reply_to?.date ? `Received ${fmtDate(d.in_reply_to.date, "EEE d MMM, HH:mm")}` : undefined}>{waited(d.in_reply_to?.date)}</td>
                 <td className={cn(TD, ROOM)}><Tag tone={s.tone}>{s.label}</Tag></td>
+                {/* Whose list it is on: the person it is written for, or the people it was handed to with "Send to team". */}
+                <td className={cn(TD, ROOM, !d.team?.names?.length && "text-muted")} title={d.team?.names?.length ? `Sent to the team by ${d.team.by_name || "Rakesh Sir"}` : undefined}>
+                  {d.team?.names?.length ? d.team.names.join(", ") : OWNER_LABEL[d.sender || "rakesh"] || d.sender}
+                </td>
               </tr>
             );
           })}

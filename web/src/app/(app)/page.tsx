@@ -1,8 +1,8 @@
 "use client";
 
 /* Today — the one page to open in the morning, and only the person's own work is on it:
-   notices for what came in from the sites, a row of numbers, then a table each for replies,
-   decisions and things to do (see components/brain/myday.tsx). The team has its own page (/team),
+   notices for what came in from the sites, a row of numbers, then two tables: the replies, and one
+   list named To do that holds decisions, things to do and follow-ups (see components/brain/myday.tsx). The team has its own page (/team),
    and what changed and every property are on /overview (off the menu since 2026-11-18; the page is still there by its address). */
 
 import * as React from "react";

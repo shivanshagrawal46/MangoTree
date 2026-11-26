@@ -3,10 +3,11 @@
 A draft is produced by the same tool loop the chat uses: the model has the
 property file, the whole conversation the email belongs to, examples of emails
 this person really sent, and it may open any record it needs before it commits
-to a figure or a date. Nothing is ever sent from here. A draft waits in the
+to a figure or a date. Nothing is ever sent by itself. A draft waits in the
 drafts list (and, when switched on, in the Outlook Drafts folder) until the
-person sends it himself — and when his sent mail is ingested, the draft is
-closed against it automatically.
+person sends it himself — from Outlook, or with "Send" here, which sends that
+one reply from Rakesh Sir's mailbox (``send``, 2026-11-26) — and when his sent
+mail is ingested, a draft still waiting is closed against it automatically.
 """
 from __future__ import annotations
 
@@ -300,6 +301,10 @@ class DraftWriter:
         else:
             # A newer message in the same conversation makes an unsent draft stale.
             if art.get("thread_key"):
+                # A reply that had been handed to the team stays with them when the conversation moves on.
+                handed = self.store.drafts.find_one({"thread_key": art["thread_key"], "status": "ready", "origin": "auto", "team.to.0": {"$exists": True}}, {"team": 1})
+                if handed:
+                    doc["team"] = handed["team"]
                 self.store.drafts.update_many({"thread_key": art["thread_key"], "status": "ready", "origin": "auto"},
                                               {"$set": {"status": "superseded", "updated_at": now(), "superseded_by_sha": email_sha}})
             d = self.store.create_draft(doc)
@@ -592,3 +597,87 @@ class DraftWriter:
         info.update({"saved_at": now(), "mailbox": g.mailbox})
         self.store.update_draft(draft_id, {"outlook": info})
         return info
+
+    # --------------------------------------------------------------- send
+    #: A Send that was started and never finished (the server stopped in the middle) frees itself after this long.
+    SENDING_FOR = timedelta(minutes=5)
+
+    def cannot_send(self, d: Dict[str, Any]) -> Optional[str]:
+        """Why this reply can NOT be sent from here with one click — or None when it can."""
+        if d.get("status") != "ready":
+            return "This reply is no longer waiting: it was already sent or set aside."
+        sender = d.get("sender") or bc.DEFAULT_SENDER
+        if sender != bc.DEFAULT_SENDER:
+            return (f"This reply is written for {bc.SENDER_NAMES.get(sender, sender)} Sir and goes out from his own mailbox. "
+                    "Only Rakesh Sir's mailbox can send from here: copy it, or send it to the team.")
+        if (d.get("stale") or {}).get("why"):
+            return "This reply is out of date. Rewrite it before it is sent."
+        if not [t for t in d.get("to") or [] if t.get("email")]:
+            return "This reply has nobody in To."
+        if not str(d.get("body") or "").strip():
+            return "This reply has no text."
+        return None
+
+    def send(self, draft_id: str, by: Dict[str, Any]) -> Dict[str, Any]:
+        """Send the reply now, from the mailbox, to the people it is addressed to ("Send", admin 2026-11-26).
+
+        It goes exactly as "Put in Outlook Drafts" places it — a reply-all inside the conversation of the email
+        it answers, our text above the quoted original — and Outlook itself then sends that message, so it lies
+        in Sent Items in the same conversation. The draft is marked sent with who pressed Send and when, and the
+        to-do that said "reply to this" leaves the list with it. One press sends once: a second press while the
+        first is still on its way is refused."""
+        from urllib.parse import quote
+        from mangotree.ingest.graph_auth import SEND_SCOPES
+        from mangotree.mail.outbox import GRAPH_ROOT, Outbox
+        d = self.store.get_draft(draft_id)
+        if not d:
+            raise KeyError(draft_id)
+        no = self.cannot_send(d)
+        if no:
+            raise ValueError(no)
+        g = Outbox(self.mongo)._graph()
+        token = g.auth.access_token(SEND_SCOPES)          # asked for before anything is made in Outlook: no half-made email is left behind
+        claimed = self.store.drafts.find_one_and_update(
+            {"draft_id": draft_id, "status": "ready", "$or": [{"sending_at": None}, {"sending_at": {"$exists": False}}, {"sending_at": {"$lt": now() - self.SENDING_FOR}}]},
+            {"$set": {"sending_at": now()}})
+        if not claimed:
+            raise ValueError("This reply is being sent right now.")
+        who = by.get("name") or by.get("user_id") or "RKB"
+
+        def failed(why: str, exc: Optional[BaseException] = None) -> RuntimeError:
+            self.store.update_draft(draft_id, {"sending_at": None, "send_try": {"at": now(), "by": by.get("user_id"), "error": why[:300]}})
+            logger.warning("draft %s: send failed: %s", draft_id, why)
+            return RuntimeError(why)
+        try:
+            info = self.to_outlook(draft_id)              # the whole email, placed in the conversation
+        except Exception as exc:
+            raise failed(f"Outlook would not take the email, so nothing was sent: {str(exc)[:200]}") from exc
+        mid = info.get("message_id")
+        if not mid:
+            raise failed("Outlook did not hand back the email it made, so nothing was sent.")
+        try:
+            r = g._session.post(f"{GRAPH_ROOT}/users/{quote(g.mailbox)}/messages/{quote(mid)}/send",
+                                headers={"Authorization": f"Bearer {token}", "Content-Length": "0"}, timeout=max(g.timeout, 120))
+        except Exception as exc:
+            raise failed("Outlook did not confirm that the email went. Look in Sent Items before pressing Send again; "
+                         "if it is not there, it is waiting in Outlook Drafts, complete.") from exc
+        if r.status_code not in (200, 202):
+            raise failed(f"Outlook would not send it (HTTP {r.status_code}). Nothing went out; the email is in Outlook Drafts, complete.")
+        to = ", ".join(t.get("name") or t.get("email") or "" for t in d.get("to") or [] if t.get("email"))
+        body, first = str(d.get("body") or "").strip(), str(d.get("original_body") or d.get("body") or "").strip()
+        kept = similarity(first, body)
+        note = (f"{who} sent it from MangoTree on {et(now(), '%d %b %Y %H:%M')} to {to}."
+                + ("" if info.get("as_reply") else f" It went as a new email, not inside the conversation, because {info.get('why_not') or 'the original was not in the mailbox'}."))
+        out = self.store.update_draft(draft_id, {"status": "sent", "sent_at": now(), "sent_by": who, "status_by": by.get("user_id"), "sent_from_app": True,
+                                                 "sending_at": None, "stale": None, "closed_at": now(), "closed_note": note,
+                                                 "kept_ratio": kept, "sent_as_written": kept >= 0.9}) or d
+        self.store.close_reply_items(d.get("reply_to_sha"), by=by.get("user_id") or "mail", note=f"{who} sent the reply from MangoTree.")
+        subject = (d.get("in_reply_to") or {}).get("subject") or d.get("subject") or ""
+        for pid in d.get("property_ids") or [bc.GENERAL_ID]:
+            self.store.add_activity(pid, at=now(), kind="reply_sent", who=who, title=f"Reply sent by {who} from MangoTree: {subject}"[:200],
+                                    summary=f"To {to}.", relevance="minor", extra={"draft_id": draft_id})
+        if not d.get("learned") and changed_enough(first, body):
+            self.store.update_draft(draft_id, {"learned": True})
+            Lessons(self.mongo, self.store).learn_async(draft=d, final_text=body, source="edited")
+        logger.info("draft %s sent from the app by %s to %s", draft_id, who, to)
+        return {**out, "sent_as_reply": bool(info.get("as_reply")), "why_not": info.get("why_not") or ""}

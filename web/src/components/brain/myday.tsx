@@ -4,13 +4,14 @@
 
    Laid out as an admin page (2026-11-21): flat notices for what came in from the sites (new daily
    logs, new bills), one line on what the last daily check settled, one row of plain numbers, then
-   one table per kind of work, never mixed:
-     · Replies    — only replies that are written and ready ("Review draft").
-     · Decisions  — overdue first, then by due date.
-     · To do      — the same.
-   (JP Sir and Manjunath Sir also have "Bills and site checks".) Five rows of each show; "View all"
-   opens the rest in place. A click on a row's words opens it in place: the whole line, its detail,
-   and the email or call it came from.
+   two tables:
+     · Replies — only replies that are written and ready ("Review draft"), the person's own and the
+                 ones handed to them with "Send to team".
+     · To do   — ONE list (2026-11-26: "see to do, decision and follow up as one only with name to do"):
+                 the decisions, the things to do and the follow-ups on bills and sites together, the
+                 newest first. A Type column still says which a row is.
+   Five rows of each show; "View all" opens the rest in place. A click on a row's words opens it in
+   place: the whole line, its detail, and the email or call it came from.
 
    The team is NOT here. It has its own page (TeamPage, Rakesh Sir only): he sees each
    person's list, gives a task, sends a reminder — and cannot mark another person's work
@@ -130,9 +131,8 @@ function byUrgency(cards: DayCard[]) {
 
 /* ───────────────────────── Today: my own work ─────────────────────────
    Laid out as an admin page (2026-11-21, after two looser layouts were turned down): flat notices
-   for what came in from the sites, one row of plain numbers, then one table per kind of work —
-   replies, decisions, things to do — never mixed. Colour is used for state only: red for overdue,
-   amber for due today. */
+   for what came in from the sites, one row of plain numbers, then two tables — the replies, and one
+   list named To do. Colour is used for state only: red for overdue, amber for due today. */
 
 const ROWS = 5;                                   // rows of a table before "View all"
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -185,7 +185,7 @@ function TableRow({ c, cols, lead }: { c: DayCard; cols: Col[]; lead: (c: DayCar
 }
 
 /* One kind of work as a table: its name and count, column heads, five rows, and the rest on request. */
-function WorkTable({ title, hint, lead, leadHead, cards, cols, empty, order = "overdue first, then by due date" }: { title: string; hint: string; lead: (c: DayCard) => string; leadHead: string; cards: DayCard[]; cols: Col[]; empty: string; order?: string }) {
+function WorkTable({ title, hint, lead, leadHead, cards, cols, empty, order = "overdue first, then by due date", more }: { title: string; hint: string; lead: (c: DayCard) => string; leadHead: string; cards: DayCard[]; cols: Col[]; empty: string; order?: string; more?: React.ReactNode }) {
   const [all, setAll] = React.useState(false);
   const rows = all ? cards : cards.slice(0, ROWS);
   return (
@@ -196,7 +196,10 @@ function WorkTable({ title, hint, lead, leadHead, cards, cols, empty, order = "o
           <span className="rounded-[3px] bg-sunken px-1.5 py-px text-[12px] font-medium text-muted tnum">{cards.length}</span>
           <span className="hidden text-[12.5px] font-normal text-muted sm:inline">{hint}</span>
         </h2>
-        {cards.length > ROWS && <button type="button" onClick={() => setAll((v) => !v)} className="text-[12.5px] font-medium text-accent hover:underline">{all ? "Show fewer" : "View all"}</button>}
+        <div className="flex shrink-0 items-center gap-4">
+          {more}
+          {cards.length > ROWS && <button type="button" onClick={() => setAll((v) => !v)} className="text-[12.5px] font-medium text-accent hover:underline">{all ? "Show fewer" : "View all"}</button>}
+        </div>
       </div>
       {cards.length === 0 ? <div className="border-t border-line px-4 py-5 text-[13px] text-muted">{empty}</div> : (
         <table className="w-full table-fixed border-collapse">
@@ -322,15 +325,17 @@ export function MyDay() {
   // Replies holds only what is written and ready to read and send (2026-11-21). A reply owed with nothing written
   // is written at the next daily run, or becomes a to-do saying what is missing; until then it waits under To do.
   const replies = byUrgency(cards.filter(drafted));
-  // Decisions and things to do: the newest first, then the older ones (asked for on 2026-11-21). The Status column still says what is overdue.
+  // To do is ONE list (2026-11-26): the decisions, the things to do and the follow-ups on bills and sites together.
+  // The newest first, then the older ones (asked for on 2026-11-21); the Status column still says what is overdue.
   const newest = (list: DayCard[]) => list.map((c, i) => ({ c, i })).sort((x, y) => (Date.parse(y.c.opened_at || "") || 0) - (Date.parse(x.c.opened_at || "") || 0) || x.i - y.i).map((x) => x.c);
-  const decisions = newest(cards.filter((c) => c.type === "todo" && c.kind === "decision"));
-  const todos = newest(cards.filter((c) => c.type === "todo" && c.kind !== "decision"));
-  const work = cards.filter((c) => c.type === "bill" || c.type === "check");
+  const todos = newest(cards.filter((c) => !drafted(c)));
+  const follow = (c: DayCard) => c.type === "bill" || c.type === "check";
+  const typeOf = (c: DayCard) => (follow(c) ? "Follow-up" : c.kind === "decision" ? "Decision" : "To do");
+  const nDecide = todos.filter((c) => typeOf(c) === "Decision").length;
+  const nFollow = todos.filter(follow).length;
   const late = cards.filter((c) => c.overdue);
   const week = (list: DayCard[]) => list.filter((c) => c.due && !c.overdue && daysLate(c) >= -7).length;
-  const lateBy = [[late.filter((c) => replies.includes(c)).length, "reply", "replies"], [late.filter((c) => decisions.includes(c)).length, "decision", "decisions"],
-    [late.filter((c) => todos.includes(c)).length, "to-do", "to-dos"], [late.filter((c) => work.includes(c)).length, "bill or check", "bills and checks"]] as const;
+  const lateBy = [[late.filter((c) => replies.includes(c)).length, "reply", "replies"], [late.filter((c) => todos.includes(c)).length, "to-do", "to-dos"]] as const;
 
   const done = (c: DayCard): React.ReactNode => <button type="button" className={BTN_PLAIN} onClick={() => a.done(c)}><Check size={12} /> Mark done</button>;
   const property: Col = { head: "Property", width: 178, cell: (c) => (c.property_id === "_general" ? "General" : <Link href={`/property/${c.property_id}`} className="hover:text-accent hover:underline">{c.property}</Link>) };
@@ -340,11 +345,9 @@ export function MyDay() {
   const replyCols: Col[] = [property, due, standing,
     { head: "Draft", width: 148, cell: (c) => (c.stale ? <State tone="amber">Changed, read again</State> : <State tone="green">Ready</State>) },
     { head: "", width: 128, right: true, cell: (c) => <button type="button" className={c.stale ? BTN_PLAIN : BTN_MAIN} onClick={() => c.draft_id && a.openDraft(c.draft_id)}>{c.stale ? "Read again" : "Review draft"}</button> }];
-  const todoCols: Col[] = [property, raised, due, standing, { head: "", width: 128, right: true, cell: done }];
-  const workCols: Col[] = [property,
-    { head: "Amount", width: 110, cell: (c) => <span className="tnum">{c.amount != null ? usd(c.amount) : "—"}</span> },
-    standing,
-    { head: "", width: 128, right: true, cell: (c) => <Link href={c.href} className={BTN_PLAIN}>Open <ArrowRight size={12} /></Link> }];
+  // A to-do or a decision is marked done here; a follow-up on a bill or a site opens the page where it is dealt with (it leaves the list by itself).
+  const todoCols: Col[] = [{ head: "Type", width: 92, cell: (c) => <span className="text-muted">{typeOf(c)}</span> }, property, raised, due, standing,
+    { head: "", width: 128, right: true, cell: (c) => (follow(c) ? <Link href={c.href} className={BTN_PLAIN}>Open <ArrowRight size={12} /></Link> : done(c)) }];
   const replyLead = (c: DayCard) => `${c.from_name || "Reply"} — ${c.subject || c.title}`;
 
   return (
@@ -352,18 +355,17 @@ export function MyDay() {
       <Notices />
       {d.check && <CheckLine k={d.check} />}
 
-      <div className={cn("mt-3 grid grid-cols-2 overflow-hidden rounded-md border border-line bg-elev", work.length > 0 ? "lg:grid-cols-5" : "lg:grid-cols-4")}>
+      <div className="mt-3 grid grid-cols-3 overflow-hidden rounded-md border border-line bg-elev">
         <Figure label="Replies" value={replies.length} hint={replies.length ? (replies.some((c) => c.stale) ? `${replies.filter((c) => c.stale).length} changed since written` : "all written and ready") : "none waiting"} />
-        <Figure label="Decisions" value={decisions.length} hint={week(decisions) ? `${week(decisions)} due this week` : "none due this week"} />
-        <Figure label="To do" value={todos.length} hint={`${week(todos) ? `${week(todos)} due this week` : "none due this week"} · ${d.done_today.length} done today`} />
-        {work.length > 0 && <Figure label="Bills and site checks" value={work.length} hint={`${count(work.filter((c) => c.type === "bill").length, "bill", "bills")} · ${count(work.filter((c) => c.type === "check").length, "site check", "site checks")}`} />}
+        <Figure label="To do" value={todos.length} hint={[nDecide ? count(nDecide, "decision", "decisions") : "", nFollow ? count(nFollow, "follow-up", "follow-ups") : "",
+          week(todos) ? `${week(todos)} due this week` : "none due this week", `${d.done_today.length} done today`].filter(Boolean).join(" · ")} />
         <Figure label="Overdue" value={late.length} red hint={late.length ? lateBy.filter(([n]) => n > 0).map(([n, one, many]) => `${n} ${n === 1 ? one : many}`).join(" · ") : "nothing is overdue"} />
       </div>
 
       <WorkTable title="Replies" hint="People waiting to hear from you" leadHead="Subject" lead={replyLead} cards={replies} cols={replyCols} empty="Nobody is waiting for a reply from you." />
-      {work.length > 0 && <WorkTable title="Bills and site checks" hint="From Buildertrend" leadHead="Item" lead={(c) => c.title} cards={work} cols={workCols} empty="No bill or site check is waiting." />}
-      <WorkTable title="Decisions" hint="Waiting for your decision" leadHead="Decision" lead={(c) => c.title} cards={decisions} cols={todoCols} order="newest first" empty="No decision is waiting for you." />
-      <WorkTable title="To do" hint="Things for you to do or have done" leadHead="Task" lead={(c) => c.title} cards={todos} cols={todoCols} order="newest first" empty="Nothing is waiting for you. New things appear here as emails, calls and bills come in." />
+      <WorkTable title="To do" hint="Decisions, things to do and follow-ups, in one list" leadHead="Task" lead={(c) => c.title} cards={todos} cols={todoCols} order="newest first"
+        more={<Link href="/chase" className="hidden text-[12.5px] text-muted hover:text-accent hover:underline md:inline">Construction follow-ups, everyone</Link>}
+        empty="Nothing is waiting for you. New things appear here as emails, calls and bills come in." />
     </>
   );
 }
@@ -434,7 +436,7 @@ function PersonCard({ r, onGive, onRemind }: { r: TeamRow; onGive: () => void; o
   const [open, setOpen] = React.useState(false);
   const all = [...r.now, ...r.later];
   const n = (t: DayCard["type"]) => all.filter((c) => c.type === t).length;
-  const parts = [[n("todo"), "to-do", "to-dos"], [n("bill"), "bill", "bills"], [n("check"), "site check", "site checks"], [n("reply"), "reply", "replies"]] as const;
+  const parts = [[n("todo") + n("bill") + n("check"), "to-do", "to-dos"], [n("reply"), "reply", "replies"]] as const;      // one list named "to do": decisions and follow-ups are in it
   const total = r.left + r.done_today;
   const rows = byUrgency(all).slice(0, open ? all.length : 3);
   return (

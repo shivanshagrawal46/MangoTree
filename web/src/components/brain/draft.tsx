@@ -1,18 +1,24 @@
 "use client";
 
-/* A reply that is written and waiting. Read it, change a word if needed, send
-   it from Outlook. Nothing is sent from here. */
+/* A reply that is written and waiting. Read it, change a word if needed, and then one of:
+     Send          — it goes out now, from Rakesh Sir's mailbox, to the people it is addressed to
+                     (his press only, and asked once more before it goes: it cannot be taken back);
+     Send to team  — it is handed to one or more of Manjunath Sir, JP Sir, Shivansh and Payeal Ma'am:
+                     it moves to their list, an email with the whole reply goes to them, and it stays
+                     on the list until it has gone out;
+     Put in Outlook Drafts, Copy — as before, for sending by hand. */
 
 import * as React from "react";
 import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Check, Copy, ExternalLink, Mail, MailOpen, RefreshCw, X } from "lucide-react";
+import { Check, Copy, ExternalLink, Mail, MailOpen, RefreshCw, Send, Users, X } from "lucide-react";
 import { api, subscribeJob } from "@/lib/api";
-import { Badge, Button, Input } from "@/components/ui";
+import { Badge, Button, Dialog, DialogContent, Input } from "@/components/ui";
 import { useEvidence } from "@/components/evidence";
+import { useUser } from "@/components/providers";
 import { ago, cn, fmtDate, fmtET } from "@/lib/utils";
-import { errText, type Draft, type Person, type Verification } from "@/lib/brain";
+import { OWNER_LABEL, errText, type Draft, type HandTo, type Person, type Verification } from "@/lib/brain";
 import { copyText } from "@/components/email-draft";
 
 function people(list: Person[] | undefined) {
@@ -73,6 +79,9 @@ export function DraftCard({ draft, compact, onChange, showProperty = true }: { d
   const [open, setOpen] = React.useState(!compact);
   const refresh = useDraftRefresh();
   const evidence = useEvidence();
+  const { user } = useUser();
+  const qc = useQueryClient();
+  const [ask, setAsk] = React.useState<"send" | "team" | null>(null);
   const area = React.useRef<HTMLTextAreaElement>(null);
   // The email it answers comes with a single draft, not with a list of them: fetched when the card is opened.
   const whole = useQuery({ queryKey: ["brain", "draft-original", draft.draft_id], queryFn: () => api.get<Draft>(`/brain/drafts/${draft.draft_id}`),
@@ -117,8 +126,39 @@ export function DraftCard({ draft, compact, onChange, showProperty = true }: { d
     }).catch((e) => { toast.error(errText(e)); setBusy(null); });
   };
 
+  const changed = () => body.trim() !== (d.body || "").trim() || subject.trim() !== (d.subject || "").trim();
+  /* Send: what is on the screen goes out now, from Rakesh Sir's mailbox, inside the conversation it answers. */
+  const send = async () => {
+    setBusy("send");
+    try {
+      if (changed()) await api.patch<Draft>(`/brain/drafts/${d.draft_id}`, { body, subject });
+      const next = await api.post<Draft>(`/brain/drafts/${d.draft_id}/send`);
+      setAsk(null); setD(next); refresh(); qc.invalidateQueries({ queryKey: ["brain", "myday"] });
+      toast.success(next.sent_as_reply === false ? "Sent — as a new email, not inside the conversation" : `Sent to ${(next.to || []).map((t) => t.name || t.email).join(", ")}`,
+        next.sent_as_reply === false && next.why_not ? { description: `Because ${next.why_not}.` } : undefined);
+      onChange?.(next);
+    } catch (e) { toast.error(errText(e, "Could not send it")); } finally { setBusy(null); }
+  };
+  /* Send to team: the reply moves to their list and an email with the whole of it goes to them. */
+  const toTeam = async (people: HandTo[], note: string) => {
+    setBusy("team");
+    try {
+      if (changed()) await api.patch<Draft>(`/brain/drafts/${d.draft_id}`, { body, subject });
+      const next = await api.post<Draft>(`/brain/drafts/${d.draft_id}/team`, { to: people.map((p) => p.person), note });
+      setAsk(null); setD(next); refresh(); qc.invalidateQueries({ queryKey: ["brain", "myday"] });
+      toast.success(`Sent to ${people.map((p) => p.name).join(", ")}`, { description: "It is on their list now, and an email with the reply is on its way to them." });
+      onChange?.(next);
+    } catch (e) { toast.error(errText(e, "Could not send it to the team")); } finally { setBusy(null); }
+  };
+
   const done = d.status !== "ready";
   const names = (d.properties || []).map((p) => p.name).join(" · ");
+  const writtenFor = d.sender || "rakesh";
+  // Why Send is switched off on this reply, in words (the server refuses for the same reasons).
+  const noSend = user?.role !== "ceo" ? "Only Rakesh Sir can send from his mailbox"
+    : writtenFor !== "rakesh" ? `It is written for ${OWNER_LABEL[writtenFor] || writtenFor} and goes out from his own mailbox`
+      : d.stale?.why ? "It is out of date: rewrite it first"
+        : !(d.to || []).some((t) => t.email) ? "Nobody is in To" : "";
   return (
     <div className="rounded-lg border border-line bg-elev overflow-hidden">
       <button type="button" onClick={() => setOpen((v) => !v)} className="w-full text-left px-4 pt-3 pb-2.5 flex items-start gap-3">
@@ -138,6 +178,7 @@ export function DraftCard({ draft, compact, onChange, showProperty = true }: { d
             {d.status === "dismissed" && <Badge>Dismissed</Badge>}
             {d.status === "superseded" && <Badge>Replaced by a newer draft</Badge>}
             {d.status === "ready" && d.urgency === "today" && <Badge tone="high">Reply today</Badge>}
+            {d.status === "ready" && (d.team?.names?.length || 0) > 0 && <Badge tone="accent"><Users size={10} /> With {d.team!.names.join(", ")}{d.team!.by_name ? ` · sent by ${d.team!.by_name}` : ""}{d.team!.at ? ` · ${fmtET(d.team!.at)}` : ""}</Badge>}
             {d.outlook?.saved_at && d.outlook.as_reply && <Badge tone="good">In Outlook — reply all, in the conversation</Badge>}
             {d.outlook?.saved_at && !d.outlook.as_reply && <Badge tone="high">In Outlook — as a new email, not in the conversation</Badge>}
             <span>written {ago(d.created_at)}</span>
@@ -188,7 +229,9 @@ export function DraftCard({ draft, compact, onChange, showProperty = true }: { d
           <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
             {!done && (
               <>
-                <Button size="sm" variant="primary" onClick={toOutlook} disabled={!!busy}><MailOpen size={13} /> {busy === "outlook" ? "Placing…" : d.outlook?.saved_at ? "Update in Outlook Drafts" : "Put in Outlook Drafts"}</Button>
+                <Button size="sm" variant="primary" onClick={() => setAsk("send")} disabled={!!busy || !!noSend}><Send size={13} /> {busy === "send" ? "Sending…" : "Send"}</Button>
+                <Button size="sm" onClick={() => setAsk("team")} disabled={!!busy}><Users size={13} /> {busy === "team" ? "Sending…" : "Send to team"}</Button>
+                <Button size="sm" onClick={toOutlook} disabled={!!busy}><MailOpen size={13} /> {busy === "outlook" ? "Placing…" : d.outlook?.saved_at ? "Update in Outlook Drafts" : "Put in Outlook Drafts"}</Button>
                 <Button size="sm" onClick={async () => { if (await copy(`Subject: ${subject}\n\n${body}`)) toast.success("Copied"); }}><Copy size={13} /> Copy</Button>
                 {d.reply_to_sha && d.origin !== "chat" && <Button size="sm" variant="ghost" onClick={() => setRedo((v) => !v)}><RefreshCw size={13} /> Rewrite</Button>}
                 <Button size="sm" variant="ghost" onClick={() => patch({ status: "sent" }, "sent").then(() => toast.success("Marked as sent"))}><Check size={13} /> I sent it</Button>
@@ -199,11 +242,68 @@ export function DraftCard({ draft, compact, onChange, showProperty = true }: { d
             <span className="flex-1" />
             {d.outlook?.web_link && <a href={d.outlook.web_link} target="_blank" rel="noreferrer" className="text-xs text-accent hover:underline flex items-center gap-1"><ExternalLink size={11} /> Open in Outlook</a>}
             {d.outlook?.saved_at && !d.outlook.as_reply && d.outlook.why_not && <span className="basis-full text-[11.5px] text-high">Saved as a new email because {d.outlook.why_not}.</span>}
+            {!done && noSend && <span className="basis-full text-[12px] text-faint">Send is off here: {noSend.charAt(0).toLowerCase() + noSend.slice(1)}.</span>}
             {d.reply_to_sha && !original && <button type="button" onClick={() => evidence.open({ sha: d.reply_to_sha! })} className="text-xs text-accent hover:underline">See the email it answers</button>}
           </div>
           {d.lookups?.length ? <div className="mt-2 text-[11px] text-faint">Looked at: {d.lookups.slice(0, 3).join("; ")}</div> : null}
         </div>
       )}
+
+      <Dialog open={ask === "send"} onOpenChange={(o) => !o && busy !== "send" && setAsk(null)}>
+        <DialogContent title="Send this reply now?" description={`It goes from Rakesh Sir's mailbox, ${d.reply_to_sha ? "as a reply in the same conversation" : "as a new email"}. Once sent it cannot be taken back.`}>
+          <dl className="grid grid-cols-[64px_minmax(0,1fr)] gap-x-3 gap-y-1.5 text-[13px]">
+            <dt className="text-muted">To</dt><dd className="break-words">{people(d.to) || "—"}</dd>
+            {(d.cc || []).length > 0 && <><dt className="text-muted">Copy</dt><dd className="break-words">{people(d.cc)}</dd></>}
+            <dt className="text-muted">Subject</dt><dd className="break-words">{subject || "(no subject)"}</dd>
+          </dl>
+          {(d.verification?.open?.length || 0) > 0 && <div className="mt-3 text-[12.5px] text-high">{d.verification!.open.length} point{d.verification!.open.length === 1 ? " is" : "s are"} still marked “check before you rely on this” on this reply.</div>}
+          <div className="mt-5 flex justify-end gap-2">
+            <Button variant="ghost" onClick={() => setAsk(null)} disabled={busy === "send"}>Cancel</Button>
+            <Button variant="primary" onClick={send} disabled={busy === "send"}><Send size={13} /> {busy === "send" ? "Sending…" : "Send now"}</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={ask === "team"} onOpenChange={(o) => !o && busy !== "team" && setAsk(null)}>
+        <DialogContent title="Send to team" description="It moves to their list and an email with the whole reply goes to them. Nothing goes to the people the reply is addressed to.">
+          {ask === "team" && <TeamPick already={d.team?.to || []} busy={busy === "team"} onCancel={() => setAsk(null)} onSend={toTeam} />}
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+/* Who the reply is handed to: one or more of the four, and a line to go with it if wanted. */
+function TeamPick({ already, busy, onCancel, onSend }: { already: string[]; busy: boolean; onCancel: () => void; onSend: (people: HandTo[], note: string) => void }) {
+  const q = useQuery({ queryKey: ["brain", "team-for-replies"], queryFn: () => api.get<HandTo[]>("/brain/team-for-replies"), staleTime: Infinity });
+  const [picked, setPicked] = React.useState<string[]>(already);
+  const [note, setNote] = React.useState("");
+  const all = q.data || [];
+  const flip = (p: string) => setPicked((cur) => (cur.includes(p) ? cur.filter((x) => x !== p) : [...cur, p]));
+  return (
+    <div className="space-y-4">
+      <div>
+        <div className="mb-1.5 text-[12px] font-medium text-muted">Who <span className="font-normal text-faint">(one or more)</span></div>
+        <div className="flex flex-wrap gap-2">
+          {all.map((p) => {
+            const on = picked.includes(p.person);
+            return (
+              <button key={p.person} type="button" role="checkbox" aria-checked={on} onClick={() => flip(p.person)}
+                className={cn("inline-flex h-8 items-center gap-2 rounded-lg border px-3 text-[13px] transition-colors", on ? "border-accent bg-accent-soft font-medium text-accent" : "border-line-strong/70 text-fg hover:bg-hover")}>
+                <span className={cn("grid h-4 w-4 place-items-center rounded border", on ? "border-accent bg-accent text-white" : "border-line-strong bg-elev")}>{on && <Check size={11} strokeWidth={3} />}</span>
+                {p.name}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      <div>
+        <div className="mb-1.5 text-[12px] font-medium text-muted">A line for them <span className="font-normal text-faint">(optional)</span></div>
+        <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. Check the amount with Wes before it goes" maxLength={300} />
+      </div>
+      <div className="flex justify-end gap-2">
+        <Button variant="ghost" onClick={onCancel} disabled={busy}>Cancel</Button>
+        <Button variant="primary" disabled={busy || picked.length === 0} onClick={() => onSend(all.filter((p) => picked.includes(p.person)), note.trim())}><Users size={13} /> {busy ? "Sending…" : "Send to team"}</Button>
+      </div>
     </div>
   );
 }

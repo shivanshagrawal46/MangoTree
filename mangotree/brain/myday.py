@@ -41,6 +41,12 @@ TEAM: Dict[str, Dict[str, Any]] = {
     "manjunath": {"name": "Manjunath Sir", "first": "Manjunath Sir", "email": "manjunath@mtreh.com", "follow": "manju"},
     "shivansh": {"name": "Shivansh", "first": "Shivansh", "email": "shivansh@mtreh.com", "follow": None},
 }
+#: Who a written reply can be handed to with "Send to team" (admin, 2026-11-26): these four and nobody else,
+#: one or several at a time. Payeal Ma'am has no login here: the email reaches her, and she has no list on the site.
+HAND_TO: Dict[str, Dict[str, Any]] = {
+    "manjunath": TEAM["manjunath"], "jp": TEAM["jp"], "shivansh": TEAM["shivansh"],
+    "payeal": {"name": "Payeal Ma'am", "first": "Payeal Ma'am", "email": "payeal.mtreh@gmail.com", "follow": None},
+}
 NOW = 5                      # how many are shown as "do now"
 #: US Eastern. 6:30 since 2026-11-21, so the email is made after the 6 am reading of new mail
 #: (admin: yes to "just after it, about 6:30 am"); 4:30 before that.
@@ -85,6 +91,12 @@ def _aware(d: Any) -> Optional[datetime]:
     return d.replace(tzinfo=d.tzinfo or timezone.utc) if isinstance(d, datetime) else None
 
 
+def holders(d: Dict[str, Any]) -> List[str]:
+    """Whose list a written reply is on: the people it was handed to, or else the person it is written for."""
+    to = [p for p in ((d.get("team") or {}).get("to") or []) if p]
+    return to or [d.get("sender") or "rakesh"]
+
+
 def et_today(at: Optional[datetime] = None) -> datetime:
     """Midnight US Eastern of today, as a UTC moment."""
     e = eastern.to_et(at or now())
@@ -124,13 +136,18 @@ class MyDay:
         drafts = self.store.list_drafts() if drafts is None else drafts
         follow = self._follow_lines() if follow is None else follow
         out: List[Dict[str, Any]] = []
-        mine_drafts = [d for d in drafts if d.get("status", "ready") == "ready" and (d.get("sender") or "rakesh") == person]
+        ready = [d for d in drafts if d.get("status", "ready") == "ready"]
+        mine_drafts = [d for d in ready if person in holders(d)]
         by_reply = {d.get("reply_to_sha"): d for d in mine_drafts if d.get("reply_to_sha")}
+        # A reply handed to someone else is on their list now: the "reply to this" to-do does not stay behind on mine.
+        handed = {d.get("reply_to_sha") for d in ready if d.get("reply_to_sha") and person not in holders(d)}
         used = set()
         for f in files:
             pid = f["property_id"]
             for i in BrainStore.open_items(f):
                 if i.get("owner") != person:
+                    continue
+                if i.get("kind") == "reply" and i.get("source_sha") in handed:
                     continue
                 due = _aware(i.get("due"))
                 d = by_reply.get(i.get("source_sha")) if i.get("kind") == "reply" and i.get("source_sha") else None
@@ -141,7 +158,7 @@ class MyDay:
                 if d:  # the reply is already written: the to-do is "send it"
                     used.add(d["draft_id"])
                     card.update({"type": "reply", "draft_id": d["draft_id"], "href": f"/drafts?open={d['draft_id']}", "stale": bool(d.get("stale")),
-                                 "urgency": d.get("urgency"), "to": [t.get("name") or t.get("email") for t in d.get("to") or []][:3], **self._letter(d)})
+                                 "urgency": d.get("urgency"), "to": [t.get("name") or t.get("email") for t in d.get("to") or []][:3], **self._letter(d), **self._handed(d)})
                 out.append(card)
         for d in mine_drafts:
             if d["draft_id"] in used:
@@ -151,7 +168,7 @@ class MyDay:
             out.append({"key": f"reply:{d['draft_id']}", "type": "reply", "kind": "reply", "title": f"Send the reply to {', '.join(x for x in to if x) or 'them'}: {d.get('subject') or ''}"[:160],
                         "detail": d.get("why") or "", "property_id": pids[0], "property": name_of(pids[0]), "due": None, "overdue": False,
                         "opened_at": _aware(d.get("created_at")), "draft_id": d["draft_id"], "href": f"/drafts?open={d['draft_id']}", "stale": bool(d.get("stale")),
-                        "urgency": d.get("urgency"), "to": to, **self._letter(d)})
+                        "urgency": d.get("urgency"), "to": to, **self._letter(d), **self._handed(d)})
         fkey = (TEAM.get(person) or {}).get("follow")
         for i in follow:
             if not fkey or i.get("owner") != fkey:
@@ -174,6 +191,12 @@ class MyDay:
         return {"from_name": r.get("from_name") or to.get("name") or to.get("email") or "", "subject": r.get("subject") or d.get("subject") or "",
                 "received": _aware(r.get("date")), "stale_kind": (d.get("stale") or {}).get("kind") or ("partly" if d.get("stale") else None),
                 "why": d.get("why") or ""}
+
+    @staticmethod
+    def _handed(d: Dict[str, Any]) -> Dict[str, Any]:
+        """A reply that was handed to this person says who handed it."""
+        t = d.get("team") or {}
+        return {"assigned_by": t.get("by"), "assigned_by_name": t.get("by_name")} if t.get("to") else {}
 
     @staticmethod
     def score(c: Dict[str, Any], today: datetime) -> int:
@@ -321,6 +344,72 @@ class MyDay:
                                 subject=subject, html=html, text=text, meta={"key": key, "to": to, "by": by.get("user_id") or "rakesh", "test": test})
         return {"to": person["email"], "name": person["name"], "subject": subject, **q}
 
+    # ------------------------------------------------- a written reply, handed to the team
+    def hand_reply(self, by: Dict[str, Any], *, draft_id: str, to: Sequence[str], note: str = "", test: bool = False) -> Dict[str, Any]:
+        """"Send to team": a reply that is written and waiting is handed to one or more of the four people
+        in ``HAND_TO``. From that moment it is on THEIR list of replies (and off the list it was on), each
+        of them gets one email with the whole reply in it, and it stays on the list until it has gone out:
+        that is the follow-up, and nobody has to keep it. Nothing is sent to the people the reply is for."""
+        people = list(dict.fromkeys(str(p) for p in (to or [])))
+        if not people or any(p not in HAND_TO for p in people):
+            raise ValueError("A reply can be sent to: " + ", ".join(t["name"] for t in HAND_TO.values()) + ".")
+        d = self.store.get_draft(draft_id)
+        if not d:
+            raise KeyError(draft_id)
+        if d.get("status") != "ready":
+            raise ValueError("That reply is no longer waiting: it was sent or set aside.")
+        who = by.get("name") or "Rakesh Sir"
+        team = {"to": people, "names": [HAND_TO[p]["name"] for p in people], "by": by.get("user_id") or "rakesh", "by_name": who,
+                "at": now(), "note": str(note or "").strip()[:600]}
+        self.store.update_draft(draft_id, {"team": team})
+        # The "reply to this" to-do goes with it, to the first of them who has a list here.
+        first = next((p for p in people if p in TEAM), None)
+        sha = d.get("reply_to_sha")
+        if first and sha:
+            for f in self.store.files.find({"open_items": {"$elemMatch": {"source_sha": sha, "status": "open", "kind": "reply"}}}, {"property_id": 1, "open_items": 1}):
+                for i in f.get("open_items") or []:
+                    if i.get("status") == "open" and i.get("kind") == "reply" and i.get("source_sha") == sha:
+                        self.store.files.update_one({"property_id": f["property_id"], "open_items.id": i["id"]},
+                                                    {"$set": {"open_items.$.owner": first, "open_items.$.assigned_by": team["by"], "open_items.$.assigned_by_name": who,
+                                                              "open_items.$.assigned_at": team["at"], "updated_at": now()}})
+        subject = (d.get("in_reply_to") or {}).get("subject") or d.get("subject") or ""
+        for pid in d.get("property_ids") or [bc.GENERAL_ID]:
+            self.store.add_activity(pid, at=now(), kind="task_given", who=who, title=f"Reply sent to the team ({', '.join(team['names'])}): {subject}"[:200],
+                                    summary=team["note"], relevance="minor", extra={"draft_id": draft_id, "to": people})
+        mail = self.reply_mail(d, team, test=test)
+        q = self.outbox().queue(kind="reply_to_team", ref=f"{draft_id}:{'+'.join(sorted(people))}:{eastern.to_et(now()):%Y-%m-%d}{':test' if test else ''}",
+                                to=[(HAND_TO[p]["name"], HAND_TO[p]["email"]) for p in people], subject=mail["subject"], html=mail["html"], text=mail["text"],
+                                send_after=now(),          # due at once: it leaves on the scheduler's next 20-second look, not at the ten-minute round
+                                meta={"draft_id": draft_id, "to": people, "by": team["by"], "test": test})
+        return {"team": team, "email": {"to": [HAND_TO[p]["email"] for p in people], "subject": mail["subject"], **q}}
+
+    def reply_mail(self, d: Dict[str, Any], team: Dict[str, Any], *, test: bool = False) -> Dict[str, Any]:
+        """The email that hands a written reply to the team: what it answers, who it goes to, and the reply itself in full."""
+        from mangotree.retrieve.config import PUBLIC_URL
+        from .billmail import _h, _p, _table, _text_rows, _wrap
+        who = team.get("by_name") or "Rakesh Sir"
+        r = d.get("in_reply_to") or {}
+
+        def names(key: str) -> str:
+            return ", ".join(f"{t.get('name')} <{t.get('email')}>" if t.get("name") and t.get("name") != t.get("email") else str(t.get("email") or t.get("name") or "")
+                             for t in d.get(key) or []) or "—"
+        rows = [("Subject", str(d.get("subject") or "(no subject)")), ("Property", ", ".join(name_of(p) for p in d.get("property_ids") or [bc.GENERAL_ID]))]
+        if r.get("subject"):
+            rows.append(("It answers", f"{r.get('from_name') or 'the email'} — “{r['subject']}”" + (f", {eastern.label(eastern.to_et(_aware(r['date'])))}" if _aware(r.get("date")) else "")))
+        rows += [("Goes to", names("to")), ("Copy to", names("cc"))]
+        intro = f"{', '.join(team.get('names') or [])}: {who} has sent you this reply to deal with."
+        steps = ("Read it, change what needs changing, and send it from your own mailbox with Rakesh Sir in copy. "
+                 "It stays on the list in MangoTree until it has gone out; once it has, it leaves the list by itself.")
+        body = str(d.get("body") or "").strip()
+        link = f"{PUBLIC_URL}/replies/{d['draft_id']}"
+        head = [TEST_NOTE] if test else []
+        note = [f"Note from {who}: {team['note']}"] if team.get("note") else []
+        html = _wrap([_p(x) for x in head] + [_p(intro)] + [_p(x) for x in note] + [_table(rows), _h("The reply as written"),
+                     f'<div style="margin:6px 0 12px;padding:12px 14px;border:1px solid #d9d9d9;border-radius:6px;white-space:pre-wrap">{_html.escape(body)}</div>',
+                     f'<p style="margin:14px 0"><a href="{_html.escape(link)}" style="color:#0b6b4f">Open it in MangoTree</a></p>', _p(steps), _p("All times are US Eastern.", small=True)])
+        text = "\n".join(head + [intro] + note + ["", _text_rows(rows), "", "THE REPLY AS WRITTEN", "", body, "", f"Open it in MangoTree: {link}", "", steps, "All times are US Eastern."])
+        return {"subject": f"{'TEST — ' if test else ''}From {who}, for you to send: {d.get('subject') or '(no subject)'}"[:180], "html": html, "text": text}
+
     @staticmethod
     def task_mail(item: Dict[str, Any], pid: str, *, test: bool = False) -> Dict[str, Any]:
         from mangotree.retrieve.config import PUBLIC_URL
@@ -383,8 +472,9 @@ class MyDay:
     # ------------------------------------------------------ the morning email
     @staticmethod
     def streams(cards: Sequence[Dict[str, Any]], today: datetime) -> Dict[str, List[Tuple[str, List[Dict[str, Any]]]]]:
-        """The same split the Today page shows: replies (Late / Today / Waiting longer), to-dos (Decide / Do),
-        and bills and site checks. Two kinds of work are never put in one list."""
+        """The same split the Today page shows: replies (Late / Today / Waiting longer), and ONE list named
+        "To do" that holds the decisions, the things to do and the follow-ups on bills and sites together
+        (admin, 2026-11-26: "see to do, decision and follow up as one only with name to do"), late first."""
         day = eastern.to_et(today).date()
 
         def due_today(c):                                             # a due date is a calendar day (kept at 00:00 UTC): never shift it by a time zone
@@ -398,18 +488,16 @@ class MyDay:
             far = datetime(2999, 1, 1, tzinfo=timezone.utc)
             return [c for _, c in sorted(enumerate(rows), key=lambda x: (not x[1].get("overdue"), x[1].get("due") or far, x[0]))]
         replies = [c for c in cards if c["type"] == "reply"]
-        todos = [c for c in cards if c["type"] == "todo"]
-        work = [c for c in cards if c["type"] in ("bill", "check")]
+        todos = [c for c in cards if c["type"] != "reply"]
         return {
             "replies": [("Late", [c for c in replies if c.get("overdue")]), ("Today", [c for c in replies if not c.get("overdue") and fresh(c)]),
                         ("Waiting longer", [c for c in replies if not c.get("overdue") and not fresh(c)])],
-            "todos": [("Decide", urgent_first([c for c in todos if c.get("kind") == "decision"])), ("Do", urgent_first([c for c in todos if c.get("kind") != "decision"]))],
-            "work": [("Bills", [c for c in work if c["type"] == "bill"]), ("Site checks", [c for c in work if c["type"] == "check"])],
+            "todos": [("", urgent_first(todos))],
         }
 
     def morning_mail(self, person: str, *, today: Optional[datetime] = None, test: bool = False, show: int = 5) -> Dict[str, Any]:
-        """The morning email, in the shape of the Today page: only the person's own work, the replies and
-        the to-dos in separate sections, the first few of each and how many more there are."""
+        """The morning email, in the shape of the Today page: only the person's own work, in two sections —
+        the replies to send, and one list named "To do" — the first few of each and how many more there are."""
         from mangotree.retrieve.config import PUBLIC_URL
         from .billmail import _h, _p, _wrap
         today = today or now()
@@ -419,13 +507,12 @@ class MyDay:
         cards = b["now"] + b["later"]
         st = self.streams(cards, today)
         count = lambda key: sum(len(rows) for _, rows in st[key])                      # noqa: E731
-        n_reply, n_todo, n_work, n_late = count("replies"), count("todos"), count("work"), sum(1 for c in cards if c.get("overdue"))
-        n_decide = len(st["todos"][0][1])
+        n_reply, n_todo, n_late = count("replies"), count("todos"), sum(1 for c in cards if c.get("overdue"))
+        n_decide = sum(1 for c in cards if c["type"] == "todo" and c.get("kind") == "decision")
 
         def plural(n: int, one: str, many: str) -> str:
             return f"{n} {one if n == 1 else many}"
         counts = [x for x in (plural(n_reply, "reply to send", "replies to send") if n_reply else "",
-                              plural(n_work, "bill or site check", "bills and site checks") if n_work else "",
                               plural(n_todo, "to-do", "to-dos") if n_todo else "") if x]
         intro = f"{t['first']}, good morning. " + ("Your own work for today: " + ", ".join(counts) + (f". {plural(n_late, 'is', 'are')} late." if n_late else ".")
                                                      if cards else "Nothing is waiting for you this morning.")
@@ -467,8 +554,9 @@ class MyDay:
             for label, rows in st[key]:
                 if not rows or room <= 0:
                     continue
-                parts.append(f'<p style="margin:12px 0 4px;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#8a8578">{_html.escape(label)} · {len(rows)}</p>')
-                text.append(f"{label} ({len(rows)})")
+                if label:
+                    parts.append(f'<p style="margin:12px 0 4px;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#8a8578">{_html.escape(label)} · {len(rows)}</p>')
+                    text.append(f"{label} ({len(rows)})")
                 for c in rows[:room]:
                     head, sub = name_of_card(c), note_of(c)
                     parts.append(f'<p style="margin:8px 0 1px;font-weight:600">{_html.escape(head)}</p><p style="margin:0;color:#555;font-size:13px">{_html.escape(sub)}</p>')
@@ -480,8 +568,7 @@ class MyDay:
                 parts.append(f'<p style="margin:10px 0 0;color:#8a8578;font-size:13px">{more}</p>')
                 text.extend([more, ""])
         section("Replies to send", "replies")
-        section("Bills and site checks", "work")
-        section("My to-dos", "todos")
+        section("To do", "todos")
         if person == "rakesh":
             line = "The team: " + " · ".join(f"{r['name']} {r['left']} left" + (f" ({r['late']} late)" if r["late"] else "") for r in self.team("rakesh")) + "."
             parts.append(f'<p style="margin:18px 0 0;font-size:13px;color:#555">{_html.escape(line)} <a href="{_html.escape(PUBLIC_URL)}/team" style="color:#0b6b4f">Open the team page</a></p>')
@@ -493,7 +580,7 @@ class MyDay:
         text += [f"Open my day: {link}", "", foot]
         subject = f"{'TEST — ' if test else ''}Your day, {et.day} {et:%b}: " + (", ".join(counts) + (f", {n_late} late" if n_late else "") if cards else "nothing waiting")
         return {"to": (t["name"], t["email"]), "subject": subject[:180], "html": _wrap(parts), "text": "\n".join(text), "now": len(b["now"]), "later": len(b["later"]),
-                "replies": n_reply, "todos": n_todo, "work": n_work, "late": n_late, "decide": n_decide}
+                "replies": n_reply, "todos": n_todo, "late": n_late, "decide": n_decide}
 
     def send_morning(self, *, people: Optional[Sequence[str]] = None, today: Optional[datetime] = None, test: bool = False, plan: bool = True) -> Dict[str, Any]:
         """Read each person's list over, then queue their morning email. One email per person per day."""
