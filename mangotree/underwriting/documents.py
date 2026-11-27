@@ -8,11 +8,23 @@ value the file does not hold yet is printed as ``[what is missing]`` and listed
 under ``missing`` so nobody signs a blank.
 
 The model is RKB's own Maryland set: the signed lender package of 3704 Marmon
-Avenue (30 Oct 2026) and the 308 E 21st St commitment letter (19 Nov 2026). The
-structure is the same in every state: the owner gives RKB a note for the
-contract price; ROI Blocks assigns that price to RKB and releases the owner;
-RKB pays for the work in draws; at the sale the settlement agent pays RKB in
-full, and what RKB owes ROI Blocks and the contractor is RKB's own matter.
+Avenue (30 Oct 2026) and the 308 E 21st St set as RKB's Maryland attorney, Brian
+T. Gallagher, finished it (24 Nov 2026). The structure is the same in every
+state: RKB makes the owner a LOAN for the contract price and pays the work from
+its proceeds in draws; the owner is unconditionally bound to repay it on the
+note. ROI Blocks does not assign its contract price to RKB and the note does
+not replace a receivable: Mr Gallagher took that structure out of every paper
+(no "assignment", "substitution", "Receivable", "Principal adjustment" or
+Affidavit of Consideration). At the sale the settlement agent pays RKB in full,
+and what RKB owes ROI Blocks and the contractor is RKB's own matter.
+
+His other rules, kept here for every file: the interest-free period is counted
+in DAYS from the day the Note is signed ("the first 180 days following execution
+of the Note"), never in months from recording; maturity is "the day before the
+first one-year anniversary of the execution of the Note", in words, not a date;
+the instruments signed at the table (Note, Deed of Trust, Amendment, Contractor
+Lien Covenant) leave their date as a line written in at signing; the trustee is
+named on the Deed of Trust without an address.
 
 What changes by state is written in ``_security`` and ``STATE_TEXT``: the
 instrument (deed of trust, or a mortgage in Florida), the remedy clause, the
@@ -159,7 +171,7 @@ STATE_TEXT: Dict[str, Dict[str, Any]] = {
     # lic_body / lic_short / lic_site: how the contractor's licence is named in a sentence, in a short
     # reference, and where it is looked up again the day before closing. book: how a recorded deed is cited.
     "MD": {"law": "the State of Maryland", "records": "the Land Records of {county}, Maryland", "notary": "STATE OF MARYLAND, CITY/COUNTY OF ____________________, TO WIT:",
-           "lien_law": "To the fullest extent permitted by applicable law, any lien claim of Contractor shall be subordinate to Assignee's Deed of Trust.",
+           "lien_law": "To the fullest extent permitted by applicable law, any lien claim of Contractor shall be subordinate to Lender's Deed of Trust.",
            "courts": "the state or federal courts located in Maryland",
            "lic_body": "the Maryland Home Improvement Commission", "lic_short": "MHIC", "lic_site": "the Maryland Department of Labor site", "book": "in Liber [__], Folio [__]"},
     "VA": {"law": "the Commonwealth of Virginia", "records": "the land records of {county}, Virginia", "notary": "COMMONWEALTH OF VIRGINIA, CITY/COUNTY OF ____________________, to-wit:",
@@ -207,6 +219,9 @@ class Ctx:
         self.principal = m["principal"]
         self.money, self.r = m, r
         self.rate, self.points, self.term, self.free = r["rate"], r["points"], r["term_months"], r["interest_free_months"]
+        # The interest-free period as the papers state it: in days from the day the Note is signed. Six months
+        # is 180 days, as RKB's attorney wrote it on 21st St (24 Nov 2026); three and twelve follow at 30 a month.
+        self.free_days = int(self.free) * 30
         self.fee = round(self.principal * self.points / 100.0, 2)
         # A minimum-interest clause is written only when a person entered one, and never beside an
         # interest-free period (the two contradict each other). It is not assumed (21st St, 25 Nov 2026).
@@ -327,8 +342,23 @@ class Ctx:
         return long_date(self.closing) or self.title_fill("closing date")
 
     @property
+    def signed_on_s(self) -> str:
+        """The date of an instrument signed at the table (Note, Deed of Trust, Amendment, Contractor Lien
+        Covenant): the closing date once it is entered, else a line the signer writes the date on, as RKB's
+        attorney left them on 21st St. Not a blank for anybody to fill before the closing."""
+        return long_date(self.closing) or "______________________, %d" % today().year
+
+    @property
     def maturity_s(self) -> str:
-        return long_date(self.maturity) or self.title_fill("maturity date (the day before the first anniversary of closing)")
+        """Maturity counted from the day the Note is signed, in words (RKB's attorney, 21st St, 24 Nov 2026)."""
+        if int(self.term or 12) == 12:
+            return "the day before the first one-year anniversary of the execution of the Note"
+        return "the day before the date %s (%d) months after the execution of the Note" % (_small(int(self.term)), int(self.term))
+
+    @property
+    def free_s(self) -> str:
+        """the first 180 days following execution of the Note"""
+        return "the first %d days following execution of the Note" % self.free_days
 
     @property
     def fee_line(self) -> str:
@@ -404,8 +434,9 @@ class Ctx:
 
     @property
     def trustee_on_instrument(self) -> str:
-        """As the deed of trust names the trustee. Maryland's is an individual, and the instrument says where he resides."""
-        return self.trustee.replace(", whose address is", ", a resident of the State of Maryland, whose address is", 1) if self.state == "MD" else self.trustee
+        """As the deed of trust names the trustee: by name only. RKB's attorney struck the residence and the
+        address from the Maryland instrument (21st St, 24 Nov 2026); his address is on its first page as preparer."""
+        return self.trustee_name if self.state == "MD" else self.trustee
 
     @property
     def attorney(self) -> Dict[str, str]:
@@ -420,10 +451,10 @@ class Ctx:
     @property
     def interest_sentence(self) -> str:
         if self.free:
-            return ("No interest accrues for the %s (%d) consecutive calendar months beginning on the date the %s securing this Note is recorded (the \"Interest-Free Period\"). "
-                    "Beginning on the first day after the Interest-Free Period ends, simple interest accrues on the unpaid principal at the rate of %s percent (%s%%) per year, "
+            return ("No interest shall accrue on the principal sum for the first %d days of this loan, beginning on the date of execution of this Note (the \"Interest-Free Period\"). "
+                    "Beginning on the first day after the Interest-Free Period ends, simple interest accrues on the unpaid principal sum at the rate of %s percent (%s%%) per year, "
                     "computed on the actual number of days elapsed over a 365-day year, until the principal is paid in full, both before and after the Maturity Date, acceleration or judgment."
-                    % (_small(self.free), self.free, self.instrument, _small(int(self.rate)), _rate(self.rate)))
+                    % (self.free_days, _small(int(self.rate)), _rate(self.rate)))
         return ("Simple interest accrues on the full principal sum of %s at the rate of %s percent (%s%%) per year, computed on the actual number of days elapsed over a 365-day year, "
                 "from the date the %s securing this Note is recorded among %s, whether or not Lender has then disbursed all of its funding undertaking, until the principal is paid in full, "
                 "both before and after the Maturity Date, acceleration or judgment. There is no interest-free period."
@@ -432,7 +463,7 @@ class Ctx:
     @property
     def terms_short(self) -> str:
         if self.free:
-            return "no interest for %d calendar months after this Security Instrument is recorded and simple interest at %s%% per year thereafter" % (self.free, _rate(self.rate))
+            return "no interest for %s and simple interest at %s%% per year thereafter" % (self.free_s, _rate(self.rate))
         return "simple interest at %s%% per year from the date this Security Instrument is recorded" % _rate(self.rate)
 
     @property
@@ -497,13 +528,13 @@ def commitment(c: Ctx) -> List[Dict[str, Any]]:
          H("1. LOAN TERMS"),
          Terms([["Borrower", c.borrower_full], ["Guarantor", ("%s, individually, unconditionally and continuing" % c.guarantor) if c.owner_kind == S.LLC else ""],
                 ["Property", c.property_line],
-                ["Note principal", "%s, the contract price under the %s Customer Agreement, assigned to Lender, with Borrower's Note given in substitution for it" % (usd(c.principal), ROI)],
+                ["Note principal", usd(c.principal)],
                 ["Purpose", "Renovation of the Property for resale. Business purpose. No proceeds to Borrower."],
                 ["Interest rate", ("%s%% simple per annum on the full principal sum from the date the %s records, whether or not Lender has disbursed all of it. No periodic payments." % (_rate(c.rate), c.instrument))
-                 if not c.free else ("No interest for the first %d months after the %s records; then %s%% simple per annum on the unpaid principal. No periodic payments." % (c.free, c.instrument, _rate(c.rate)))],
+                 if not c.free else ("No interest for the first %d days after execution of the Note; then %s%% simple per annum on the unpaid principal. No periodic payments." % (c.free_days, _rate(c.rate)))],
                 ["Minimum interest", ("%s (%d months), payable even on an earlier payoff" % (usd(c.min_interest), c.min_months)) if c.min_months else ""],
                 ["Loan fee", c.fee_line],
-                ["Maturity", "The earlier of (a) sale or transfer of the Property, or (b) the day before the first anniversary of the Note"],
+                ["Maturity", "The earlier of (a) sale or transfer of the Property, or (b) %s" % c.maturity_s],
                 ["Security", "%s-lien %s on the Property, with Loan Terms Rider, securing the full principal and all obligatory and protective advances%s"
                  % (c.lien_word.capitalize(), c.instrument, "; Continuing Personal Guaranty" if c.owner_kind == S.LLC else "")],
                 ["Lien position", ("Second lien, behind %s only. No other lien may remain." % " and ".join(l["holder"] for l in c.liens_staying)) if c.second else "First and only lien."],
@@ -566,8 +597,11 @@ def commitment(c: Ctx) -> List[Dict[str, Any]]:
           P("The undersigned accepts this Conditional Loan Commitment and agrees to satisfy each of its conditions.", lead="ACCEPTED AND AGREED"), c.sig_block(seal=False)]
     if c.owner_kind == S.LLC:
         b.append(Sign("GUARANTOR", ["______________________________", "%s, individually" % c.guarantor, "Date: ______________"]))
-    b += [P("%s confirms that it assigns the whole %s contract price to Lender and releases Borrower from paying it to %s, that it will look solely to Lender's draws for the amounts "
-            "Lender undertakes to fund, and that its own compensation is governed by the %s between %s and Lender." % (ROI, usd(c.principal), ROI, ALLOC, ROI), lead="ACKNOWLEDGED"),
+    # No assignment of the contract price (RKB's attorney, 21st St, 24 Nov 2026): the price is paid from the loan's
+    # proceeds, in the words of his Amendment, section 3.
+    b += [P("%s confirms that the %s contract price will be paid on Borrower's behalf from the proceeds of Lender's loan to Borrower, as disbursed by Lender under the Construction "
+            "Draw Agreement; that it will look solely to Lender's draws for the amounts Lender undertakes to fund and will not demand payment of the contract price directly from Borrower; and "
+            "that its own compensation is governed by the %s between %s and Lender." % (ROI, usd(c.principal), ALLOC, ROI), lead="ACKNOWLEDGED"),
           _roi_sign(), c.contractor_sign(cite=True)]
     return b
 
@@ -653,17 +687,13 @@ def _condition(c: Ctx, i: Dict[str, Any]) -> str:
 # ------------------------------------------------------------------ 2. the note
 def note(c: Ctx) -> List[Dict[str, Any]]:
     b = [Title("PROMISSORY NOTE", "Business-Purpose Loan · Secured by %s" % c.instrument),
-         Terms([["Date", c.closing_s], ["State", c.state_name], ["Property", c.property_line], ["Principal", usd(c.principal)], ["Loan No.", c.loan_no]]),
+         Terms([["Date", c.signed_on_s], ["State", c.state_name], ["Property", c.property_line], ["Principal", usd(c.principal)], ["Loan No.", c.loan_no]]),
          H("1. BORROWER'S PROMISE TO PAY"),
+         # A loan the Borrower must repay, nothing less: no "value received" by assignment, no substitution for the
+         # contract price, no principal that shrinks if the work stops (RKB's attorney, 21st St, 24 Nov 2026).
          P("FOR VALUE RECEIVED, %s (\"Borrower\"), promises to pay to the order of %s (\"Lender\"; Lender and any holder of this Note, the \"Note Holder\"), the principal sum of %s (%s), "
-           "together with interest as provided below." % (c.borrower_full, LENDER_FULL, words(c.principal), usd(c.principal))),
-         P("The value received by Borrower consists of (a) the assignment to Lender by %s (\"ROI Blocks\") of the contract price of %s owed by Borrower under the Customer Agreement between Borrower "
-           "and ROI Blocks for the renovation of the Property, as amended on the date of this Note (the \"Customer Agreement\"), and ROI Blocks' release of Borrower from any obligation to pay that "
-           "contract price to ROI Blocks, and (b) Lender's undertaking to pay for the renovation work at the Property on Borrower's behalf. This Note is given in substitution for, and in satisfaction of, "
-           "Borrower's obligation to pay the contract price under the Customer Agreement." % (ROI, usd(c.principal))),
-         P("If the renovation work under the Customer Agreement is not completed by ROI Blocks or its contractor, the principal due under this Note shall be the total of all amounts actually paid by "
-           "Lender for the renovation work, for insurance, taxes and preservation of the Property, and as protective advances, but not more than %s. The Note Holder's books and records shall be "
-           "prima facie evidence of such amounts." % usd(c.principal), lead="Principal adjustment."),
+           "together with interest as provided below. This Note evidences a loan made by Lender to Borrower, and Borrower is unconditionally obligated to repay the principal, interest and all "
+           "other sums due under this Note in accordance with its terms." % (c.borrower_full, LENDER_FULL, words(c.principal), usd(c.principal))),
          H("2. INTEREST"), P(c.interest_sentence)]
     if c.free:
         b.append(P("If the Note Holder accelerates this Note under Section 4 because of a default, interest at the rate of %s%% per year accrues from the date of acceleration even if the "
@@ -681,7 +711,7 @@ def note(c: Ctx) -> List[Dict[str, Any]]:
     b += [H("3. PAYMENT"),
           P("No monthly or other periodic payments are required. The entire unpaid principal, all accrued interest, and all other sums due under this Note and the %s are due and payable in full on the "
             "earlier of (a) the closing of any sale, conveyance or other transfer of all or any part of the Property or any interest in it, or (b) %s (the \"Maturity Date\").%s"
-            % (c.instrument, c.maturity_s, " If the Property is sold and this Note is paid in full during the Interest-Free Period, no interest is due." if c.free and not c.min_months else "")),
+            % (c.instrument, c.maturity_s.replace("of the Note", "of this Note"), " If the Property is sold and this Note is paid in full during the Interest-Free Period, no interest is due." if c.free and not c.min_months else "")),
           P("Payments shall be made in lawful money of the United States in immediately available funds to %s at %s, or at another place the Note Holder designates in writing. Payments shall be applied "
             "first to costs and expenses due under Section 4(D), then to accrued interest, and then to principal." % (LENDER, LENDER_ADDR))]
     if c.state == "MD" and c.second and c.owner_kind != S.LLC:
@@ -715,8 +745,9 @@ def note(c: Ctx) -> List[Dict[str, Any]]:
     b += [H("%d. GOVERNING LAW; JURY WAIVER; ASSIGNMENT" % (11 if c.capacity else 10)),
           P("This Note is governed by the laws of %s. The Note Holder may sell, assign or transfer this Note without notice to Borrower. If any provision of this Note is held unenforceable, the "
             "remaining provisions remain in effect. BORROWER AND THE NOTE HOLDER KNOWINGLY AND VOLUNTARILY WAIVE TRIAL BY JURY IN ANY ACTION ARISING OUT OF THIS NOTE." % c.sx["law"]),
-          P("IN WITNESS WHEREOF, Borrower has executed this Note under seal as of the date first written above."), c.sig_block(),
-          Note("[SIGN ORIGINAL ONLY · DO NOT RECORD · ORIGINAL TO LENDER'S CUSTODIAN]")]
+          # RKB's attorney took the "sign original only" marking off the Note (21st St, 24 Nov 2026); the closing
+          # instructions say where the original goes.
+          P("IN WITNESS WHEREOF, Borrower has executed this Note under seal as of the date first written above."), c.sig_block()]
     return b
 
 
@@ -804,11 +835,11 @@ def security(c: Ctx) -> List[Dict[str, Any]]:
     if c.state == "VA":
         head.append(Note("THIS IS A CREDIT LINE DEED OF TRUST. Maximum aggregate principal: %s. Noteholder for notices: %s, %s." % (usd(c.principal), LENDER, LENDER_ADDR)))
     if c.is_mortgage:
-        head.append(P("THIS MORTGAGE (this \"Security Instrument\") is made as of %s by %s (\"Borrower\"), as mortgagor, whose address is %s, to %s, whose address is %s (\"Lender\"), as mortgagee."
-                      % (c.closing_s, c.borrower_full, c.borrower_addr, LENDER_FULL, LENDER_ADDR)))
+        head.append(P("THIS MORTGAGE (this \"Security Instrument\") is made as of %s, by %s (\"Borrower\"), as mortgagor, whose address is %s, to %s, whose address is %s (\"Lender\"), as mortgagee."
+                      % (c.signed_on_s, c.borrower_full, c.borrower_addr, LENDER_FULL, LENDER_ADDR)))
     else:
-        head.append(P("THIS DEED OF TRUST (this \"Security Instrument\") is made as of %s by %s (\"Borrower\"), as grantor, to %s (\"Trustee\"), as trustee, for the benefit of %s, whose address is %s "
-                      "(\"Lender\"), as beneficiary." % (c.closing_s, c.borrower_full, c.trustee_on_instrument, LENDER_FULL, LENDER_ADDR)))
+        head.append(P("THIS DEED OF TRUST (this \"Security Instrument\") is made as of %s, by %s (\"Borrower\"), as grantor, to %s (\"Trustee\"), as trustee, for the benefit of %s, whose address is %s "
+                      "(\"Lender\"), as beneficiary." % (c.signed_on_s, c.borrower_full, c.trustee_on_instrument, LENDER_FULL, LENDER_ADDR)))
     b = head + [
         H("DEFINITIONS"),
         P("\"Note\" means the Promissory Note of even date signed by Borrower and payable to the order of Lender in the principal amount of %s (%s), with %s, payable in full on the earlier of a sale or "
@@ -834,7 +865,7 @@ def security(c: Ctx) -> List[Dict[str, Any]]:
           % ("the Senior Lien described in Section 26 and encumbrances of record approved by Lender" if c.second else "encumbrances of record approved by Lender")),
         H("COVENANTS"),
         P("Borrower shall pay when due the principal of, and interest on, the debt evidenced by the Note and all other sums secured by this Security Instrument. No periodic payments are required. No "
-          "offset or claim which Borrower might have against Lender or %s shall relieve Borrower from making payments due under the Note and this Security Instrument." % ROI, lead="1. Payment of Debt."),
+          "offset or claim which Borrower might have against Lender shall relieve Borrower from making payments due under the Note and this Security Instrument.", lead="1. Payment of Debt."),
         P("All payments and proceeds received by Lender shall be applied first to costs and expenses of collection and protective advances, then to accrued interest, and then to principal.", lead="2. Application of Payments."),
         P("Borrower shall pay when due all taxes, assessments, water and sewer charges, fines and impositions attributable to the Property which can attain priority over this Security Instrument. Borrower "
           "shall promptly discharge any lien which has priority over, or is asserted to have priority over, this Security Instrument, including any mechanics' or materialmen's lien, unless Borrower "
@@ -859,10 +890,10 @@ def security(c: Ctx) -> List[Dict[str, Any]]:
           lead="6. Borrower's Representations."),
         P("If (a) Borrower fails to perform any covenant in this Security Instrument, (b) there is a legal proceeding that might significantly affect Lender's interest in the Property or rights under this "
           "Security Instrument (such as a proceeding in bankruptcy or probate, for condemnation or forfeiture, or for enforcement of a lien which may attain priority over this Security Instrument), or "
-          "(c) Borrower or %s abandons the Property or the renovation, then Lender may do and pay for whatever is reasonable or appropriate to protect Lender's interest in the Property, including paying "
+          "(c) Borrower abandons the Property or the renovation, then Lender may do and pay for whatever is reasonable or appropriate to protect Lender's interest in the Property, including paying "
           "any sums secured by a prior lien, appearing in court, paying reasonable attorneys' fees, securing the Property (changing locks, boarding windows, winterizing, eliminating code violations), "
           "and completing or stabilizing the renovation. Lender has no duty to take any such action. Any amounts disbursed by Lender under this Section 7 become additional debt of Borrower secured by "
-          "this Security Instrument, bear interest at the Note rate from the date of disbursement, and are payable upon notice from Lender requesting payment." % ROI,
+          "this Security Instrument, bear interest at the Note rate from the date of disbursement, and are payable upon notice from Lender requesting payment.",
           lead="7. Protection of Lender's Interest in the Property."),
         P("All Miscellaneous Proceeds are assigned to and shall be paid to Lender, and shall be applied to restoration of the Property or to the sums secured by this Security Instrument in the same "
           "manner as insurance proceeds under Section 4. Borrower shall be in default if any action or proceeding, civil or criminal, is begun that in Lender's judgment could result in forfeiture of the "
@@ -930,14 +961,11 @@ def security(c: Ctx) -> List[Dict[str, Any]]:
           P("BY SIGNING BELOW, Borrower accepts and agrees to the terms and covenants contained in this Security Instrument and in the Loan Terms Rider executed by Borrower and recorded with it. WITNESS "
             "the hand and seal of Borrower."), c.sig_block(), c.ack_owner()]
     if c.state == "MD":
-        b += [BREAK, Title("AFFIDAVIT OF CONSIDERATION"),
-              P("The undersigned, an authorized officer of %s, the secured party named in the foregoing Deed of Trust, hereby certifies under the penalties of perjury that the consideration recited in the "
-                "foregoing Deed of Trust is true and bona fide as therein set forth, and that the actual sum of money advanced at the closing transaction by the secured party was $______________ (closing "
-                "costs funded through settlement only; no cash to Borrower), the balance of the principal amount being secured as obligatory advances to be made under the Construction Draw Agreement and "
-                "in consideration of the assignment of the renovation contract price as recited in the Note." % LENDER), _lender_sign(),
-              # Maryland takes a deed of trust for record only with an attorney's certificate that he prepared it
-              # (or a party's own). RKB's is its Maryland attorney's, as on the signed Marmon instrument.
-              P(""), H("ATTORNEY CERTIFICATION"),
+        # No Affidavit of Consideration: RKB's attorney took it out of the 21st St instrument (24 Nov 2026); it
+        # recited an assignment of the contract price that the loan no longer has.
+        # Maryland takes a deed of trust for record only with an attorney's certificate that he prepared it
+        # (or a party's own). RKB's is its Maryland attorney's, as on the signed Marmon instrument.
+        b += [P(""), H("ATTORNEY CERTIFICATION"),
               P("I HEREBY CERTIFY that the within instrument was prepared by me or under my supervision, and that I am an attorney admitted to practice before the Supreme Court of Maryland."),
               Sign("", ["______________________________", c.attorney.get("name") or c.need("Maryland attorney who certifies the deed of trust"), c.attorney.get("address") or "", "Date: ______________"])]
     elif c.state == "FL":
@@ -954,7 +982,7 @@ def security(c: Ctx) -> List[Dict[str, Any]]:
           BREAK, Title("EXHIBIT B", "LOAN TERMS RIDER · recorded with and incorporated into the %s dated %s" % (c.instrument, c.closing_s)),
           Terms([["Property", c.property_line], ["Borrower", c.borrower_full], ["Lender" + ("" if c.is_mortgage else " / Trustee"), LENDER + ("" if c.is_mortgage else " / " + c.trustee_name)],
                  ["Principal amount", "%s (maximum principal secured, exclusive of interest and protective advances)" % usd(c.principal)]]),
-          P(("No interest accrues for the %s (%d) consecutive calendar months beginning on the date the %s is recorded." % (_small(c.free), c.free, c.instrument)) if c.free else
+          P(("No interest accrues for %s." % c.free_s) if c.free else
             "There is no interest-free period. Interest accrues from the date the %s is recorded." % c.instrument, lead="1. Interest-free period."),
           P("Simple interest accrues on the %s at %s percent (%s%%) per year, actual/365, until paid in full, before and after maturity, acceleration or judgment.%s"
             % ("unpaid principal after the interest-free period" if c.free else "full principal amount", _small(int(c.rate)), _rate(c.rate),
@@ -1047,9 +1075,11 @@ def affidavit(c: Ctx) -> List[Dict[str, Any]]:
             P("The Property is vacant. It is not my residence and not the residence of %s, and none of them intends to occupy it. No one holds a lease or any other right "
               "to occupy the Property. The Property will be listed for sale when the renovation is complete."
               % ("any member, manager or affiliate of Borrower" if c.owner_kind == S.LLC else "any owner, heir, beneficiary or member"), lead="3. Non-owner occupancy."),
-            P("No loan proceeds are being paid to me or to Borrower. Lender will pay for the renovation work on Borrower's behalf under the Construction Draw Agreement.", lead="4. No cash to Borrower."),
-            P("Borrower has contracted with %s for the renovation under a Customer Agreement, as amended on the date of this affidavit, for a contract price of %s. %s has assigned that contract price to "
-              "Lender, and Borrower's Promissory Note to Lender replaces Borrower's obligation to pay %s." % (ROI, usd(c.principal), ROI, ROI), lead="5. Renovation contract."),
+            P("No loan proceeds are being paid to me or to Borrower. Lender will disburse the loan proceeds to pay for the renovation work on Borrower's behalf under the Construction Draw Agreement.",
+              lead="4. No cash to Borrower."),
+            P("Borrower has contracted with %s for the renovation under a Customer Agreement, as amended on the date of this affidavit, for a contract price of %s. The contract price will be paid from "
+              "the loan proceeds disbursed by Lender under the Construction Draw Agreement, and Borrower is obligated to repay the loan under its Promissory Note to Lender." % (ROI, usd(c.principal)),
+              lead="5. Renovation contract."),
             P("Neither Borrower nor I, individually, is a debtor in any pending bankruptcy case, and I know of no lawsuit, lien claim or claim of any heir, member or creditor that affects the Property, "
               "except as disclosed in writing to %s." % c.title_co, lead="6. No bankruptcy or litigation."),
             P("I make this affidavit knowing that Lender, %s and the title insurer will rely on it in making and insuring the loan. I will notify Lender in writing immediately if any statement above ceases "
@@ -1090,13 +1120,14 @@ def correction(c: Ctx) -> List[Dict[str, Any]]:
 
 
 def acknowledgment(c: Ctx) -> List[Dict[str, Any]]:
-    terms = ("no interest accrues for %s (%d) calendar months after the %s is recorded; after that, simple interest accrues at %s%% per year" % (_small(c.free), c.free, c.instrument, _rate(c.rate))) if c.free \
+    terms = ("no interest accrues for %s; after that, simple interest accrues at %s%% per year" % (c.free_s, _rate(c.rate))) if c.free \
         else ("simple interest accrues at %s%% per year on the full principal from the date the %s is recorded%s" % (_rate(c.rate), c.instrument, ", with minimum interest of %s" % usd(c.min_interest) if c.min_months else ""))
     return [Title("ACKNOWLEDGMENT OF PAYMENT TERMS, LISTING COVENANTS AND LATE FEE WAIVER"),
             Terms([["Property", c.address], ["Owner / Borrower", c.borrower_full], ["Contractor", "%s (Customer Agreement, as amended %s)" % (ROI, c.closing_s)], ["Lender", LENDER], ["Date", c.closing_s]]),
             H("PAYMENT TERMS"),
-            P("The renovation contract price under the Customer Agreement is %s. %s has assigned that contract price to Lender. The Owner's only obligation to pay for the renovation is the %s Promissory "
-              "Note to Lender, secured by a %s on the Property. The Owner owes nothing directly to %s for the renovation." % (usd(c.principal), ROI, usd(c.principal), c.instrument, ROI), lead="1."),
+            P("The renovation contract price under the Customer Agreement is %s. The renovation will be paid for from the proceeds of Lender's loan to the Owner, which Lender will disburse under the "
+              "Construction Draw Agreement. The Owner is unconditionally obligated to repay that loan under the %s Promissory Note to Lender, secured by a %s on the Property. The Owner owes nothing "
+              "directly to %s for the renovation." % (usd(c.principal), usd(c.principal), c.instrument, ROI), lead="1."),
             P("Under the Note: %s; %s; no monthly payments are due; and all amounts are due at the earlier of the sale or transfer of the Property or %s. No late charge "
               "is payable under the Note." % (terms, ("a loan fee of %s is earned at closing" % usd(c.fee)) if c.fee else "no loan fee or points are payable by the Owner", c.maturity_s), lead="2."),
             P("Any late fee, interest or other charge under the original Customer Agreement, including any per-30-day late fee and any 180-day payment term, is waived in full and deleted. No such fee will "
@@ -1118,10 +1149,10 @@ def draw_agreement(c: Ctx) -> List[Dict[str, Any]]:
                    ["Project manager", "%s, %s (\"ROI Blocks\")" % (ROI, ROI_ADDR)], ["Performing contractor", "%s, %s (\"Contractor\")" % (c.contractor, c.lic_no)],
                    # The Contractor's priced scope is not part of this paper: the Borrower signs it, and the Borrower sees the
                    # contract price only. The priced scope, signed by the Contractor alone, goes with Schedule 2.
-                   ["Scope of work", "Schedule 1 (the \"Work\")"], ["Contract price", "%s, assigned by ROI Blocks to Lender" % usd(c.principal)],
+                   ["Scope of work", "Schedule 1 (the \"Work\")"], ["Contract price", usd(c.principal)],
                    ["Target completion", c.day("completion_date", "schedule", "completion_date") or c.need("completion date")]]),
             H("1. FUNDING AND DIRECTION TO PAY"),
-            P("Lender agrees to pay for the Work on Borrower's behalf, in draws against completed work, under this Agreement. Borrower irrevocably authorizes and directs Lender to make those payments to ROI "
+            P("Lender agrees to advance the proceeds of its loan to Borrower to pay for the Work on Borrower's behalf, in draws against completed work, under this Agreement. Borrower irrevocably authorizes and directs Lender to make those payments to ROI "
               "Blocks, the Contractor, or directly to subcontractors and suppliers, as Lender determines.", lead="1.1"),
             P("Each payment by Lender under this Agreement is an obligatory advance secured by the %s of even date. Borrower's repayment obligation is stated in the Promissory Note of even date (the "
               "\"Note\"). No payment under this Agreement increases the Note principal above %s, other than protective advances under the %s." % (c.instrument, usd(c.principal), c.instrument), lead="1.2"),
@@ -1156,8 +1187,7 @@ def draw_agreement(c: Ctx) -> List[Dict[str, Any]]:
               "claiming through ROI Blocks or the Contractor.", lead="5.3"),
             H("6. DEFAULT; LENDER'S REMEDIES"),
             P("If ROI Blocks or the Contractor abandons the Work, fails to perform, or is in default, Lender may stop funding, may take over and complete or stabilize the Work using another licensed "
-              "contractor, and may pay any amounts necessary to protect the Property. Amounts Lender pays to complete or protect the Property are protective advances secured by the %s. In that event "
-              "Borrower's principal obligation is determined under the Principal Adjustment provision of the Note." % c.instrument),
+              "contractor, and may pay any amounts necessary to protect the Property. Amounts Lender pays to complete or protect the Property are protective advances secured by the %s." % c.instrument),
             H("7. PAYOFF AT SALE"),
             P("At settlement of the sale of the Property, the settlement agent shall pay Lender the full payoff under the Note and %s before any other distribution to Borrower. Any amounts owed by Lender to "
               "ROI Blocks or the Contractor are Lender's obligation under the %s of even date between Lender and ROI Blocks and are not an additional charge to Borrower." % (c.instrument, ALLOC)),
@@ -1214,15 +1244,16 @@ def amendment(c: Ctx) -> List[Dict[str, Any]]:
               P("Written notice of rescission may be given to %s, %s, with a copy to %s, %s, and to %s. Lender will not record the Deed of Trust or make any advance until the rescission period has expired "
                 "without a rescission." % (ROI, ROI_ADDR, LENDER, LENDER_ADDR, c.title_co))]
     body = c.sx.get("lic_body")
-    b += [P("This Amendment is made %s between %s, %s (\"ROI Blocks\"), and %s (\"Owner\"), and amends the Customer Agreement between them dated %s (the \"Agreement\"). %s (\"Lender\") joins to consent and as an "
-            "intended third-party beneficiary." % (c.closing_s, ROI, ROI_ADDR, c.borrower_full, signed_on, LENDER)),
+    b += [P("This Amendment is made %s between %s, %s (\"ROI Blocks\"), and %s (\"Owner\"), and amends the Customer Agreement between them dated %s (the \"Agreement\"). %s (\"Lender\") joins to consent."
+            % (c.signed_on_s, ROI, ROI_ADDR, c.borrower_full, signed_on, LENDER)),
           H("AMENDMENTS"),
           P("Every reference in the Agreement to the property is to %s. The owner and customer under the Agreement is %s." % (c.property_line, c.borrower_full), lead="1. Property and parties."),
           # ROI Blocks' Customer Agreement is its signed proposal: one paper, one date.
           P("The contract price for the work is %s, as stated in ROI Blocks' proposal dated %s." % (usd(c.principal), signed_on), lead="2. Contract price."),
-          P("ROI Blocks has assigned the contract price to Lender. Owner's obligation to pay the contract price is satisfied in full by Owner's execution and delivery to Lender of a Promissory Note for %s "
-            "secured by a %s on the Property. ROI Blocks releases Owner from any obligation to pay ROI Blocks directly, and shall look solely to Lender for payment under the %s of even date between ROI "
-            "Blocks and Lender." % (usd(c.principal), c.instrument, ALLOC), lead="3. Payment."),
+          P("The contract price shall be paid on Owner's behalf from the proceeds of Lender's loan to Owner, evidenced by Owner's Promissory Note for %s and secured by a %s on the Property, as "
+            "disbursed by Lender under the Construction Draw Agreement. ROI Blocks shall look solely to Lender's disbursements under the Construction Draw Agreement and Lender's payments under the %s "
+            "of even date between ROI Blocks and Lender for payment of the contract price, and shall not demand payment of the contract price directly from Owner." % (usd(c.principal), c.instrument, ALLOC),
+            lead="3. Payment."),
           P("All provisions of the Agreement imposing late fees, interest, a 180-day payment term, or any fee measured from the recording of a lien are deleted.", lead="4. Fees deleted."),
           P("Sections %s of the Agreement are deleted in their entirety. Every provision of the Agreement granting ROI Blocks a lien on, security interest in, or right to record against the Property, barring "
             "other financing, or requiring Owner's consent to such a lien, is deleted. ROI Blocks shall not record or file any lien, memorandum or claim against the Property. ROI Blocks consents to the "
@@ -1241,35 +1272,38 @@ def amendment(c: Ctx) -> List[Dict[str, Any]]:
     return b
 
 
+#: Was "Assignment of contract receivable, release and lien covenant" until RKB's attorney rewrote it on 21st St
+#: (24 Nov 2026): ROI Blocks assigns nothing; it and the Contractor bind themselves not to lien the Property and to
+#: stand behind RKB's lien, to induce RKB to make the loan. The document's key stays "assignment" so that a file's
+#: saved papers and ticks still find it.
+LIEN_COVENANT = "Contractor Lien Covenant and Subordination Agreement"
+
+
 def assignment(c: Ctx) -> List[Dict[str, Any]]:
     person = c.contractor_person
-    return [Title("ASSIGNMENT OF CONTRACT RECEIVABLE, RELEASE AND LIEN COVENANT", c.address),
-            P("This Assignment is made %s by %s (\"Assignor\") to %s (\"Assignee\"), with the joinder of %s, %s (\"Contractor\")." % (c.closing_s, ROI, LENDER_FULL, c.contractor, c.lic_no)),
+    return [Title(LIEN_COVENANT.upper(), c.address),
+            P("This Agreement is made %s by %s (\"ROI Blocks\") in favor of %s (\"Lender\"), with the joinder of %s, %s (\"Contractor\")." % (c.signed_on_s, ROI, LENDER_FULL, c.contractor, c.lic_no)),
             H("RECITALS"),
-            P("Under a Customer Agreement, as amended on the date of this Assignment (the \"Customer Agreement\"), %s (\"Owner\") is obligated to pay Assignor a contract price of %s (the \"Receivable\") for "
-              "the renovation of %s (the \"Property\")." % (c.borrower_full, usd(c.principal), c.address), lead="A."),
-            P("Assignee is funding the renovation under a Construction Draw Agreement of even date and has agreed with Assignor on the payment of Assignor's compensation under the %s of even date (the "
-              "\"Allocation Agreement\"). Owner is delivering to Assignee a Promissory Note for %s secured by a %s on the Property in substitution for the Receivable."
-              % (ALLOC, usd(c.principal), c.instrument), lead="B."),
-            H("ASSIGNMENT AND RELEASE"),
-            P("For value received, consisting of Assignee's funding undertaking and the payments provided in the Allocation Agreement, the receipt and sufficiency of which Assignor acknowledges, Assignor "
-              "assigns, transfers and sets over to Assignee all of Assignor's right, title and interest in the Receivable and in all rights and remedies securing or relating to the Receivable, including "
-              "any right to claim a lien on the Property.", lead="1."),
-            P("Assignor represents that the Receivable is owed in full, has not been paid, assigned, pledged or encumbered, and is not subject to any defense or setoff known to Assignor.", lead="2."),
-            P("Effective upon Owner's delivery of the Note and %s to Assignee, Assignor releases Owner from any obligation to pay the Receivable to Assignor and acknowledges that the Note replaces it."
-              % c.instrument, lead="3."),
+            P("Under a Customer Agreement, as amended on the date of this Agreement (the \"Customer Agreement\"), %s (\"Owner\") is obligated to pay ROI Blocks a contract price of %s for the renovation of "
+              "%s (the \"Property\")." % (c.borrower_full, usd(c.principal), c.address), lead="A."),
+            P("Lender is making a loan to Owner and will disburse the loan proceeds to pay for the renovation under a Construction Draw Agreement of even date and has agreed with ROI Blocks on the payment "
+              "of ROI Blocks' compensation under the %s of even date. Owner is delivering to Lender a Promissory Note for %s, secured by a %s on the Property (the \"%s\"), evidencing that loan."
+              % (ALLOC, usd(c.principal), c.instrument, c.instrument), lead="B."),
+            H("CONSIDERATION"),
+            P("ROI Blocks and Contractor enter into this Agreement to induce Lender to make its loan to Owner and to fund the renovation under the Construction Draw Agreement, and acknowledge the receipt "
+              "and sufficiency of that consideration.", lead="1."),
             H("LIEN COVENANTS"),
-            P("Assignor shall not record, file or assert any lien, memorandum or claim against the Property. Assignor shall indemnify, defend and hold Assignee and Owner harmless from any lien or claim "
-              "asserted by any contractor, subcontractor or supplier claiming through Assignor.", lead="4."),
-            P("Contractor joins to acknowledge that it is performing the work under contract with Assignor and is paid through draws funded by Assignee. Contractor confirms that, as of the date the %s is "
+            P("ROI Blocks shall not record, file or assert any lien, memorandum or claim against the Property. ROI Blocks shall indemnify, defend and hold Lender and Owner harmless from any lien or claim "
+              "asserted by any contractor, subcontractor or supplier claiming through ROI Blocks.", lead="2."),
+            P("Contractor joins to acknowledge that it is performing the work under contract with ROI Blocks and is paid through draws funded by Lender. Contractor confirms that, as of the date the %s is "
               "recorded, it has performed no work and delivered no materials to the Property. Contractor shall deliver a partial lien release with each draw for all work paid to date, and shall give "
-              "Assignee at least thirty (30) days' written notice and an opportunity to cure before filing or recording any lien claim against the Property. %s" % (c.instrument, c.sx["lien_law"]), lead="5."),
-            P("This Assignment is governed by the laws of %s and binds and benefits the parties' successors and assigns." % c.sx["law"], lead="6."),
-            _roi_sign("ASSIGNOR: ROI BLOCKS LLC"), c.ack_company(ROI_SIGNER, ROI_TITLE, ROI),
+              "Lender at least thirty (30) days' written notice and an opportunity to cure before filing or recording any lien claim against the Property. %s" % (c.instrument, c.sx["lien_law"]), lead="3."),
+            P("This Agreement is governed by the laws of %s and binds and benefits the parties' successors and assigns." % c.sx["law"], lead="4."),
+            _roi_sign("ROI BLOCKS LLC"), c.ack_company(ROI_SIGNER, ROI_TITLE, ROI),
             c.contractor_sign(),
             # A contractor who holds the licence in his or her own name signs and is acknowledged as a person, with no company title.
             c.ack_person(person) if person else c.ack_company("______________________", "______________________", c.contractor),
-            _lender_sign("ACCEPTED: ASSIGNEE"),
+            _lender_sign("ACCEPTED: LENDER"),
             Sign("ACKNOWLEDGED BY OWNER", ["______________________________", c.signer, "Date: ______________"]) if c.owner_kind == S.INDIVIDUAL else
             Sign("ACKNOWLEDGED BY OWNER: %s" % c.borrower.upper(), ["By: ______________________________", c.signer, c.signer_title, "Date: ______________"])]
 
@@ -1288,13 +1322,13 @@ def instructions(c: Ctx, docs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
     def line(d: Dict[str, Any]) -> str:
         if d["key"] == "security" and c.state == "MD":
-            return "%s: %s. Attorney Certification signed by %s; Affidavit of Consideration signed by Lender." % (d["title"], d["signers"], c.attorney.get("name") or "Lender's Maryland attorney")
+            return "%s: %s. Attorney Certification signed by %s." % (d["title"], d["signers"], (c.attorney.get("name") or "Lender's Maryland attorney").rstrip("."))
         if d["key"] == "assignment":
-            return "Assignment of Contract Receivable, Release and Lien Covenant: %s" % d["signers"]
+            return "%s: %s" % (LIEN_COVENANT, d["signers"])
         return "%s: %s" % (d["title"], d["signers"])
     # What the notary has the Borrower initial: the terms a borrower most often says later he was not told.
-    points = (["no interest accrues for the first %s (%d) months after the %s is recorded, and after that interest accrues at %s%% per year on the unpaid principal until it is paid"
-               % (_small(c.free), c.free, c.instrument, _rate(c.rate))] if c.free else
+    points = (["no interest accrues for the %d days after execution of the Note, and after that interest accrues at %s%% per year on the unpaid principal until it is paid"
+               % (c.free_days, _rate(c.rate))] if c.free else
               ["interest accrues on the full %s from the date the %s is recorded, whether or not advanced" % (usd(c.principal), c.instrument)]) + \
         (["the minimum interest is %s" % usd(c.min_interest)] if c.min_months else []) + \
         (["%s personally guarantees the whole loan" % c.guarantor] if c.owner_kind == S.LLC else [])
@@ -1422,7 +1456,7 @@ def build(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
              ("acknowledgment", "Acknowledgment of payment terms and listing covenants", "Owner and ROI Blocks", acknowledgment, False),
              ("draw_agreement", "Construction draw agreement with Schedule 1", "Owner, ROI Blocks, contractor and RKB", draw_agreement, False),
              ("amendment", "Amendment to ROI Blocks customer agreement", "Owner and ROI Blocks; RKB consents", amendment, False),
-             ("assignment", "Assignment of contract receivable, release and lien covenant",
+             ("assignment", "Contractor lien covenant and subordination agreement",
               "ROI Blocks and Contractor%s, notarized; Owner acknowledges; RKB accepts. Signed before the %s is released for recording." % ((" (%s)" % c.contractor_person) if c.contractor_person else "", c.instrument),
               assignment, False)]
     if c.second:

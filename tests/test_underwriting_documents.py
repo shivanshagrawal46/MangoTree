@@ -58,7 +58,7 @@ def test_the_maryland_company_set_is_the_thirteen_documents_of_the_21st_st_packa
     assert "ONE HUNDRED TWENTY THOUSAND THREE HUNDRED FOUR AND 86/100 DOLLARS ($120,304.86)" in note
     assert "$10,827.44" in note and "$2,406.10" in note and "There is no interest-free period" in note          # the terms of the 19 Nov commitment letter
     sec = _text(by["security"])
-    assert "assent to the passage of a decree" in sec and "Real Property Article \\u00a77-102" in sec and "AFFIDAVIT OF CONSIDERATION" in sec
+    assert "assent to the passage of a decree" in sec and "Real Property Article \\u00a77-102" in sec and "AFFIDAVIT OF CONSIDERATION" not in sec   # struck by RKB's attorney, 24 Nov 2026
     assert "Brian T. Gallagher" in sec and "First Lien" in sec
     assert "3 BUSINESS DAYS" not in _text(by["amendment"]) and "rescission period" not in _text(by["amendment"])   # a business loan to a company carries no rescission language
     s1, person = _file(owner_kind="individual", owner_name="Thelma B. Chapman")
@@ -69,9 +69,12 @@ def test_the_maryland_company_set_is_the_thirteen_documents_of_the_21st_st_packa
 
 def test_nothing_is_printed_blank_without_being_listed():
     s, doc = _file()
-    note = _by(D.build(doc))["note"]
+    by0 = _by(D.build(doc))
+    note = by0["note"]
     # The closing date is the title company's to give: the blank is printed and listed, apart from what RKB's own file still owes.
-    assert "closing date" in note["for_title"] and "closing date" not in note["missing"] and "[closing date]" in _text(note)
+    # The Note itself is dated in ink at signing (RKB's attorney, 24 Nov 2026): a line, not a blank for anybody to fill before.
+    assert "closing date" in by0["draw_agreement"]["for_title"] and "closing date" not in by0["draw_agreement"]["missing"] and "[closing date]" in _text(by0["draw_agreement"])
+    assert "[closing date]" not in _text(note) and "______________________, 20" in _text(note)
     assert "tax ID of the property" in note["missing"]
     full = dict(E21, closing_date="2026-12-01", tax_id="12-13-3813-060", borrower_address="510 Archer Street, Baltimore, MD 21230", signer_name="George Parker",
                 guarantor_name="George Parker", contractor_name="Tutt Construction LLC", contractor_licence="12345", title_company="Smart Settlements LLC",
@@ -83,7 +86,8 @@ def test_nothing_is_printed_blank_without_being_listed():
     assert "March 1, 2027" in _text(_by(docs)["draw_agreement"]) and "2027-03-01" not in _text(_by(docs)["draw_agreement"])   # a date is printed as a paper prints it
     note2 = _text(_by(docs)["note"])
     import re
-    assert "December 1, 2026" in note2 and "November 30, 2027" in note2
+    # Maturity in words from the Note's signing, never a computed date (RKB's attorney, 24 Nov 2026)
+    assert "December 1, 2026" in note2 and "November 30, 2027" not in note2 and "the day before the first one-year anniversary of the execution of this Note" in note2
     assert not [d["key"] for d in docs if re.search(r"\[[a-z][^\]]{3,80}\]", _text(d))]                          # no "[something missing]" left anywhere in the set
     assert "%s" not in note2 and "%d" not in note2
 
@@ -269,7 +273,7 @@ def test_what_was_corrected_by_hand_on_21st_st_is_written_by_the_generator():
     by = _by(D.build(doc))
     sec = _text(by["security"])
     assert sec.index("Prepared by: Brian T. Gallagher, Esq.") < sec.index("[Space Above This Line For Recording Data]") < sec.index("DEED OF TRUST")
-    assert "a resident of the State of Maryland, whose address is" in sec and "ATTORNEY CERTIFICATION" in sec and "This instrument was prepared by RKB" not in sec
+    assert "a resident of the State of Maryland" not in sec and "ATTORNEY CERTIFICATION" in sec and "This instrument was prepared by RKB" not in sec   # trustee by name only (24 Nov 2026)
     assert sec.count("I HEREBY CERTIFY that on this") == 2 and "under the power of sale or decree" in sec          # the instrument and its rider, in Maryland's full form
     assert "Lender may negotiate and settle the claim" in sec and "the Applicable Law requirement satisfies the requirement here" in sec
     assert "BEING the same property conveyed to 510 A Holdings LLC by deed dated [deed date]" in sec and "Liber [__], Folio [__]" in sec
@@ -281,7 +285,7 @@ def test_what_was_corrected_by_hand_on_21st_st_is_written_by_the_generator():
         t = _text(by[key])
         assert "Margin Allocation and Payoff Direction Agreement" in t and "separate agreement" not in t, key
     a = _text(by["assignment"])
-    assert by["assignment"]["title"] == "Assignment of contract receivable, release and lien covenant" and "9-113" not in a and "subordinate to Assignee's Deed of Trust" in a
+    assert by["assignment"]["title"] == "Contractor lien covenant and subordination agreement" and "9-113" not in a and "subordinate to Lender's Deed of Trust" in a
     assert "CONTRACTOR: DUWAYNE PEIRCE TUTT, t/a Tutt Painting and Remodeling" in a and "Duwayne Peirce Tutt, individually" in a      # he signs as a person, not for a company
     assert "personally appeared Duwayne Peirce Tutt, known to me" in a and "ACKNOWLEDGED BY OWNER: 510 A HOLDINGS LLC" in a
     dr = _text(by["draw_agreement"])
@@ -290,7 +294,7 @@ def test_what_was_corrected_by_hand_on_21st_st_is_written_by_the_generator():
     assert "The Work is the work described in ROI Blocks' proposal under the Customer Agreement" in dr and "scope of work must be signed" not in dr
     assert "[The attached scope of work must be signed by Duwayne Peirce Tutt before closing.]" in _text(by["schedule_2"])
     ins = _text(by["instructions"])
-    assert "Attorney Certification signed by Brian T. Gallagher, Esq.; Affidavit of Consideration signed by Lender." in ins
+    assert "Attorney Certification signed by Brian T. Gallagher, Esq." in ins and "Affidavit of Consideration" not in ins and "Esq.." not in ins
     assert "(a) interest accrues on the full $120,304.86 from the date the Deed of Trust is recorded, whether or not advanced: ______; and (b) George Parker personally guarantees the whole loan: ______." in ins
     assert "minimum interest" not in ins.lower() and "inimum interest" not in _text(by["note"])                       # no minimum interest unless a person entered one
     assert "re-verified on the Maryland Department of Labor site, no earlier than the day before closing, that MHIC licence No. 111574 is active" in ins
@@ -331,13 +335,13 @@ def test_the_terms_as_they_were_finally_sent_for_21st_st():
     assert doc["facts"]["interest_free_months"] == 6 and doc["facts"]["minimum_interest_months"] == 0 and doc["assessment"]["rule_65"]["points"] == 0
     by = _by(D.build(doc))
     note = _text(by["note"])
-    assert "No interest accrues for the six (6) consecutive calendar months beginning on the date the Deed of Trust securing this Note is recorded" in note
+    assert "No interest shall accrue on the principal sum for the first 180 days of this loan, beginning on the date of execution of this Note" in note
     assert "If the Property is sold and this Note is paid in full during the Interest-Free Period, no interest is due." in note
     assert "No loan fee, origination fee or points are payable by Borrower under this Note." in note
     for d in by.values():
         t = _text(d)
         assert "inimum interest" not in t and "There is no interest-free period" not in t and "earned in full at closing" not in t, d["key"]
-    assert "(a) no interest accrues for the first six (6) months after the Deed of Trust is recorded, and after that interest accrues at 18% per year on the unpaid principal until it is paid: ______; and (b) George Parker personally guarantees the whole loan: ______." in _text(by["instructions"])
+    assert "(a) no interest accrues for the 180 days after execution of the Note, and after that interest accrues at 18% per year on the unpaid principal until it is paid: ______; and (b) George Parker personally guarantees the whole loan: ______." in _text(by["instructions"])
     sec = _text(by["security"])
     assert "George Parker, III, who acknowledged himself/herself to be the Sole Member of 510 A Holdings LLC" in sec and "Managing Member" not in sec
     s, doc = _file(**dict(TUTT, signer_title="Authorized Member", points=0))
@@ -408,3 +412,38 @@ def test_every_document_becomes_a_word_file():
     for d in D.build(doc):
         blob = D.to_docx(d)
         assert blob[:2] == b"PK" and len(blob) > 8000, d["key"]
+
+
+def test_the_loan_structure_rkbs_attorney_finished_on_21st_st():
+    """Brian T. Gallagher's set of 24 Nov 2026: a loan the owner repays, not an assignment of ROI Blocks' contract price;
+    interest-free days counted from the Note's signing; maturity in words; the instruments dated at signing."""
+    s, doc = _file(**dict(TUTT, interest="free_6", points=0))
+    by = _by(D.build(doc))
+    for d in by.values():
+        t = _text(d)
+        for gone in ("has assigned", "assigns the whole", "in substitution", "Receivable", "Principal adjustment", "Principal Adjustment", "Assignor", "Assignee",
+                     "AFFIDAVIT OF CONSIDERATION", "calendar months", "third-party beneficiary", "maturity date (", "a resident of the State of Maryland"):
+            assert gone not in t, (d["key"], gone)
+    note = _text(by["note"])
+    assert "SIGN ORIGINAL ONLY" not in note                 # the Guaranty keeps its marking; RKB's attorney left it there
+    assert "This Note evidences a loan made by Lender to Borrower, and Borrower is unconditionally obligated to repay the principal, interest and all other sums due under this Note" in note
+    assert "(b) the day before the first one-year anniversary of the execution of this Note (the \\\"Maturity Date\\\")" in note
+    sec = _text(by["security"])
+    assert "to Brian T. Gallagher, Esq. (\\\"Trustee\\\")" in sec and "with no interest for the first 180 days following execution of the Note" in sec
+    assert "No offset or claim which Borrower might have against Lender shall relieve" in sec and "(c) Borrower abandons the Property" in sec
+    assert "No interest accrues for the first 180 days following execution of the Note." in sec and "ATTORNEY CERTIFICATION" in sec
+    assert "made as of ______________________, 20" in sec and "Prepared by: Brian T. Gallagher, Esq." in sec
+    am = _text(by["amendment"])
+    assert "joins to consent. " in am or am.count("joins to consent.") == 1
+    assert "The contract price shall be paid on Owner's behalf from the proceeds of Lender's loan to Owner" in am and "shall not demand payment of the contract price directly from Owner" in am
+    lc = _text(by["assignment"])
+    assert "CONTRACTOR LIEN COVENANT AND SUBORDINATION AGREEMENT" in lc and "to induce Lender to make its loan to Owner" in lc and "ACCEPTED: LENDER: RKB CONSULTING GROUP, INC." in lc
+    assert "Contractor Lien Covenant and Subordination Agreement: ROI Blocks and Contractor" in _text(by["instructions"])
+    assert "Lender agrees to advance the proceeds of its loan to Borrower to pay for the Work" in _text(by["draw_agreement"])
+    assert "The contract price will be paid from the loan proceeds disbursed by Lender" in _text(by["affidavit"])
+    assert "Owner is unconditionally obligated to repay that loan" in _text(by["acknowledgment"])
+    cl = _text(by["commitment_letter"])
+    assert "No interest for the first 180 days after execution of the Note" in cl and "will not demand payment of the contract price directly from Borrower" in cl
+    # three months free is 90 days; interest from day one keeps its own sentence
+    s, doc = _file(**dict(TUTT, interest="free_3", points=0))
+    assert "first 90 days of this loan" in _text(_by(D.build(doc))["note"])

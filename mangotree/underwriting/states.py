@@ -30,7 +30,7 @@ STATES: Dict[str, Dict[str, Any]] = {
             "Obligatory advances and the maximum principal on the face (Real Property 7-102)",
             "Trustee is an individual; substitution of trustee permitted",
             "Printed names under signatures (Real Property 3-104)",
-            "Affidavit of consideration signed by RKB",
+            "Attorney's certification that he prepared it (Real Property 3-104)",
         ],
         "foreclosure": {"route": "Sale under the court's supervision (order to docket, sale, ratification)",
                         "months": 5, "months_owner_occupied": 9, "cost": 7500, "estimate": True,
